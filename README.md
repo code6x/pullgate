@@ -41,7 +41,8 @@ path unit ─> pullgate apply NAME (root)
 
 ## Install
 
-pullgate has no release yet. Build it with Go 1.26 or newer:
+Download a release and check it as [docs/releasing.md](docs/releasing.md)
+says (section "Verify a download"), or build it with Go 1.26 or newer:
 
 ```sh
 CGO_ENABLED=0 go build -trimpath -o pullgate ./cmd/pullgate

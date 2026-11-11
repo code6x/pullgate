@@ -121,3 +121,39 @@ jobs:
       - name: govulncheck
         # Dependabot does not update this version. Update it by hand.
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  vuln-release:
+    name: vuln (latest release)
+    # Weekly only. The published binaries contain the Go standard library
+    # they were built with, so check the binaries themselves. A finding here
+    # needs a new release (see docs/releasing.md).
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+      - name: govulncheck on the binaries of the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts \
+            --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty')"
+          if [ -z "$tag" ]; then
+            echo "No release yet. Nothing to check."
+            exit 0
+          fi
+          dir="${RUNNER_TEMP}/release"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$dir" \
+            --pattern 'pullgate_*_linux_*.tar.gz'
+          status=0
+          for tarball in "$dir"/*.tar.gz; do
+            out="${tarball%.tar.gz}"
+            mkdir -p "$out"
+            tar -xzf "$tarball" -C "$out" pullgate
+            echo "== ${tag}: $(basename "$tarball")"
+            go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -mode=binary "$out/pullgate" || status=1
+          done
+          exit "$status"

@@ -28,6 +28,8 @@ change code. They are the rules the code must follow.
     9, 10, 13).
 - `contrib/` - example systemd units and example configs.
 - `test/e2e/` - the end-to-end test. Build tag `e2e`.
+- `docs/releasing.md` - how releases are made and checked. Only the owner
+  merges a release pull request (`chore(main): release …`).
 - `.claude/agents/security-reviewer.md` - the security review every change
   gets.
 
