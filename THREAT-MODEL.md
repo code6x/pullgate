@@ -72,6 +72,10 @@ does not hold; a tap on it does nothing, because the listener holds the
 only list of codes, and root checks the code against its own state. The
 thief can also read new taps of the owner (the code of an open question)
 but a code alone is useless without write access to the inbox.
+The thief can also edit the text of a real question, so that harmless text
+sits above real buttons for a hostile SHA. The listener counts a tap only on
+a message that was never edited, whose text is the text Telegram gave back
+when the listener sent it (DESIGN.md section 9).
 
 *Left.* The thief can show the owner false text (a fake "applied"
 message), can hide questions, and can see the question text. Keep the
@@ -88,8 +92,11 @@ listener cannot name a SHA, cannot approve a commit that root did not ask
 about, cannot pass the time limit, and cannot replay a used code. Root reads
 inbox files with `O_NOFOLLOW`, caps their size, needs the listener as owner,
 and rejects unknown fields. The forward-only rule still holds. The listener
-user can write the outbox too, but that only changes what the listener
-itself sends.
+user can write in the outbox and the inbox. Root never follows a path there:
+the spool directories above them are root-owned, root opens them with
+`os.OpenRoot`, and creates files with `O_CREAT|O_EXCL|O_NOFOLLOW` under a
+random name. So a symlink that the listener plants cannot make root write
+or change a file elsewhere.
 
 *Left.* It can approve any open question (or a superseded one that has not
 expired) without the owner, and it can hide or fake messages. So the
@@ -105,6 +112,14 @@ or during the review.
   reads objects. `check` and `summary` read files as data, as `check_user`
   (not root), in a read-only tree, inside the run unit's sandbox. A parser
   bug in them hits only `check_user`. They have a timeout and an output cap.
+  A process of `check_user` that leaves its process group to fake a later
+  check or summary is stopped with `kill -KILL -1` as `check_user` after
+  each command, and by systemd when the run unit ends. Use one `check_user`
+  per instance.
+- **A tree that changed.** Trees are written to a temporary name and renamed
+  only when complete. Each process exports its own fresh trees and removes
+  them at the end; `apply` never runs on a tree that a check, an earlier
+  apply, or a crash left behind.
 - **File names.** Each path part is checked: no `..`, no `.git`, no empty
   part, no NUL. Names with control or invisible characters, or with HTML,
   are cleaned and escaped before they are shown, so a name cannot fake a
@@ -115,8 +130,12 @@ or during the review.
 - **Symlinks.** They are written as symlinks and never followed by
   pullgate. The tree is written with `O_NOFOLLOW|O_EXCL` into directories
   that pullgate made itself, so a symlink cannot make pullgate write
-  outside the tree. A command that reads the tree must not follow symlinks
-  blindly (the docs say so).
+  outside the tree. A repeated name, or a path below a file or symlink,
+  stops the export; git checks the objects on fetch (`transfer.fsckObjects`).
+  A symlink whose target is absolute or holds `..` gets a warning in the
+  head of the question, so the owner sees it before root's `apply` may
+  follow it; `refuse_symlinks = true` refuses such a commit. A command that
+  reads the tree must not follow symlinks blindly (the docs say so).
 - **Large trees.** `max_files` and `max_tree_bytes` stop the export. The
   question has a fixed size. git output is capped.
 - **`.gitattributes` filters.** pullgate never checks out and never runs
@@ -253,7 +272,16 @@ removed and logged. The path unit then has nothing left and stops.
 from the host config; a read-only deploy key; no other protocols. git has
 a timeout and an output cap. The tree export has caps.
 
-### T14. Too many questions
+### T14. Weak gate files
+
+*Attack.* A local user can write the config, the deploy key, the known
+hosts file, the program of a command, or a directory above one of them.
+
+*Defense.* pullgate refuses to start then (DESIGN.md section 4). A local
+repo URL must pass the same check as the clone, because root runs
+`git-upload-pack` in it. The listener checks its own config and token file.
+
+### T15. Too many questions
 
 *Attack.* Someone pushes many commits to tire the owner into tapping Apply.
 
@@ -263,6 +291,8 @@ a timeout and an output cap. The tree export has caps.
 ## 6. Out of scope
 
 - An attacker who is root on the host.
+- A program that a command runs and that pullgate did not check (for
+  example a tool that `apply` calls by name). The owner writes `apply`.
 - An attacker who controls the owner's Telegram account.
 - A bad change that the owner approves on purpose.
 - Signed commits (planned later).

@@ -17,6 +17,8 @@ protects, and where it stops.
 - **tip**: the commit that the configured branch points to after a fetch.
 - **applied SHA**: the last commit that root applied with success. It is
   empty before the first apply.
+- **held SHA**: the last SHA whose apply failed, while no newer apply has
+  worked (section 10).
 - **question**: one Telegram message that names one full SHA and has two
   buttons, Apply and Skip.
 - **code**: a random one-time code of 128 bits (22 characters, base64url).
@@ -26,7 +28,7 @@ protects, and where it stops.
 - **tree**: a clean, read-only copy of the files of one commit, written by
   pullgate itself from git objects.
 - **pause file**: `/var/lib/pullgate/NAME/paused`. While it exists, the
-  instance does nothing.
+  instance does nothing: no run, no apply.
 
 ## 2. The rules
 
@@ -52,7 +54,8 @@ These rules come from issue #1. Each one has tests (section 14).
    question that root recorded itself, and only within the time limit of that
    question. By default it moves forward only: the new SHA must descend from
    the applied SHA. Going to an older or unrelated commit needs the explicit
-   setting `allow_older = true`.
+   setting `allow_older = true`. Before the first apply there is no applied
+   SHA, so any tip may be asked.
 6. **Root never runs git in a directory another user can write.** Before
    every git command, root checks the git directory and every directory above
    it (section 6). git runs with hooks off and without system or global
@@ -64,30 +67,36 @@ These rules come from issue #1. Each one has tests (section 14).
 | process | user | started by | holds |
 |---|---|---|---|
 | `pullgate run NAME` | root | a timer (`pullgate-run@NAME.timer`) | the clone, the state, the deploy key |
-| `pullgate apply NAME` | root | a path unit (`pullgate-apply@NAME.path`) when the inbox is not empty | the state |
+| `pullgate apply NAME` | root | a path unit (`pullgate-apply@NAME.path`) when the inbox is not empty, or the auto approval exists | the state |
 | `pullgate listen` | `pullgate` (own user) | a service (`pullgate-listen.service`) | the bot token, its list of open questions |
 | `check`, `summary` | `check_user` (default `pullgate-check`) | `pullgate run` | nothing |
-| `apply`, `health` | root | `pullgate apply`, or `pullgate run` in `auto` mode | what the owner's command needs |
+| `apply`, `health` | root | `pullgate apply` | what the owner's command needs |
 | `pullgate status NAME` | root | the owner | nothing |
 
 Root and the listener never talk directly. They use a spool directory
 (section 8).
 
+The run unit is sandboxed (read-only system, private `/tmp`, no new
+privileges). The apply unit runs the owner's `apply` command as root, so it
+can be less strict; each example sets what its `apply` needs.
+
 ## 4. Files
 
 | path | owner, mode | what |
 |---|---|---|
-| `/etc/pullgate/NAME.toml` | root, 0600 or 0644, not writable by others | the instance config |
-| `/etc/pullgate/listener.toml` | root, readable by the listener | the listener config |
+| `/etc/pullgate/NAME.toml` | root, 0600 or 0644 | the instance config |
+| `/etc/pullgate/listener.toml` | root, 0640 group listener, or 0644 | the listener config |
 | the deploy key | root, 0600 | read-only SSH deploy key |
-| the known hosts file | root, not writable by others | the pinned SSH host key of the git server |
+| the known hosts file | root, 0644 | the pinned SSH host key of the git server |
 | the bot token file | the listener user, 0600 (or a systemd credential) | the bot token |
 | `/var/lib/pullgate/NAME/` | root, 0711 | the state directory |
 | `/var/lib/pullgate/NAME/repo.git` | root, 0700 | the bare clone |
 | `/var/lib/pullgate/NAME/state.json` | root, 0600 | the state (section 9) |
 | `/var/lib/pullgate/NAME/lock` | root, 0600 | the lock (`flock`) |
 | `/var/lib/pullgate/NAME/paused` | root | the pause file |
-| `/var/lib/pullgate/NAME/trees/SHA` | root, group `check_user`, 0750; files 0444 or 0555 | the trees |
+| `/var/lib/pullgate/NAME/auto-approval` | root, 0600 | the approval that `auto` mode writes (section 13) |
+| `/var/lib/pullgate/NAME/trees/` | root, 0711 | the trees of one process (section 6) |
+| `/var/spool/pullgate/` and `/var/spool/pullgate/NAME/` | root, 0755 | the spool |
 | `/var/spool/pullgate/NAME/outbox` | root, group listener, 0770 | messages from root to the listener |
 | `/var/spool/pullgate/NAME/inbox` | listener, 0700 | approvals from the listener to root |
 | `/var/lib/pullgate-listener/state.json` | listener, 0600 | the listener's open questions |
@@ -95,10 +104,23 @@ Root and the listener never talk directly. They use a spool directory
 The paths can be changed with `--config-dir`, `--state-dir` and
 `--spool-dir`, for tests.
 
-pullgate refuses to start when the instance config, the deploy key or the
-known hosts file is a symlink, is not owned by root, or can be written by
-group or others. The deploy key must also not be readable by group or
-others. In tests, "root" means the user that runs the test.
+**Checks of the gate files.** pullgate refuses to start when the instance
+config, the deploy key, the known hosts file, or the program (the first
+word) of a command is a symlink, is not owned by root, or can be written by
+group or others; or when a directory above one of them fails the check of
+section 6. The deploy key must also not be readable by group or others. The
+listener checks `listener.toml` and its token file the same way (the token
+file must be owned by the listener user). In tests, "root" means the user
+that runs the test.
+
+**Files in directories that the listener can write.** Root never follows a
+path that the listener can change. It opens the spool directories with
+`os.OpenRoot` (no symlinks out of the directory), fixes their owner and mode
+through the open directory, creates files in them with
+`O_CREAT|O_EXCL|O_NOFOLLOW` under a random temporary name and renames them
+in the same directory. `/var/spool/pullgate` and `NAME/` are owned by root
+and pass the check of section 6, so the listener cannot swap `outbox` or
+`inbox` for a symlink.
 
 ## 5. The instance config
 
@@ -131,10 +153,11 @@ paths = ["policy/**", "*.toml"]
 [limits]
 questions_per_day = 10    # default 10
 approval_ttl = "12h"      # default 12h, at most 7 days
-max_failed_tries = 1      # default 1
+max_failed_tries = 1      # default 1; counts only with on_failure = "rollback"
 max_files = 100000        # default 100000 files in one tree
-max_tree_bytes = "1GiB"   # default 1 GiB in one tree
+max_tree_bytes = 1073741824  # default 1 GiB in one tree
 allow_older = false       # default false (rule 5)
+refuse_symlinks = false   # default false; true refuses a commit with a symlink that points out of the tree
 
 [listener]
 user = "pullgate"         # the user of the listener; owns the inbox
@@ -146,18 +169,26 @@ missing `apply` is an error. Every error names the file, the key and the fix.
 There is no default for `on_failure` in the example configs: each example
 sets it. The code default is `pause`, because it is the safe choice.
 
+**The repo URL.** `ssh://…` and `user@host:path` use SSH (section 6). A path
+that starts with `/`, or a `file://` URL, is a local repo. root runs git in
+it too (`git-upload-pack`), so a local repo must pass the same check as the
+clone (section 6): owned by root, nobody else can write it. Other URLs
+(`https://`, `git://`, relative paths) are refused. The key and known hosts
+paths may hold only `A-Za-z0-9._/-`, because git gives `GIT_SSH_COMMAND` to
+a shell.
+
 ## 6. Git, safely (rule 6)
 
 Before each git command, root checks the **git directory**:
 
-- the git directory and each directory above it up to `/` is owned by root
-  (the running user) and is not writable by group or others. A parent
-  directory that is writable by others is allowed only when it has the
-  sticky bit and is owned by root (like `/tmp`), because then no other user
-  can rename or remove our directory in it;
-- every file and directory inside the git directory is owned by root, is not
-  writable by group or others, and is not a symlink, except inside
-  `objects/`, where only regular files and directories may be.
+- The git directory and each directory above it up to `/` must be owned by
+  root (the running user) and not writable by group or others.
+- One exception for a directory above: it may be writable by others when it
+  is owned by root and has the sticky bit (like `/tmp`). Then no other user
+  can rename or remove our directory in it.
+- Every file and directory inside the git directory must be owned by root,
+  must not be writable by group or others, and must be a regular file or a
+  directory (no symlink, no special file).
 
 If a check fails, pullgate stops with an error that names the path, and runs
 no git.
@@ -166,48 +197,69 @@ Each git command runs:
 
 - with an empty environment, plus `PATH`, `HOME` set to the state
   directory, `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`,
-  `GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS=` and `GIT_SSH_COMMAND` (below);
-- with `-c core.hooksPath=/dev/null -c core.fsmonitor=false
-  -c protocol.allow=never -c protocol.ssh.allow=always
-  -c protocol.file.allow=always -c submodule.recurse=false` before the
-  subcommand (`file` is for tests and local
-  mirrors; `http` and `git` are off);
+  `GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS=`, `LC_ALL=C` and
+  `GIT_SSH_COMMAND` (below);
+- with these settings before the subcommand: `core.hooksPath=/dev/null`,
+  `core.fsmonitor=false`, `protocol.allow=never`, `protocol.ssh.allow=always`,
+  `protocol.file.allow=always` (for local repos, see section 5),
+  `submodule.recurse=false`, `fetch.recurseSubmodules=false`,
+  `core.attributesFile=/dev/null`, `transfer.fsckObjects=true`,
+  `gc.auto=0` and `maintenance.auto=false`;
 - with `--git-dir` set, never in a work tree;
-- with a timeout and a cap on its output.
+- in its own process group, with a timeout that kills the group, and a cap
+  on its output.
 
 The fetch is:
 
 ```
 git fetch --no-tags --no-recurse-submodules --no-write-fetch-head \
-  URL +refs/heads/BRANCH:refs/pullgate/tip
+  --no-auto-gc -- URL +refs/heads/BRANCH:refs/pullgate/tip
 ```
 
 `GIT_SSH_COMMAND` is `ssh -F /dev/null -i KEY -o IdentitiesOnly=yes
 -o IdentityAgent=none -o UserKnownHostsFile=KNOWN_HOSTS
--o StrictHostKeyChecking=yes -o BatchMode=yes`. The URL comes from the host
-config. It must not start with `-`, so git cannot read it as an option.
+-o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes
+-o BatchMode=yes`. The URL comes from the host config. It must not start
+with `-`, so git cannot read it as an option. The branch must be a plain
+name (`[A-Za-z0-9][A-Za-z0-9._/-]*`, no `..`).
 
 Then `git rev-parse --verify refs/pullgate/tip^{commit}` gives the tip.
+pullgate keeps `refs/pullgate/applied` on the applied SHA, so git never
+loses it after a force push. No gc runs.
+
+The other reads are `git merge-base --is-ancestor`, `git rev-list --count`,
+`git log -z --no-mailmap --format=%s`, `git diff-tree -r -z --no-renames
+--name-only` and `git ls-tree -r -z`.
 
 **The tree.** pullgate never uses `git checkout` or `git archive`, because
 both apply `.gitattributes` (filters, `export-subst`, `export-ignore`). It
-reads `git ls-tree -r -z --full-tree SHA` and then each blob with
+reads `git ls-tree -r -l -z --full-tree SHA` and then each blob with
 `git cat-file --batch`. It writes the files itself:
 
 - Each path part must not be empty, `.`, `..` or `.git` (in any case), and
-  must not hold a NUL or `/`. A bad path stops the export.
+  must not hold a NUL. A bad path stops the export.
 - Regular files are written 0444 (0555 when the git mode is 100755), with
-  `O_CREAT|O_EXCL|O_NOFOLLOW`, inside directories that pullgate created in
-  this export.
+  `O_CREAT|O_EXCL|O_NOFOLLOW`, inside directories that pullgate made in this
+  export. A repeated name, or a path below a file or a symlink of the tree,
+  stops the export.
 - Symlinks (mode 120000) are written as symlinks. pullgate never follows a
-  symlink of a tree. A command that reads the tree must not follow them
-  either, or must check where they point.
-- Submodules (mode 160000) are skipped and listed in the summary as a
+  symlink of a tree. A symlink whose target is absolute or holds `..` gets a
+  warning in the question; with `refuse_symlinks = true` it stops the
+  export. A command that reads the tree must not follow symlinks blindly.
+- Submodules (mode 160000) are skipped and listed in the question as a
   warning.
 - The export stops when the tree has more than `max_files` entries or more
   than `max_tree_bytes` bytes.
-- When the export ends, each directory gets mode 0555, and the top
+- The export goes to `trees/.tmp-RANDOM`. Only when it is complete does it
+  get its final name. Then each directory gets mode 0555, and the top
   directory gets 0750 with group `check_user`.
+
+**Fresh trees.** A tree belongs to one process. `pullgate run` exports the
+trees for `check` and `summary`; `pullgate apply` exports fresh trees for
+`apply`, `health` and a rollback. Each process removes its trees when it
+ends, and removes trees that an earlier process left (after a crash) when it
+starts. So a tree that a command changed, or a half-written tree, is never
+used again.
 
 ## 7. One run (`pullgate run NAME`)
 
@@ -216,87 +268,101 @@ reads `git ls-tree -r -z --full-tree SHA` and then each blob with
    "paused" and exit 0. If `mode = "off"`, log "off" and exit 0.
 2. If the state shows an apply in progress (section 10), write the pause
    file, report, and exit.
-3. Make sure the clone, the spool directories and their owners and modes are
-   right (section 4). Fetch (section 6).
-4. Decide:
+3. Make sure the clone and the spool directories exist with the right owners
+   and modes (section 4). Fetch (section 6).
+4. Expire: each question in the state whose time is up is removed. If it was
+   open, root asks the listener to edit it ("expired") and marks its SHA
+   expired.
+5. Decide:
    - tip = applied SHA: nothing to do. If a question is open, close it
      ("the branch is back to the applied commit").
    - tip = the SHA of the open question: nothing to do.
-   - tip was asked before and the question expired or was skipped, its check
-     failed, it was refused, or it failed `max_failed_tries` times: nothing
-     to do. `pullgate status NAME --ask-again` clears this mark.
+   - tip is the held SHA, or was asked before and the question expired or
+     was skipped, or its check failed, or it was refused, or it failed
+     `max_failed_tries` times: nothing to do. `pullgate status NAME
+     --ask-again` clears this mark.
    - tip is not a descendant of the applied SHA (an older commit, a force
      push, a rewritten branch) and `allow_older` is false: refuse. Send one
      notice for this SHA and mark it refused. When `allow_older` is true,
      ask, with a warning line at the top: "This commit is not a descendant
-     of the applied commit."
-   - questions in the last 24 hours reached `questions_per_day`: log it,
+     of the applied commit." With no applied SHA, every tip is allowed.
+   - the questions in the last 24 hours reached `questions_per_day`: log it,
      send one notice per day, and do not ask.
-5. Export the tree of the tip, and the tree of the applied SHA if it is not
-   there yet (`PULLGATE_OLD_TREE`).
-6. Run `check` as `check_user` (section 11). If it fails, mark the SHA
+6. Export the tree of the tip, and the tree of the applied SHA
+   (`PULLGATE_OLD_TREE`).
+7. Run `check` as `check_user` (section 11). If it fails, mark the SHA
    "check failed", send a notice with the last lines of its output, and do
    not ask. The same SHA is not checked again.
-7. Run `summary` as `check_user`, and build the message (section 12).
-8. If a question is open, close it: root marks it superseded in its state,
+8. Run `summary` as `check_user`, and build the message (section 12).
+9. If a question is open, close it: root marks it superseded in its state,
    and asks the listener to edit it ("a newer commit replaced this
    question"). A tap that the listener took before the edit still counts
    for the old SHA (rule 2); section 9 says how.
-9. `ask`: make a new code, record the question in the state (synced to disk)
-   and write the question to the outbox. `auto`: do the apply right away
-   (section 10), without a question.
-
-The run removes trees that no question, no apply and no applied SHA uses.
+10. `ask`: make a new code, record the question in the state (synced to
+    disk) and write the question to the outbox. `auto`: record the question
+    in the state the same way, but instead of a message, write the code to
+    the auto approval file (section 13).
 
 ## 8. The spool
 
 Each instance has `/var/spool/pullgate/NAME/outbox` and `.../inbox`.
 
 **Outbox** (root writes, the listener reads and removes). One JSON file per
-message, named `SEQ.json` with a 20-digit sequence number, written to a
-temporary name and renamed. The listener handles them in name order. Kinds:
+message, named `SEQ.json` with a 20-digit sequence number (nanoseconds),
+written to a random `.tmp-*` name and renamed. The listener handles them in
+name order and skips names that start with `.`. Kinds:
 
 - `ask`: `question` (an id, unique per instance), `code`, `expires`
   (time), `text` (HTML, ready to send);
 - `edit`: `question`, `text`: replace the text of that question and remove
   its buttons. The listener forgets the code of the question;
 - `notice`: `text`: a new message;
-- `reply`: `question`, `text`: a reply to that question.
+- `reply`: `question`, `text`: a reply to that question, or a new message
+  when the listener does not know the question.
 
-A file the listener cannot parse is moved to `outbox/bad/` and logged. If
-Telegram refuses a message, the listener tries again later, at most for one
-day, then drops it with a log line.
+A file the listener cannot parse is removed and logged. If Telegram refuses
+a message, the listener tries again on the next round, and drops it after
+one day with a log line.
 
 **Inbox** (the listener writes, root reads and removes). One file per tap,
-`SEQ.json`, at most 1 KiB, with `{"code": "...", "action": "apply" | "skip"}`.
-Unknown fields are an error. Root opens each file with `O_NOFOLLOW`, needs a
+`SEQ.json`, written to a `.tmp-*` name and renamed, at most 1 KiB, with
+`{"code": "...", "action": "apply" | "skip"}`. Unknown fields are an error.
+Root opens each file through `os.OpenRoot` with `O_NOFOLLOW`, needs a
 regular file owned by the listener user, reads at most 1 KiB, and removes the
-file before it acts. A bad file is logged and removed.
+file before it acts. A bad file is logged and removed. Root removes `.tmp-*`
+files older than one minute.
 
-`pullgate-apply@NAME.path` watches the inbox (`DirectoryNotEmpty=`) and
-starts `pullgate apply NAME`.
+`pullgate-apply@NAME.path` watches the inbox (`DirectoryNotEmpty=`) and the
+auto approval (`PathExists=`), and starts `pullgate apply NAME`. The apply
+service has a start limit, so a stuck file cannot start it in a loop.
 
 ## 9. Questions and approvals
 
 Root keeps its questions in `state.json`:
 
 ```
-{ "id": 7, "code": "…", "sha": "…", "asked": time, "expires": time,
-  "open": true }
+{ "id": 7, "code": "…", "sha": "…", "base": "…", "asked": time,
+  "expires": time, "open": true }
 ```
 
-At most one question is open. A superseded question stays in the list
-(`"open": false`) until it expires, so that a tap that the listener took
-before the close still counts (rule 2). The listener forgets a code when it
-handles the `edit` that closes the question, so it cannot take a tap for
-it after that. Every list entry is removed when it is answered or expires.
+`base` is the applied SHA when the question was asked. At most one
+question is open. A superseded question stays in the list (`"open": false`)
+until it expires, so that a tap that the listener took before the close
+still counts (rule 2). The listener forgets a code when it handles the
+`edit` that closes the question, so it cannot take a tap for it after that.
+Every list entry is removed when it is answered or expires.
 
-**The listener** accepts a tap (a `callback_query`) only when all of these
-hold, else it answers "This question is closed." and writes nothing:
+**The listener** calls `deleteWebhook` at start and then `getUpdates` with
+`allowed_updates = ["callback_query"]`. It accepts a tap only when all of
+these hold, else it answers "This question is closed." and writes nothing:
 
 - `from.id` is `owner_id`, and `message.chat.id` is `chat_id`;
 - the data is `a:CODE` or `s:CODE`, and CODE is a code that it holds;
 - the message ID is the message ID of that question;
+- the message was not edited (no `edit_date`), and its text is the text
+  that Telegram gave back when the listener sent it (a SHA-256 of it is
+  kept). So a token thief who edits the text above real buttons gets no
+  tap counted (THREAT-MODEL.md T1);
 - the question has not expired by the listener's clock;
 - the question has no tap yet. After the first tap the listener forgets the
   code, so a second tap does nothing.
@@ -304,55 +370,63 @@ hold, else it answers "This question is closed." and writes nothing:
 Then it writes the approval, edits the question ("Apply tapped. Waiting for
 the host." or "Skipped."), and answers the tap.
 
-**Root** (`pullgate apply NAME`) takes the lock (with a wait), reads every
-approval in the inbox and removes it, and for each one:
+**Root** (`pullgate apply NAME`) takes the lock (with a wait). If the pause
+file exists or `mode = "off"`, it removes the approvals, replies "ignored:
+the instance is paused" (or off) to each question it knows, and exits.
+Else it reads the approvals in name order. For each one:
 
-1. finds the question with that code in its own state, with a constant-time
+1. find the question with that code in its own state, with a constant-time
    compare. No match: log and ignore.
-2. checks `asked <= now < expires` by its own clock. Else: ignore, and drop
-   the question.
-3. removes the question from its state (synced), so the code works once.
-4. `skip`: marks the SHA skipped, reports, done.
-5. `apply`: takes the SHA **from its own state**, never from the approval.
-   It checks again that the SHA descends from the applied SHA (unless
-   `allow_older`), then applies it (section 10).
+2. check `asked <= now < expires` by its own clock. Else: drop the question,
+   reply "expired", ignore.
+3. remove the question from its state (synced), so the code works once.
+4. `skip`: mark the SHA skipped, reply "skipped", next approval.
+5. `apply`: take the SHA **from its own state**, never from the approval.
+   Check again that the SHA descends from the applied SHA (unless
+   `allow_older`, or there is no applied SHA). Else reply "refused" and
+   ignore. Then apply it (section 10).
 
-Questions per day, the approval time limit and the failed tries per SHA are
-limits in the config (section 5).
+`pullgate apply` does at most one apply. Approvals after it stay in the
+inbox for the next start. After an apply, every open question whose `base`
+is no longer the applied SHA is closed ("the applied commit changed"), and
+its SHA mark is cleared, so the next run asks again with a correct summary.
 
 ## 10. The apply
 
-Before it runs the `apply` command, root writes `in_progress = {sha,
-old_sha, started}` to the state and syncs it. Then:
+The steps, with the state synced to disk at each arrow:
 
-1. Run `apply` as root, in the tree of the SHA, with the environment of
-   section 11. Then `health`, if it is set.
-2. Both succeed: the applied SHA becomes this SHA, `in_progress` is cleared,
-   the failed mark is cleared, the state is synced. Report "applied".
-3. One fails: count a failed try for this SHA. Then by `on_failure`:
-   - `rollback`: when there is an applied SHA, run `apply` again with the
-     last good SHA (the applied SHA, its tree as `PULLGATE_TREE`), then
-     `health`. If that works, report "failed, rolled back to OLD". If it
-     also fails, write the pause file and report "failed, the rollback failed
-     too, the instance is paused". With no applied SHA there is nothing to
-     roll back to: hold the SHA as in `pause`.
-   - `pause`: do not roll back and do not write the pause file. Hold the
-     failed SHA: it is not tried again, every report and `pullgate status`
-     say that the last apply failed, and a **newer** commit is still asked,
-     with the line "The last apply (SHA) failed." at the top. So the owner
-     can fix it forward with a new commit.
-   In both cases `in_progress` is cleared and the applied SHA does not
-   change. State moves forward only after success.
+1. Write `in_progress = {phase: "apply", sha, old_sha}` →
+2. Export fresh trees (section 6). Run `apply` as root in the tree of the
+   SHA (environment in section 11). Then `health`, if it is set.
+3. Both succeed: the applied SHA becomes this SHA, `refs/pullgate/applied`
+   moves, `in_progress` and the held SHA are cleared, all marks of older
+   SHAs are dropped → report "applied".
+4. One fails: count a failed try for this SHA →. Then by `on_failure`:
+   - `rollback`, with an applied SHA: write `in_progress = {phase:
+     "rollback", sha, old_sha}` →. Run `apply` with the last good SHA, then
+     `health`. If that works, clear `in_progress` → and report "failed,
+     rolled back to OLD". If it fails too, write the pause file, clear
+     `in_progress` → and report "failed, the rollback failed too, the
+     instance is paused". With no applied SHA there is nothing to roll back
+     to: hold the SHA, as with `pause`.
+   - `pause`: do not roll back and do not write the pause file. The SHA
+     becomes the held SHA. Clear `in_progress` →. It is not tried again,
+     every report and `pullgate status` say that the last apply failed, and
+     a **newer** commit is still asked, with the line "The last apply (SHA)
+     failed." at the top. So the owner can fix it forward with a new commit.
+   The applied SHA does not change after a failure. State moves forward
+   only after success.
 
-A SHA with `max_failed_tries` failed tries is not asked again until a new
-commit (or `--ask-again`). With `on_failure = "pause"` a failed SHA is held
-at once.
+**Tries.** Every try needs a new question and a new tap (in `auto` mode, a
+new run). With `rollback`, a SHA with fewer than `max_failed_tries` failed
+tries is asked again on the next run; with `max_failed_tries` failed tries
+it is not asked again until a new commit (or `--ask-again`). With `pause`,
+a failed SHA is held at once and the count does not matter.
 
-**A crash** between the start of `apply` and the state write leaves
-`in_progress` in the state. The next run or apply cannot know what happened
-on the host. It writes the pause file, marks the SHA failed and reports
-"the apply of SHA was cut off; check the host, then remove the pause file
-with `pullgate status NAME --resume`".
+**A crash** leaves `in_progress` in the state. The next run or apply cannot
+know what happened on the host. It writes the pause file, marks the SHA
+failed and reports "the apply (or rollback) of SHA was cut off; check the
+host, then run `pullgate status NAME --resume`".
 
 **Changes to the gate.** An approved commit may change the gate itself: the
 host config, the units, or the pullgate binary, when the `apply` command
@@ -372,10 +446,18 @@ They run with an empty environment plus:
 - `PULLGATE_TREE`: the tree of `PULLGATE_SHA`, read-only
 - `PULLGATE_OLD_TREE`: the tree of `PULLGATE_OLD_SHA`, read-only, empty on
   the first apply
-- `PULLGATE_CHANGED_FILES`: the path of a read-only file with the changed
-  paths, each one ended by a NUL byte (all paths on the first apply). Read
-  it with `xargs -0`. A file, because a list of paths can be too long for
-  the environment and a path can hold a newline.
+- `PULLGATE_CHANGED_FILES`: the path of a read-only file with the paths
+  that differ between the two SHAs, each one ended by a NUL byte (all paths
+  on the first apply). Read it with `xargs -0`. A file, because a list of
+  paths can be too long for the environment and a path can hold a newline.
+- `PULLGATE_FAILED_SHA`: the held SHA, if there is one. The host may be
+  part way to it, not at `PULLGATE_OLD_SHA`.
+- `PULLGATE_ROLLBACK`: `1` during a rollback, else empty.
+
+**In a rollback**, `PULLGATE_SHA` and `PULLGATE_TREE` are the last good SHA
+and its tree; `PULLGATE_OLD_SHA` and `PULLGATE_OLD_TREE` are the SHA that
+just failed and its tree; `PULLGATE_CHANGED_FILES` lists the paths that
+differ between them. So `apply` must be safe to run again on an older tree.
 
 Their working directory is `PULLGATE_TREE`. Each has a timeout
 (`check_timeout`, `apply_timeout`); on timeout the whole process group is
@@ -389,8 +471,12 @@ section 12.
 no other groups. When pullgate runs as root, `check_user` must not be root
 (uid 0): pullgate refuses such a config. When pullgate does not run as root
 (tests, a trial), it cannot change user, so `check_user` must be the user
-that runs it. The run unit's sandbox (read-only system, private `/tmp`, no
-new privileges) also applies to them.
+that runs it. A process of `check_user` could leave its process group and
+live on. So after each `check` and `summary`, root runs `kill -KILL -1` as
+`check_user`, which stops every process of that user; and when the run unit
+ends, systemd stops everything left in its cgroup. Use one `check_user` per
+instance. The run unit's sandbox (read-only system, private `/tmp`, no new
+privileges) also applies to them.
 
 ## 12. The message
 
@@ -404,42 +490,46 @@ Apply this commit?
 <code>FULL SHA</code>
 First apply: there is no applied commit yet. All N files are listed.
 or: Since <code>APPLIED SHA</code>:
+⚠ Watched path changed: path
+⚠ Symlink out of the tree: path → target
+⚠ Submodule skipped: path
 
 Commits (N):
 • subject
 Changed files (N):
 • path
-⚠ Watched path changed: path
-⚠ Submodule skipped: path
 Summary:
 <pre>output of the summary command</pre>
 ```
 
-Text from the commit (subjects, paths, summary output) is cleaned before it
-is shown: control and invisible characters become `?` (newlines stay only
-in the summary output), each line is cut to 200 characters, and then it is
-HTML-escaped. At most 50 commit subjects are read.
+Text from the commit (subjects, paths, symlink targets, summary output) is
+cleaned before it is shown: control and invisible characters become `?`
+(newlines stay only in the summary output), each line is cut to 200
+characters, and then it is HTML-escaped. At most 50 commit subjects are
+read.
 
-The message must fit one Telegram message. pullgate cuts it to 3800
-characters: the head (host, instance, SHA, warnings) always stays, the
-watch warnings come before the lists, and when lines are left out the last
-line says how many ("… 120 more lines left out"). The cut is done on
-whole lines, before the lines are joined, so it never splits an HTML tag or
-entity.
+The message must fit one Telegram message (4096 characters). pullgate cuts
+it to 3800 characters, counted on the escaped text in UTF-16 units: the head
+(host, instance, SHA, the warnings) always stays, and when lines are left
+out the last line says how many ("… 120 more lines left out"). The cut is on
+whole lines, so it never splits an HTML tag or entity. The `<pre>` block is
+closed after a cut.
 
 ## 13. Modes, limits, status
 
 - `ask` (the default): as above.
-- `auto`: no question; `pullgate run` applies the tip itself after the check
-  passes, with the same steps (section 10), and reports. For development
-  hosts.
-- `off`: `pullgate run` does nothing.
+- `auto`: no question. `pullgate run` records the question in its state and
+  writes its code to `/var/lib/pullgate/NAME/auto-approval` (root-owned,
+  0600). The path unit starts `pullgate apply`, which handles it like an
+  approval from the inbox, then removes it, and reports. The apply needs
+  the same checks (code, time, forward only). For development hosts.
+- `off`: `pullgate run` and `pullgate apply` do nothing.
 
 `pullgate status NAME` prints the mode, the applied SHA, the open question,
-the held failed SHA, the pause file and an apply in progress. Flags:
+the held SHA, the pause file and an apply in progress. Flags:
 
-- `--ask-again`: clear the marks of the tip (expired, skipped, check
-  failed, failed), so the next run asks again;
+- `--ask-again`: clear the marks of the last fetched tip (expired, skipped,
+  check failed, refused, failed, held), so the next run asks again;
 - `--pause`: write the pause file;
 - `--resume`: remove the pause file and clear an apply in progress.
 
