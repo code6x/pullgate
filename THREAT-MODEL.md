@@ -288,6 +288,19 @@ repo URL must pass the same check as the clone, because root runs
 *Defense.* At most one open question per instance; a newer tip replaces it.
 `questions_per_day` caps the questions. A SHA is asked once.
 
+### T16. A bad release binary
+
+*Attack.* The `pullgate` binary runs as root. Whoever can publish a release
+ships code to root on every host that installs it.
+
+*Defense.* A release is the merge of the release pull request on `main`
+(docs/releasing.md). Only the release App can create a `v*` tag, nobody can
+move one, releases are immutable, and the `release` environment needs the
+owner's approval. The build job is read-only and checks that the tag is the
+commit of the run. Each tarball has a SHA-256 in `SHA256SUMS` and a build
+provenance attestation tied to `release.yml` on `main`. Check both before
+you install (docs/releasing.md, "Verify a download").
+
 ## 6. Out of scope
 
 - An attacker who is root on the host.
