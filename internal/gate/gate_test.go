@@ -639,8 +639,8 @@ func TestSymlinkWarningAndRefuse(t *testing.T) {
 		t.Fatal(err)
 	}
 	g.commit("link", "one", nil)
-	if _, err := g.env.Run(context.Background()); err == nil {
-		t.Fatal("refuse_symlinks must stop the commit")
+	if r := g.run(); r != CheckFailed {
+		t.Fatalf("refuse_symlinks must stop the commit: %s", r)
 	}
 	if contains(g.outbox(), "Apply this commit?") {
 		t.Fatal("no question for a refused commit")
@@ -659,5 +659,74 @@ func TestBranchBackToApplied(t *testing.T) {
 	}
 	if !contains(f.outbox(), "back to the applied commit") {
 		t.Fatal("no close")
+	}
+}
+
+func TestCheckTimeout(t *testing.T) {
+	f := newFixture(t, ``, "")
+	f.script("check.sh", "sleep 30\n")
+	f.env.Cfg.Commands.CheckTimeout.Duration = time.Second
+	f.commit("first", "one", nil)
+	start := time.Now()
+	if r := f.run(); r != CheckFailed {
+		t.Fatalf("run: %s", r)
+	}
+	if time.Since(start) > 15*time.Second {
+		t.Fatal("the timeout did not stop the check")
+	}
+	if !contains(f.outbox(), "timed out") {
+		t.Fatal("no notice")
+	}
+}
+
+func TestClosedQuestionAsksAgainWhenTheSHAComesBack(t *testing.T) {
+	f := newFixture(t, ``, "")
+	a := f.applyNew("one")
+	b := f.commit("second", "two", nil)
+	f.run()
+	f.outbox()
+	f.r.Push(a) // the branch goes back: the question for b is closed
+	f.run()
+	f.outbox()
+	f.r.Push(b) // and b comes back
+	if r := f.run(); r != Asked {
+		t.Fatalf("b must be asked again: %s", r)
+	}
+}
+
+func TestFailedOutboxWriteIsTriedAgain(t *testing.T) {
+	f := newFixture(t, ``, "")
+	f.commit("first", "one", nil)
+	// The check runs after the spool is set up: it breaks the outbox.
+	f.script("check.sh", "chmod 0500 "+f.env.Spool.Outbox()+"\n")
+	if _, err := f.env.Run(context.Background()); err == nil {
+		t.Fatal("a failed outbox write must be an error")
+	}
+	if f.state().Open() != nil {
+		t.Fatal("an undelivered question must not stay open")
+	}
+	f.script("check.sh", "true\n")
+	if r := f.run(); r != Asked { // Ensure fixes the mode again
+		t.Fatalf("the next run must ask: %s", r)
+	}
+}
+
+func TestStopDuringApplyLeavesInProgress(t *testing.T) {
+	f := newFixture(t, `on_failure = "rollback"`, "")
+	f.applyNew("one")
+	f.commit("second", "two", nil)
+	f.run()
+	f.tap(f.ask().Code, "apply")
+	f.script("apply.sh", "sleep 30\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(500*time.Millisecond, cancel)
+	if _, err := f.env.Apply(ctx); err == nil {
+		t.Fatal("a stop during apply must be an error")
+	}
+	if f.state().InProgress == nil || f.env.Dir.Paused() {
+		t.Fatal("a stop must leave in_progress, and must not roll back or pause yet")
+	}
+	if r := f.run(); r != CutOff || !f.env.Dir.Paused() {
+		t.Fatalf("the next start must pause: %s", r)
 	}
 }

@@ -5,6 +5,7 @@ package gate
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -96,6 +97,9 @@ func New(cfg *config.Instance, stateBase, spoolBase string, uid uint32, log *slo
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", cfg.Path, err)
 	}
+	if uid == 0 && (sb.UID == owners.ListenerUID || sb.GID == owners.ListenerGID) {
+		return nil, fmt.Errorf("%s: check_user and the listener user must be different users with different groups: a check that is taken over could write approvals (THREAT-MODEL.md T2). Fix: set [commands] check_user to its own user", cfg.Path)
+	}
 	if err := cfg.CheckGateFiles(uid); err != nil {
 		return nil, err
 	}
@@ -149,7 +153,6 @@ func (e *Env) environ(c cmdEnv) []string {
 	}
 	return []string{
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-		"LANG=C.UTF-8",
 		"PULLGATE_INSTANCE=" + e.Cfg.Name,
 		"PULLGATE_SHA=" + c.SHA,
 		"PULLGATE_OLD_SHA=" + c.OldSHA,
@@ -178,8 +181,8 @@ func (e *Env) command(ctx context.Context, argv []string, c cmdEnv, sandbox bool
 }
 
 // runSandboxed runs check or summary as check_user and returns its output.
-func (e *Env) runSandboxed(ctx context.Context, argv []string, c cmdEnv) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, e.Cfg.Commands.CheckTimeout.Duration)
+func (e *Env) runSandboxed(parent context.Context, argv []string, c cmdEnv) (string, error) {
+	ctx, cancel := context.WithTimeout(parent, e.Cfg.Commands.CheckTimeout.Duration)
 	defer cancel()
 	cmd := e.command(ctx, argv, c, true)
 	out := &capBuf{}
@@ -187,6 +190,9 @@ func (e *Env) runSandboxed(ctx context.Context, argv []string, c cmdEnv) (string
 	cmd.Stderr = out
 	err := cmd.Run()
 	e.killSandbox()
+	if err != nil && parent.Err() != nil {
+		return "", fmt.Errorf("stopped: %w", parent.Err())
+	}
 	if ctx.Err() != nil && err != nil {
 		err = fmt.Errorf("timed out after %s", e.Cfg.Commands.CheckTimeout.Duration)
 	}
@@ -214,8 +220,8 @@ func (e *Env) killSandbox() {
 }
 
 // runRoot runs apply or health as root. The output goes to the journal.
-func (e *Env) runRoot(ctx context.Context, what string, argv []string, c cmdEnv) error {
-	ctx, cancel := context.WithTimeout(ctx, e.Cfg.Commands.ApplyTimeout.Duration)
+func (e *Env) runRoot(parent context.Context, what string, argv []string, c cmdEnv) error {
+	ctx, cancel := context.WithTimeout(parent, e.Cfg.Commands.ApplyTimeout.Duration)
 	defer cancel()
 	cmd := e.command(ctx, argv, c, false)
 	w := e.CmdOut
@@ -226,6 +232,9 @@ func (e *Env) runRoot(ctx context.Context, what string, argv []string, c cmdEnv)
 	cmd.Stderr = w
 	e.Log.Info("start "+what, "sha", c.SHA, "rollback", c.Rollback)
 	err := cmd.Run()
+	if err != nil && parent.Err() != nil {
+		return fmt.Errorf("%s stopped: %w", what, ErrStopped)
+	}
 	if ctx.Err() != nil && err != nil {
 		err = fmt.Errorf("timed out after %s", e.Cfg.Commands.ApplyTimeout.Duration)
 	}
@@ -236,6 +245,11 @@ func (e *Env) runRoot(ctx context.Context, what string, argv []string, c cmdEnv)
 	e.Log.Info(what+" done", "sha", c.SHA)
 	return nil
 }
+
+// ErrStopped means pullgate itself was stopped (a signal) during a
+// command. The result of an apply is then unknown: in_progress stays, and
+// the next start pauses (DESIGN.md section 10).
+var ErrStopped = errors.New("pullgate was stopped")
 
 // trees is the per-process directory of trees.
 type trees struct {
@@ -296,7 +310,7 @@ func (e *Env) prepare(ctx context.Context, t *trees, tag, sha, old string) (*pre
 		return nil, err
 	}
 	if e.Cfg.Limits.RefuseSymlinks && len(p.tree.Symlinks) > 0 {
-		return nil, fmt.Errorf("the commit has a symlink out of the tree (%s), and refuse_symlinks is on", p.tree.Symlinks[0].Path)
+		return nil, &gitx.HostileError{Msg: fmt.Sprintf("the commit has a symlink out of the tree (%s), and refuse_symlinks is on", p.tree.Symlinks[0].Path)}
 	}
 	if old != "" {
 		p.env.OldTree = filepath.Join(t.dir, tag+"-old")

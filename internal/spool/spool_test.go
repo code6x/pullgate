@@ -55,6 +55,11 @@ func TestBadApprovals(t *testing.T) {
 				t.Fatal(err)
 			}
 		},
+		"directory": func(t *testing.T, d Dirs) {
+			if err := os.MkdirAll(filepath.Join(d.Inbox(), "1.json", "x"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		},
 		"fifo": func(t *testing.T, d Dirs) {
 			if err := syscall.Mkfifo(filepath.Join(d.Inbox(), "1.json"), 0o600); err != nil {
 				t.Skip(err)
@@ -106,10 +111,11 @@ func TestSendRefusesSymlinkedOutboxAndUnsafeSpool(t *testing.T) {
 	if _, err := os.Lstat(target); err == nil {
 		t.Fatal("root followed a symlink in the outbox")
 	}
-	// Ensure refuses a spool that others can write.
-	if err := os.Chmod(d.Base, 0o777); err != nil {
+	// Ensure refuses a spool under a directory that others can write.
+	if err := os.Chmod(filepath.Dir(d.Base), 0o777); err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = os.Chmod(filepath.Dir(d.Base), 0o700) }()
 	if err := d.Ensure(uint32(os.Geteuid()), Owners{ListenerUID: os.Geteuid(), ListenerGID: os.Getegid()}); err == nil {
 		t.Fatal("a spool that others can write must be refused")
 	}

@@ -163,8 +163,9 @@ func TestExpiredAskIsNotSent(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.l.Outbox(context.Background())
-	if len(f.tg.Messages()) != 0 {
-		t.Fatal("an expired question must not be sent")
+	ms := f.tg.Messages()
+	if len(ms) != 1 || len(ms[0].Buttons) != 0 || !strings.Contains(ms[0].Text, "expired before it could be sent") {
+		t.Fatalf("an expired question must not be sent, only a notice: %+v", ms)
 	}
 }
 

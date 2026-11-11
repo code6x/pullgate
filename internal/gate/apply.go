@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/code6x/pullgate/internal/config"
+	"github.com/code6x/pullgate/internal/message"
 	"github.com/code6x/pullgate/internal/spool"
 	"github.com/code6x/pullgate/internal/state"
 )
@@ -177,7 +178,8 @@ func (e *Env) handle(ctx context.Context, st *state.State, a spool.Approval) (Re
 		return Skipped, false, e.Dir.Save(st)
 	}
 	r, err := e.applySHA(ctx, st, q)
-	return r, true, err
+	ran := r != Ignored && r != Refused
+	return r, ran || err != nil, err
 }
 
 // applySHA applies the SHA of question q, taken from root's own state.
@@ -211,6 +213,9 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 	defer t.remove()
 
 	err = e.tryApply(ctx, t, "apply", sha, old, st.Held, false)
+	if stopped(ctx, err) {
+		return "", err // in_progress stays: the next start pauses
+	}
 	if err == nil {
 		st.Applied, st.AppliedAt = sha, e.now()
 		st.InProgress, st.Held = nil, ""
@@ -239,8 +244,11 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 			return "", err
 		}
 		rerr := e.tryApply(ctx, t, "rb", old, sha, sha, true)
-		st.InProgress = nil
+		if stopped(ctx, rerr) {
+			return "", rerr
+		}
 		if rerr == nil {
+			st.InProgress = nil
 			if err := e.Dir.Save(st); err != nil {
 				return "", err
 			}
@@ -248,8 +256,12 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 			return RolledBack, nil
 		}
 		if perr := e.Dir.Pause("the rollback to " + old + " failed after the apply of " + sha + " failed"); perr != nil {
+			// in_progress stays, so the next start pauses (cutOff).
 			e.Log.Error("write the pause file", "err", perr)
+			e.reply(q.ID, "❌ The apply of "+code(sha)+" failed, the rollback failed too, and the pause file could not be written. Check the host now.")
+			return RollbackError, perr
 		}
+		st.InProgress = nil
 		if err := e.Dir.Save(st); err != nil {
 			return "", err
 		}
@@ -264,6 +276,11 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 	}
 	e.reply(q.ID, "❌ The apply of "+code(sha)+" failed ("+failure+"). It is held and not tried again. A newer commit will be asked, so you can fix it forward.")
 	return Held, nil
+}
+
+// stopped reports whether err comes from a stop of pullgate itself.
+func stopped(ctx context.Context, err error) bool {
+	return err != nil && (ctx.Err() != nil || errors.Is(err, ErrStopped))
 }
 
 // tryApply exports fresh trees and runs apply, then health.
@@ -301,10 +318,4 @@ func (e *Env) afterApply(st *state.State) {
 	st.Questions = keep
 }
 
-func esc(err error) string {
-	s := err.Error()
-	if len(s) > 300 {
-		s = s[:300]
-	}
-	return strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(s, "&", "&amp;"), "<", "&lt;"), ">", "&gt;")
-}
+func esc(err error) string { return message.Esc(err.Error()) }

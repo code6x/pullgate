@@ -18,12 +18,14 @@ KillMode=control-group
 
 # Sandbox. Root needs: CAP_SETUID/CAP_SETGID to run check as check_user,
 # CAP_CHOWN/CAP_FOWNER to fix the spool owners, CAP_DAC_OVERRIDE to remove
-# files in the listener's inbox.
-CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE
+# files in the listener's inbox, CAP_KILL to stop a check that runs too long.
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_KILL
 AmbientCapabilities=
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/var/lib/pullgate /var/spool/pullgate
+StateDirectory=pullgate
+StateDirectoryMode=0711
+ReadWritePaths=/var/spool/pullgate
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes

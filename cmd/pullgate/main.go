@@ -40,7 +40,9 @@ func usageErr(stderr io.Writer, msg string) int {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	syscall.Umask(0o077)
+	// pullgate sets the mode of its own files itself. 022 is what the
+	// owner's apply command expects (DESIGN.md section 11).
+	syscall.Umask(0o022)
 	fs := flag.NewFlagSet("pullgate", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	configDir := fs.String("config-dir", "/etc/pullgate", "")

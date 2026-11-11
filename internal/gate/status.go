@@ -18,21 +18,24 @@ func (e *Env) Status(w io.Writer, f StatusFlags) error {
 	if err := e.Dir.Ensure(); err != nil {
 		return err
 	}
-	lock, err := e.Dir.Lock(true)
-	if err != nil {
-		return err
+	if f.Pause {
+		// The pause file needs no lock, so it works while an apply runs.
+		if err := e.Dir.Pause("paused by the owner"); err != nil {
+			return err
+		}
 	}
-	defer func() { _ = lock.Close() }()
+	if f.Resume || f.AskAgain {
+		lock, err := e.Dir.Lock(true)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = lock.Close() }()
+	}
 	st, err := e.Dir.Load()
 	if err != nil {
 		return err
 	}
 	changed := false
-	if f.Pause {
-		if err := e.Dir.Pause("paused by the owner"); err != nil {
-			return err
-		}
-	}
 	if f.Resume {
 		if err := e.Dir.Resume(); err != nil {
 			return err

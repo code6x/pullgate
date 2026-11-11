@@ -249,14 +249,54 @@ func (c *Instance) CheckGateFiles(uid uint32) error {
 	return nil
 }
 
-// checkProgram checks a program file like a gate file. A symlink is
-// allowed when its target passes the check (such as /bin -> usr/bin).
+// checkProgram checks a program file like a gate file. A symlink on the
+// way (such as /bin -> usr/bin) is allowed only when the directory that
+// holds it passes the check too, and the target passes it.
 func checkProgram(p string, uid uint32) error {
 	real, err := filepath.EvalSymlinks(p)
 	if err != nil {
 		return fmt.Errorf("the program %s: %w. Fix: install it, or fix the path", p, err)
 	}
+	if real != p {
+		if err := safedir.CheckParents(filepath.Dir(p), uid); err != nil && !errors.Is(err, safedir.ErrSymlink) {
+			return fmt.Errorf("the program %s: %w", p, err)
+		}
+		if err := checkLinks(p, uid); err != nil {
+			return err
+		}
+	}
 	return checkFile(real, uid, false)
+}
+
+// checkLinks checks that each symlink on the way to p is owned by uid
+// (or root) and that the directory that holds it passes the check.
+func checkLinks(p string, uid uint32) error {
+	cur := "/"
+	for _, part := range strings.Split(strings.TrimPrefix(filepath.Clean(p), "/"), "/") {
+		next := filepath.Join(cur, part)
+		fi, err := os.Lstat(next)
+		if err != nil {
+			return fmt.Errorf("the program %s: %w", p, err)
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			real, err := filepath.EvalSymlinks(cur)
+			if err != nil {
+				return err
+			}
+			if err := safedir.CheckParents(real, uid); err != nil {
+				return fmt.Errorf("the program %s: the symlink %s is in an unsafe directory: %w", p, next, err)
+			}
+			if err := safedir.CheckOwner(fi, uid); err != nil {
+				return fmt.Errorf("the program %s: the symlink %s: %w", p, next, err)
+			}
+		}
+		if r, err := filepath.EvalSymlinks(next); err == nil {
+			cur = r
+		} else {
+			return err
+		}
+	}
+	return nil
 }
 
 // checkFile checks a file and the directories above it.

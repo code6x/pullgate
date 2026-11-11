@@ -83,6 +83,11 @@ func (d Dirs) Ensure(uid uint32, o Owners) error {
 			return fmt.Errorf("make %s: %w", p, err)
 		}
 	}
+	for _, p := range []string{d.Base, d.inst()} {
+		if err := os.Chmod(p, 0o755); err != nil {
+			return fmt.Errorf("fix %s: %w", p, err)
+		}
+	}
 	if err := safedir.CheckParents(d.inst(), uid); err != nil {
 		return fmt.Errorf("the spool is not safe: %w", err)
 	}
@@ -195,7 +200,7 @@ func list(root *os.Root) ([]string, error) {
 	var out []string
 	for _, n := range names {
 		if strings.HasPrefix(n, ".tmp-") {
-			if fi, err := root.Lstat(n); err == nil && time.Since(fi.ModTime()) > time.Minute {
+			if fi, err := root.Lstat(n); err == nil && time.Since(fi.ModTime()) > 10*time.Second {
 				_ = root.Remove(n)
 			}
 			continue
@@ -263,8 +268,9 @@ func (d Dirs) TakeApprovals(listenerUID int, max int) ([]Entry, error) {
 		}
 		e := Entry{Name: n}
 		b, err := readOne(root, n, MaxApproval, listenerUID)
-		if rerr := root.Remove(n); rerr != nil && err == nil {
-			err = fmt.Errorf("remove: %w", rerr)
+		if rerr := root.RemoveAll(n); rerr != nil {
+			// It cannot be used, and it stays: stop, so nobody loops on it.
+			return out, fmt.Errorf("remove %s/%s: %w. Fix: remove it as root", d.Inbox(), n, rerr)
 		}
 		if err == nil {
 			e.Approval, err = ParseApproval(b)

@@ -20,6 +20,21 @@ func ownerOf(fi fs.FileInfo) (uint32, error) {
 	return st.Uid, nil
 }
 
+// ErrSymlink is part of the error for a symlink on the way.
+var ErrSymlink = errors.New("symlink on the way")
+
+// CheckOwner checks that fi is owned by uid or by root.
+func CheckOwner(fi fs.FileInfo, uid uint32) error {
+	own, err := ownerOf(fi)
+	if err != nil {
+		return err
+	}
+	if own != uid && own != 0 {
+		return fmt.Errorf("owned by uid %d, not by uid %d or root", own, uid)
+	}
+	return nil
+}
+
 // CheckParents checks dir and each directory above it up to "/". Each one
 // must be a real directory (not a symlink), owned by uid or by root, and
 // not writable by group or others. A directory that others can write is
@@ -36,7 +51,7 @@ func CheckParents(dir string, uid uint32) error {
 			return fmt.Errorf("check %s: %w", p, err)
 		}
 		if fi.Mode()&fs.ModeSymlink != 0 {
-			return fmt.Errorf("%s is a symlink; root runs git only under real directories. Fix: use a path without symlinks", p)
+			return fmt.Errorf("%s is a symlink; root uses only real directories here. Fix: use a path without symlinks: %w", p, ErrSymlink)
 		}
 		if !fi.IsDir() {
 			return fmt.Errorf("%s is not a directory", p)

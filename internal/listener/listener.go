@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -126,7 +127,11 @@ func (l *Listener) Run(ctx context.Context) error {
 	if poll == 0 {
 		poll = 2 * time.Second
 	}
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		t := time.NewTicker(poll)
 		defer t.Stop()
 		for {
@@ -169,6 +174,7 @@ func (l *Listener) Run(ctx context.Context) error {
 func (l *Listener) Outbox(ctx context.Context) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+instances:
 	for _, inst := range l.Cfg.Instances {
 		d := l.dirs(inst)
 		files, err := d.ReadOutbox()
@@ -192,13 +198,16 @@ func (l *Listener) Outbox(ctx context.Context) {
 				l.Log.Warn("a message could not be sent for a day, dropped", "instance", inst, "kind", f.Message.Kind, "err", err)
 			default:
 				l.Log.Warn("send failed, will try again", "instance", inst, "kind", f.Message.Kind, "err", err)
-				return // keep the order: try this one again first
+				continue instances // keep the order of this instance: try this one again first
+			}
+			// Save first: a question whose code is not saved could never
+			// be answered. A repeated ask is safe (find skips it).
+			if err := l.save(); err != nil {
+				l.Log.Error("save the listener state", "err", err)
+				return
 			}
 			if err := d.Done(f.Name); err != nil {
 				l.Log.Warn("remove an outbox file", "instance", inst, "err", err)
-			}
-			if err := l.save(); err != nil {
-				l.Log.Error("save the listener state", "err", err)
 			}
 		}
 	}
@@ -209,7 +218,10 @@ func (l *Listener) send(ctx context.Context, inst string, m spool.Message) error
 	switch m.Kind {
 	case spool.KindAsk:
 		if len(m.Code) != 22 || !l.now().Before(m.Expires) {
-			return nil // expired or broken: never show buttons for it
+			// Expired or broken: never show buttons for it.
+			l.Log.Warn("a question expired before it could be sent, dropped", "instance", inst, "question", m.Question)
+			_, err := l.TG.SendMessage(ctx, chat, "pullgate: a question of instance <b>"+html.EscapeString(inst)+"</b> expired before it could be sent. The next commit, or <code>pullgate status "+html.EscapeString(inst)+" --ask-again</code>, asks again.", nil, 0)
+			return err
 		}
 		if q := l.find(inst, m.Question); q != nil {
 			return nil // sent already
@@ -230,8 +242,8 @@ func (l *Listener) send(ctx context.Context, inst string, m spool.Message) error
 	case spool.KindEdit:
 		q := l.find(inst, m.Question)
 		if q == nil {
-			_, err := l.TG.SendMessage(ctx, chat, m.Text, nil, 0)
-			return err
+			l.Log.Info("edit of a question that was never sent, dropped", "instance", inst, "question", m.Question)
+			return nil
 		}
 		q.Code = "" // closed: a tap after this never counts
 		q.Text = m.Text

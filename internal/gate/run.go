@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/code6x/pullgate/internal/config"
+	"github.com/code6x/pullgate/internal/gitx"
 	"github.com/code6x/pullgate/internal/message"
 	"github.com/code6x/pullgate/internal/spool"
 	"github.com/code6x/pullgate/internal/state"
@@ -98,6 +99,9 @@ func (e *Env) expire(st *state.State) {
 func (e *Env) closeOpen(st *state.State, why string) {
 	if q := st.Open(); q != nil {
 		q.Open = false
+		if m := st.Marks[q.SHA]; m != nil && m.Mark == state.MarkAsked {
+			delete(st.Marks, q.SHA) // a closed question does not block a later ask
+		}
 		if !q.Auto {
 			e.edit(q.ID, "This question for "+code(q.SHA)+" is closed: "+why)
 		}
@@ -214,9 +218,14 @@ func (e *Env) decide(ctx context.Context, st *state.State, tip string) (Result, 
 	defer t.remove()
 	p, err := e.prepare(ctx, t, "run", tip, st.Applied)
 	if err != nil {
-		st.SetMark(tip, state.MarkCheckFailed, now)
-		e.notice("⚠ " + code(tip) + " could not be read, so it is not asked: " + message.Esc(err.Error()))
-		return CheckFailed, fmt.Errorf("export %s: %w", tip, err)
+		var hostile *gitx.HostileError
+		if errors.As(err, &hostile) {
+			// The commit itself is bad: it is not tried again.
+			st.SetMark(tip, state.MarkCheckFailed, now)
+			e.notice("⚠ " + code(tip) + " is refused, so it is not asked: " + message.Esc(err.Error()))
+			return CheckFailed, nil
+		}
+		return "", fmt.Errorf("export %s: %w", tip, err)
 	}
 	p.env.Failed = st.Held
 	if argv := e.Cfg.Commands.Check; len(argv) > 0 {
@@ -267,17 +276,26 @@ func (e *Env) decide(ctx context.Context, st *state.State, tip string) (Result, 
 	if err := e.Dir.Save(st); err != nil {
 		return "", err
 	}
+	// undo forgets the question when it could not be delivered, so the
+	// next run tries again.
+	undo := func(err error) (Result, error) {
+		if i := st.FindCode(c); i >= 0 {
+			st.Remove(i)
+		}
+		delete(st.Marks, tip)
+		return "", err
+	}
 	if nq.Auto {
 		if err := state.WriteFileAtomic(e.Dir.AutoFile(), []byte(c+"\n"), 0o600); err != nil {
-			return "", err
+			return undo(err)
 		}
 		e.Log.Info("auto mode: apply queued", "sha", tip)
 		return AutoQueued, nil
 	}
-	st.AskTimes = append(st.AskTimes, now)
 	if err := e.Spool.Send(spool.Message{Kind: spool.KindAsk, Question: nq.ID, Code: c, Expires: nq.Expires, Text: text}); err != nil {
-		return "", err
+		return undo(err)
 	}
+	st.AskTimes = append(st.AskTimes, now)
 	e.Log.Info("asked", "sha", tip, "question", nq.ID)
 	return Asked, nil
 }
@@ -290,6 +308,9 @@ func lastLines(out string, n int) string {
 		lines = lines[len(lines)-n:]
 	}
 	for i, l := range lines {
+		if r := []rune(l); len(r) > 100 {
+			l = string(r[:100]) + "…"
+		}
 		lines[i] = message.Esc(l)
 	}
 	s := strings.Join(lines, "\n")

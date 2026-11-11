@@ -17,6 +17,8 @@ import (
 	"sort"
 	"syscall"
 	"time"
+
+	"github.com/code6x/pullgate/internal/safedir"
 )
 
 // Marks of a SHA.
@@ -168,8 +170,12 @@ func (d Dir) Repo() string { return d.file("repo.git") }
 // Trees is the directory of the trees.
 func (d Dir) Trees() string { return d.file("trees") }
 
-// Ensure makes the state directory (0711) and the trees directory.
+// Ensure makes the state directory (0711) and the trees directory. The
+// directories above must pass the check of rule 6.
 func (d Dir) Ensure() error {
+	if err := safedir.CheckParents(filepath.Dir(d.Path), uint32(os.Geteuid())); err != nil { //nolint:gosec // a uid fits in uint32
+		return fmt.Errorf("the state directory is not safe: %w", err)
+	}
 	for _, p := range []string{d.Path, d.Trees()} {
 		if err := os.Mkdir(p, 0o711); err != nil && !errors.Is(err, fs.ErrExist) {
 			return fmt.Errorf("make %s: %w", p, err)

@@ -75,6 +75,14 @@ func CheckPath(p string) error {
 	return nil
 }
 
+// HostileError is a problem of the commit itself (a bad path, a limit, an
+// unknown mode): trying again cannot help.
+type HostileError struct{ Msg string }
+
+func (e *HostileError) Error() string { return e.Msg }
+
+func hostile(format string, a ...any) error { return &HostileError{Msg: fmt.Sprintf(format, a...)} }
+
 // Tree is the result of an export.
 type Tree struct {
 	Submodules []string  // paths of submodules, which were skipped
@@ -118,13 +126,13 @@ func (g *Git) Export(ctx context.Context, sha, dest string, lim Limits, gid int)
 		return nil, err
 	}
 	if lim.MaxFiles > 0 && len(es) > lim.MaxFiles {
-		return nil, fmt.Errorf("the commit has %d files, more than max_files = %d. Fix: raise [limits] max_files in the config, or make the repo smaller", len(es), lim.MaxFiles)
+		return nil, hostile("the commit has %d files, more than max_files = %d. Fix: raise [limits] max_files in the config, or make the repo smaller", len(es), lim.MaxFiles)
 	}
 	var total int64
 	var blobs []entry
 	for _, e := range es {
 		if err := CheckPath(e.path); err != nil {
-			return nil, err
+			return nil, &HostileError{Msg: err.Error()}
 		}
 		switch {
 		case e.mode == "160000" && e.typ == "commit":
@@ -133,11 +141,11 @@ func (g *Git) Export(ctx context.Context, sha, dest string, lim Limits, gid int)
 			total += e.size
 			blobs = append(blobs, e)
 		default:
-			return nil, fmt.Errorf("the commit has %q with an unknown mode %s", e.path, e.mode)
+			return nil, hostile("the commit has %q with an unknown mode %s", e.path, e.mode)
 		}
 	}
 	if lim.MaxBytes > 0 && total > lim.MaxBytes {
-		return nil, fmt.Errorf("the commit has %d bytes of files, more than max_tree_bytes = %d. Fix: raise [limits] max_tree_bytes in the config", total, lim.MaxBytes)
+		return nil, hostile("the commit has %d bytes of files, more than max_tree_bytes = %d. Fix: raise [limits] max_tree_bytes in the config", total, lim.MaxBytes)
 	}
 	if err := safedir.CheckParents(filepath.Dir(dest), g.UID); err != nil {
 		return nil, fmt.Errorf("export refused: %w", err)
