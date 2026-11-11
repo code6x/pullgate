@@ -1,0 +1,17 @@
+# Release build output
+/dist/
+
+# Binary from "go build ./cmd/pullgate"
+/pullgate
+
+# Test coverage output
+*.out
+*.coverprofile
+coverage.html
+
+# Editor and OS files
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
