@@ -1,0 +1,33 @@
+# Example 2: a server that runs ansible-playbook locally on the approved
+# commit. Install as /etc/pullgate/playbooks.toml (owner root, mode 0600).
+mode = "ask"
+# No rollback: running an older playbook again can do more harm than good.
+# A failed commit is held; fix it forward with a new commit.
+on_failure = "pause"
+host = "example-host"
+
+[repo]
+url = "ssh://git@git.example.com/owner/playbooks.git"
+branch = "main"
+deploy_key = "/etc/pullgate/playbooks.key"
+known_hosts = "/etc/pullgate/playbooks.known_hosts"
+
+[commands]
+# No check and no summary: "ansible-playbook --syntax-check" would load
+# ansible.cfg, plugins and vars plugins from the tree, which is code from
+# the commit, before Apply (rule 3). The question shows the commits and
+# the changed files.
+apply = ["/usr/local/lib/pullgate/playbooks/apply.sh"]
+check_user = "pullgate-check-playbooks"
+apply_timeout = "1h"
+
+[watch]
+# Changes to these get a warning line in the question.
+paths = ["ansible.cfg", "site.yml", "roles/pullgate/**", "**/sudoers*"]
+
+[limits]
+questions_per_day = 10
+approval_ttl = "24h"
+
+[listener]
+user = "pullgate"

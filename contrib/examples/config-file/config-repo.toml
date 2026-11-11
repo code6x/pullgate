@@ -1,0 +1,33 @@
+# Example 1: a service that reads one policy file from a private repo.
+# pullgate copies the file into place and reloads the service.
+# Install as /etc/pullgate/config-repo.toml (owner root, mode 0600).
+mode = "ask"
+# A failed apply runs apply again with the last good commit. That is safe
+# here: apply only copies one file and reloads.
+on_failure = "rollback"
+host = "example-host"
+
+[repo]
+url = "ssh://git@git.example.com/owner/config-repo.git"
+branch = "main"
+deploy_key = "/etc/pullgate/config-repo.key"
+known_hosts = "/etc/pullgate/config-repo.known_hosts"
+
+[commands]
+# check and summary run as check_user and only read the tree as data.
+check = ["/usr/local/lib/pullgate/config-repo/check.sh"]
+summary = ["/usr/local/lib/pullgate/config-repo/summary.sh"]
+apply = ["/usr/local/lib/pullgate/config-repo/apply.sh"]
+health = ["/usr/local/lib/pullgate/config-repo/health.sh"]
+check_user = "pullgate-check-config-repo"
+
+[watch]
+paths = ["policy.toml"]
+
+[limits]
+questions_per_day = 10
+approval_ttl = "12h"
+max_failed_tries = 1
+
+[listener]
+user = "pullgate"

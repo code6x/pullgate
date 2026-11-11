@@ -1,0 +1,50 @@
+# pullgate listen: the only process with the bot token (rule 4). It runs as
+# its own user, connects out only, and opens no port.
+# Make the user first: useradd --system --no-create-home pullgate
+[Unit]
+Description=pullgate Telegram listener
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pullgate
+Group=pullgate
+ExecStart=/usr/local/bin/pullgate listen --config /etc/pullgate/listener.toml
+SyslogIdentifier=pullgate
+Restart=always
+RestartSec=10s
+UMask=0077
+# The bot token: a root-only file, given to the service as a credential.
+LoadCredential=bot-token:/etc/pullgate/bot-token
+StateDirectory=pullgate-listener
+StateDirectoryMode=0700
+ReadWritePaths=/var/spool/pullgate
+
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+DevicePolicy=closed
+PrivateIPC=yes

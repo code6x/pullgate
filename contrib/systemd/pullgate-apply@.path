@@ -1,0 +1,11 @@
+# Starts pullgate-apply@NAME.service when the listener writes an approval,
+# or when auto mode writes its approval (DESIGN.md section 8).
+[Unit]
+Description=pullgate approvals for %i
+
+[Path]
+DirectoryNotEmpty=/var/spool/pullgate/%i/inbox
+PathExists=/var/lib/pullgate/%i/auto-approval
+
+[Install]
+WantedBy=paths.target

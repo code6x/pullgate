@@ -1,0 +1,6 @@
+# /etc/pullgate/listener.toml (owner root, mode 0640, group pullgate).
+# The bot token comes from the systemd credential "bot-token" of
+# pullgate-listen.service (/etc/pullgate/bot-token, owner root, mode 0600).
+owner_id = 123456789   # your Telegram user ID
+chat_id = 123456789    # the private chat of the bot with you
+instances = ["config-repo", "playbooks"]
