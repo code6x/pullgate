@@ -49,7 +49,7 @@ Until this is done, the `release-please` job skips itself.
 
 1. Install the organization's release GitHub App (the one nodkey uses) on
    `code6x/pullgate`, and make a new private key for this repository. The
-   steps are in nodkey's `docs/releasing.md`, section "One-time setup: a
+   steps are in [nodkey's `docs/releasing.md`](https://github.com/code6x/nodkey/blob/main/docs/releasing.md), section "One-time setup: a
    GitHub App".
 2. Save the App's Client ID and the key's fingerprint as repository
    variables, and the key as a secret of the `release` environment:
@@ -60,10 +60,15 @@ Until this is done, the `release-please` job skips itself.
    gh secret set RELEASE_APP_PRIVATE_KEY --repo code6x/pullgate --env release < key.pem
    ```
 
+   The workflow does not use the fingerprint. It is only a record, so you
+   can check later which key belongs to this repository.
+
 3. Settings: a ruleset for `main` (pull requests only, required checks, no
    force push), two rulesets for `v*` tags (nobody moves or deletes a tag;
    only the App creates one), immutable releases on, and the `release`
-   environment limited to `main`.
+   environment limited to `main`. Add the owner as a required reviewer of the `release`
+   environment, so every release waits for the owner's approval in the
+   Actions page, whoever merged the release pull request.
 
 ## Verify a download
 
