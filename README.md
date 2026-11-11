@@ -52,6 +52,7 @@ Then, as root:
 ```sh
 install -m 0755 pullgate /usr/local/bin/pullgate
 useradd --system --no-create-home --shell /usr/sbin/nologin pullgate
+# One check user per instance, never the listener user:
 useradd --system --no-create-home --shell /usr/sbin/nologin pullgate-check-config-repo
 install -d -m 0755 /etc/pullgate /var/spool/pullgate
 install -d -m 0711 /var/lib/pullgate
@@ -173,7 +174,7 @@ better):
 | unit | score | why |
 |---|---|---|
 | `pullgate-listen.service` | 1.2 OK | own user, no capabilities, read-only system |
-| `pullgate-run@.service` | 2.3 OK | root, but only the capabilities it needs to run `check` as `check_user` and to fix the spool; read-only system |
+| `pullgate-run@.service` | 2.4 OK | root, but only the capabilities it needs to run `check` as `check_user`, to stop it on a timeout, and to fix the spool; read-only system |
 | `pullgate-apply@.service` | 7.9 EXPOSED | it runs your `apply` command as root, which must change the system. Add a drop-in for what your `apply` needs (`systemctl edit pullgate-apply@NAME.service`) |
 
 The run unit sets `MemoryDenyWriteExecute=yes`, which also holds for
