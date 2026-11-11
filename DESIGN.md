@@ -108,7 +108,9 @@ The paths can be changed with `--config-dir`, `--state-dir` and
 config, the deploy key, the known hosts file, or the program (the first
 word) of a command is a symlink, is not owned by root, or can be written by
 group or others; or when a directory above one of them fails the check of
-section 6. The deploy key must also not be readable by group or others. The
+section 6. A symlink on the way to a program (such as `/bin -> usr/bin`)
+is allowed only when it is owned by root and the directory that holds it
+passes the check too. The deploy key must also not be readable by group or others. The
 listener checks `listener.toml` and its token file the same way (the token
 file must be owned by the listener user). In tests, "root" means the user
 that runs the test.
@@ -399,8 +401,9 @@ The steps, with the state synced to disk at each arrow:
 2. Export fresh trees (section 6). Run `apply` as root in the tree of the
    SHA (environment in section 11). Then `health`, if it is set.
 3. Both succeed: the applied SHA becomes this SHA, `refs/pullgate/applied`
-   moves, `in_progress` and the held SHA are cleared, all marks of older
-   SHAs are dropped → report "applied".
+   moves, `in_progress` and the held SHA are cleared, all SHA marks are
+   dropped (a SHA that is not a descendant is refused again anyway) →
+   report "applied".
 4. One fails: count a failed try for this SHA →. Then by `on_failure`:
    - `rollback`, with an applied SHA: write `in_progress = {phase:
      "rollback", sha, old_sha}` →. Run `apply` with the last good SHA, then
@@ -459,7 +462,7 @@ and its tree; `PULLGATE_OLD_SHA` and `PULLGATE_OLD_TREE` are the SHA that
 just failed and its tree; `PULLGATE_CHANGED_FILES` lists the paths that
 differ between them. So `apply` must be safe to run again on an older tree.
 
-Their working directory is `PULLGATE_TREE`. Each has a timeout
+Their working directory is `PULLGATE_TREE`. Their umask is 022. Each has a timeout
 (`check_timeout`, `apply_timeout`); on timeout the whole process group is
 killed and the command counts as failed. pullgate keeps at most 64 KiB of
 their output. The output of `apply` and `health` goes to the journal; the
@@ -469,7 +472,9 @@ section 12.
 
 **check and summary (rule 3)** run as `check_user`, with its own group and
 no other groups. When pullgate runs as root, `check_user` must not be root
-(uid 0): pullgate refuses such a config. When pullgate does not run as root
+(uid 0), and must not be the listener user or share its group, because a
+check that is taken over could then write approvals: pullgate refuses such
+a config. When pullgate does not run as root
 (tests, a trial), it cannot change user, so `check_user` must be the user
 that runs it. A process of `check_user` could leave its process group and
 live on. So after each `check` and `summary`, root runs `kill -KILL -1` as

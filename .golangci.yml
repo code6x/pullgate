@@ -38,6 +38,13 @@ linters:
           msg: library code must not use the default logger; take a *slog.Logger
       # Match on types, so an import alias or a *log.Logger cannot hide a call.
       analyze-types: true
+    gosec:
+      excludes:
+        # G301/G302: pullgate sets the mode of each directory and file on
+        # purpose (DESIGN.md sections 4 and 6), and the security review
+        # checks them.
+        - G301
+        - G302
     nolintlint:
       require-explanation: true
       require-specific: true
@@ -50,6 +57,11 @@ linters:
         linters:
           - forbidigo
         text: library code must not
+      # Tests and the test helpers make their own files and run git.
+      - path: (_test\.go$|^internal/testgit/|^internal/telegram/faketg/|^test/)
+        linters:
+          - gosec
+          - noctx
 
 formatters:
   enable:

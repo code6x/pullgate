@@ -1,0 +1,27 @@
+# pullgate apply NAME: act on approvals as root (DESIGN.md sections 9, 10).
+# It runs the owner's apply and health commands. What they need decides
+# how strict this unit can be, so the sandbox here is light. Add more in a
+# drop-in for your instance, for example:
+#   systemctl edit pullgate-apply@config-repo.service
+# The example configs in contrib/examples say what fits them.
+[Unit]
+Description=pullgate apply for %i
+# A stuck inbox must not start this in a loop.
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/pullgate apply %i
+SyslogIdentifier=pullgate
+UMask=0022
+TimeoutStartSec=2h
+KillMode=control-group
+PrivateTmp=yes
+ProtectHome=read-only
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native

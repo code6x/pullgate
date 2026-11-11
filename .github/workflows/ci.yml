@@ -54,6 +54,43 @@ jobs:
             CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -o "/tmp/pullgate-$arch" ./cmd/pullgate
           done
 
+  e2e:
+    name: end-to-end test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: git --version
+      - run: go vet -tags e2e ./test/e2e/...
+      - name: End-to-end test
+        # A local bare repo with two commits, the real binary, the listener
+        # against a fake Telegram server, a tap, and the apply of the
+        # second commit (DESIGN.md section 14).
+        run: go test -race -tags e2e ./test/e2e/...
+
+  units:
+    name: example units
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the example scripts and units
+        run: |
+          set -eu
+          for f in contrib/examples/*/*.sh; do sh -n "$f"; done
+          # The binary is not installed here; every other message fails.
+          out="$(systemd-analyze verify --man=no contrib/systemd/* 2>&1 || true)"
+          echo "$out"
+          if echo "$out" | grep -v "Command /usr/local/bin/pullgate is not executable" | grep -q .; then
+            exit 1
+          fi
+
   lint:
     runs-on: ubuntu-latest
     steps:
