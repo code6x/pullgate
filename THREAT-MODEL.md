@@ -340,7 +340,9 @@ a size limit, uses HTTPS only with TLS 1.2 or newer, and reads no
 `LC_ALL=C`, and as root uses a fixed `PATH`. pullgate and gh run with a time
 limit (`timeout`), and curl has its own. It writes the new file to the disk before the rename. gh runs with no token and an empty config. Only root may
 change the bin directory, the old binary, `TMPDIR`, the new temporary
-directory and the `--gh` file, and each directory above them. The old
+directory and the `--gh` file, and each directory above them. A directory
+above them that others can write is accepted only with the sticky bit, as
+`/tmp` has. The old
 binary must be a regular file, never a link. The new file replaces the old
 one by a rename in the same directory, as the last step.
 

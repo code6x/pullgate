@@ -222,7 +222,7 @@ type installer struct {
 func newInstaller(t *testing.T) *installer {
 	t.Helper()
 	if os.Geteuid() == 0 {
-		t.Skip("as root, install.sh runs only the programs of the system, not the fakes of the test")
+		skipOrFail(t, "as root, install.sh runs only the programs of the system, not the fakes of the test")
 	}
 	for _, name := range []string{"sed", "tar", "gzip", "sha256sum", "install", "mktemp", "id", "stat", "cp", "env", "wc", "sleep", "timeout", "sync"} {
 		if _, err := exec.LookPath(name); err != nil {
@@ -1194,6 +1194,9 @@ func TestInstallStopsOnSIGTERM(t *testing.T) {
 	if code := cmd.ProcessState.ExitCode(); code != 1 {
 		t.Errorf("exit code %d, want 1\nstderr:\n%s", code, stderr.String())
 	}
+	if want := "pullgate: stopped by a signal; run the script again; nothing was installed (exit 1)"; lastLine(stderr.String()) != want+"\n" && lastLine(stderr.String()) != want {
+		t.Errorf("last line %q, want %q", lastLine(stderr.String()), want)
+	}
 	if after := files(t, in.bin); !maps.Equal(after, before) {
 		t.Errorf("the bin directory changed")
 	}
@@ -1229,7 +1232,7 @@ func runFunctions(t *testing.T, lib string, env []string, code string) result {
 // that the directories of the system pass.
 func TestInstallChecksAsRoot(t *testing.T) {
 	if os.Geteuid() == 0 {
-		t.Skip("the test needs files that root does not own")
+		skipOrFail(t, "the test needs files that root does not own")
 	}
 	dir := privateDir(t)
 	lib := functions(t, dir)

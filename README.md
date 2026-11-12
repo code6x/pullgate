@@ -57,7 +57,7 @@ It installs the newest release, or the one of `--version`, as
 `/usr/local/bin/pullgate` (or `DIR/pullgate`). It installs nothing unless
 every check passes: the SHA-256 in `SHA256SUMS`, the build attestation of
 the release (with `gh attestation verify`), and the version that the new
-binary prints. It needs `curl`, `tar`, `gzip` and GNU coreutils. Without
+binary prints. It needs `curl`, `tar`, `gzip`, `sed` and GNU coreutils. Without
 `--gh`, it downloads a pinned gh and checks its SHA-256. It replaces the old
 binary only in the last step, and restarts nothing: it prints what to
 restart. Run it again to update. `--reinstall` installs the same version

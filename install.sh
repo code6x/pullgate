@@ -122,6 +122,28 @@ cleanup() {
 	return 0
 }
 
+# on_signal ends the script after a signal. Its last line says whether the
+# new file was already in place.
+on_signal() {
+	if [ -n "$renamed" ]; then
+		printf 'pullgate: stopped by a signal after the new file was installed as %s; run %s version to check it (exit 1)\n' "$target" "$target" >&2
+		exit 1
+	fi
+	if [ -n "$renaming" ]; then
+		printf 'pullgate: stopped by a signal during the rename; the new file may be installed as %s; run %s version to check it (exit 1)\n' "$target" "$target" >&2
+		exit 1
+	fi
+	die "stopped by a signal; run the script again"
+}
+
+# check_tools stops early when timeout is not the one of GNU coreutils
+# (busybox timeout has no --foreground). Later errors would else point the
+# wrong way, for example to an unknown installed version.
+check_tools() {
+	timeout --foreground 10 true >/dev/null 2>&1 ||
+		die "timeout --foreground does not work; install GNU coreutils and run the script again"
+}
+
 # clean_env removes the variables that change what the programs of the
 # script do in a way that is not safe here, sets LC_ALL=C, and sets uid.
 # As root, PATH becomes root_path, so that only the programs of the system
@@ -644,8 +666,10 @@ install_new() {
 	# loss cannot leave an empty file under the old name. sync with a file
 	# needs coreutils 8.24 or newer; else sync writes all files.
 	sync -- "$tmp_target" 2>/dev/null || sync || die "cannot write $tmp_target to the disk; check the disk"
+	renaming=1
 	mv -f "$tmp_target" "$target" || die "cannot rename the new file to $target; check that $bin_dir is not read-only"
 	tmp_target=
+	renamed=1
 	sync -- "$bin_dir" 2>/dev/null || sync || :
 }
 
@@ -672,13 +696,16 @@ main() {
 	reinstall=
 	tmp=
 	tmp_target=
+	renaming=
+	renamed=
 	trap cleanup EXIT
 	# A signal ends the script through exit, so the EXIT trap runs too.
-	trap 'exit 1' HUP INT PIPE TERM
+	trap on_signal HUP INT PIPE TERM
 
 	clean_env
 	parse_args "$@"
 	check_platform
+	check_tools
 	check_paths
 	make_tmp
 	choose_version
