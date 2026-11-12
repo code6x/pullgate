@@ -289,3 +289,45 @@ func TestCheckLimitReplySentOnce(t *testing.T) {
 		t.Fatalf("one message about the limit, got %d", n)
 	}
 }
+
+// TestCheckWaiterStopsWhenRequestIsGone: a run that waited for the lock and
+// then finds no request (another run took it) stops: no fetch, no reply.
+func TestCheckWaiterStopsWhenRequestIsGone(t *testing.T) {
+	f := newFixture(t, ``, "")
+	f.commit("first", "one", nil)
+	if err := f.env.Dir.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	l, err := f.env.Dir.Lock(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.request()
+	done := make(chan Result, 1)
+	go func() {
+		r, err := f.env.Run(context.Background())
+		if err != nil {
+			r = Result("error: " + err.Error())
+		}
+		done <- r
+	}()
+	select {
+	case r := <-done:
+		t.Fatalf("the run must wait while the lock is held: %s", r)
+	case <-time.After(300 * time.Millisecond):
+	}
+	// The run that holds the lock takes the request.
+	if n, _, err := f.env.Spool.TakeChecks(os.Getuid()); err != nil || n != 1 {
+		t.Fatalf("TakeChecks: %d, %v", n, err)
+	}
+	_ = l.Close()
+	if r := <-done; r != Busy {
+		t.Fatalf("a waiter without a request must stop as busy: %s", r)
+	}
+	if st := f.state(); st.LastTip != "" {
+		t.Fatal("the waiter must not fetch")
+	}
+	if out := f.outbox(); len(out) != 0 {
+		t.Fatalf("the waiter must not reply: %d messages", len(out))
+	}
+}

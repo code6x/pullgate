@@ -126,7 +126,7 @@ func (e *Env) Run(ctx context.Context) (Result, error) {
 		e.Log.Info("busy: a check request waits for the lock")
 		lock, err = e.Dir.Lock(true)
 		if err == nil && !e.Spool.HasCheck() {
-			// The run that held the lock took the request and replied.
+			// Another run took the request (and replied, if it was a good one).
 			_ = lock.Close()
 			e.Log.Info("busy: the run before this one took the check request")
 			return Busy, nil

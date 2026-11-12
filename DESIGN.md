@@ -360,7 +360,7 @@ an approval, and `pullgate apply` never reads this directory.
 `pullgate-check@NAME.path` watches the file `check/request`
 (`PathExists=`; another file there starts nothing) and starts `pullgate-run@NAME.service`, the unit of the timer. `pullgate run`,
 with the lock held (a run that had to wait for the lock, and then finds
-no request, stops: the run before it took the request and replied):
+no request, stops: another run took the request):
 
 1. Reads and removes every file in the directory, with the checks of an
    approval: through `os.OpenRoot` with `O_NOFOLLOW`, a regular file owned
