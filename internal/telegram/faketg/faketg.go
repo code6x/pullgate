@@ -60,11 +60,35 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	case "deleteWebhook":
 		writeJSON(w, map[string]any{"ok": true, "result": true})
 	case "getUpdates":
+		// Like Telegram, give only the kinds in allowed_updates.
+		allowed := map[string]bool{}
+		if l, ok := req["allowed_updates"].([]any); ok {
+			for _, k := range l {
+				if ks, ok := k.(string); ok {
+					allowed[ks] = true
+				}
+			}
+		}
+		want := func(u telegram.Update) bool {
+			if u.UpdateID < num("offset") {
+				return false
+			}
+			switch {
+			case len(allowed) == 0:
+				return true
+			case u.CallbackQuery != nil:
+				return allowed["callback_query"]
+			case u.Message != nil:
+				return allowed["message"]
+			case u.EditedMessage != nil:
+				return allowed["edited_message"]
+			}
+			return false
+		}
 		s.mu.Lock()
-		off := num("offset")
 		var out []telegram.Update
 		for _, u := range s.updates {
-			if u.UpdateID >= off {
+			if want(u) {
 				out = append(out, u)
 			}
 		}
@@ -76,7 +100,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			}
 			s.mu.Lock()
 			for _, u := range s.updates {
-				if u.UpdateID >= off {
+				if want(u) {
 					out = append(out, u)
 				}
 			}
@@ -151,6 +175,26 @@ func (s *Server) Tap(from, chat, msg int64, data string) {
 	s.updates = append(s.updates, telegram.Update{UpdateID: s.nextUp, CallbackQuery: &telegram.CallbackQuery{
 		ID: "cq", From: telegram.User{ID: from}, Message: cp, Data: data,
 	}})
+	s.nextUp++
+	s.mu.Unlock()
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
+}
+
+// Say queues a message with text from user from in chat, as getUpdates
+// gives it. With edited set, it comes as an edited message.
+func (s *Server) Say(from, chat int64, text string, edited bool) {
+	s.mu.Lock()
+	s.nextID++
+	m := &telegram.Message{MessageID: s.nextID, From: &telegram.User{ID: from}, Chat: telegram.Chat{ID: chat}, Text: text}
+	u := telegram.Update{UpdateID: s.nextUp, Message: m}
+	if edited {
+		m.EditDate = 3
+		u = telegram.Update{UpdateID: s.nextUp, EditedMessage: m}
+	}
+	s.updates = append(s.updates, u)
 	s.nextUp++
 	s.mu.Unlock()
 	select {

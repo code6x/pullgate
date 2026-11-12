@@ -33,7 +33,7 @@ on the host, out of reach of the repo.
 | the owner's Telegram account and phone | Trusted. Anyone who can use this account can approve. |
 | Telegram's servers | Trusted to deliver messages and to say truthfully who tapped. They see the question text: SHAs, commit subjects, file names and the summary output. |
 | root on the host | Fully trusted. |
-| the listener process and its user | Trusted only to pass on the owner's taps. If it is taken over, it can approve an open question without the owner (T2). It can never choose the SHA. |
+| the listener process and its user | Trusted only to pass on the owner's taps and `/check` messages. If it is taken over, it can approve an open question without the owner (T2), and start runs (at most one a minute, T18). It can never choose the SHA. |
 | `check_user` and the `check`/`summary` commands | Not trusted with root. They read hostile data (T3). |
 | the git server and everyone who can push | **Not trusted.** A commit may be hostile. |
 | the network | Not trusted. SSH with a pinned host key protects the fetch. |
@@ -78,6 +78,14 @@ sits above real buttons for a hostile SHA. The listener counts a tap only on
 a message that was never edited, whose text is the text Telegram gave back
 when the listener sent it (DESIGN.md section 9).
 
+*`/check`.* A token cannot send a message as the owner either. A message
+that the thief sends to the bot, or in another chat, comes with the
+thief's own `from.id` (or the wrong `chat.id`); the listener ignores it,
+gives no answer and logs no text (DESIGN.md section 9). The thief can read
+the owner's `/check` messages, but that tells only that the owner wants a
+check. Even a request that the thief could forge would only start a normal
+run: it fetches and asks; in `ask` mode it never applies.
+
 *Left.* The thief can show the owner false text (a fake "applied"
 message), can hide questions, and can see the question text. Keep the
 token in a file only the listener user can read, or a systemd credential.
@@ -99,9 +107,22 @@ the spool directories above them are root-owned, root opens them with
 random name. So a symlink that the listener plants cannot make root write
 or change a file elsewhere.
 
+*Check requests.* The listener can also write check requests at any time,
+without the owner. A request holds no data: root checks it like an
+approval (`O_NOFOLLOW`, regular file, owned by the listener, at most 64
+bytes) and also needs the fixed name and content. It cannot name a SHA,
+an instance other than its own directory, or an action. It can only start
+the normal run sooner, with the same sandbox, lock and rules. Root keeps
+the limit (one run per minute from requests) in its own state, so the
+listener cannot make root fetch more often by writing files; a bad file
+is not a request (T18).
+
 *Left.* It can approve any open question (or a superseded one that has not
 expired) without the owner, and it can hide or fake messages. So the
 attacker still needs a hostile commit in the repo **and** the listener.
+With check requests it can make root fetch and ask once a minute, and make
+an `auto` instance apply a new commit sooner than the timer would; never a
+commit that the timer would not apply.
 Run the listener as its own user, with the hardened unit.
 
 ### T3. A hostile commit
@@ -226,7 +247,9 @@ replayed; or an old message is tapped.
 *Defense.* A lost tap means no apply (fail closed); the question expires and
 the SHA waits for a new commit or `--ask-again`. The listener forgets a code
 after the first tap and after the question is closed, so a second tap, or a
-tap on a closed or expired question, writes nothing. Root removes a question
+tap on a closed or expired question, writes nothing. The listener also
+keeps the last 200 update IDs it handled and ignores an update with one of
+them, a tap or a `/check` alike. Root removes a question
 from its state before it acts, so a replayed approval finds no question.
 Root checks the time limit itself. A tap on a superseded question that the
 listener took before it handled the close still applies the old SHA
@@ -264,6 +287,19 @@ question valid longer than `approval_ttl`. The code still works only once.
 listener as the file owner, a regular file, at most 1 KiB, valid JSON
 without unknown fields, and a code that matches its state. A bad file is
 removed and logged. The path unit then has nothing left and stops.
+
+*The check directory.* A check request has no code, so a code cannot
+protect it. It needs none, because it cannot cause an apply: it only
+starts the normal run, which asks (or, in `auto` mode, does what the timer
+does). Only the listener user can write the directory. Root needs the
+listener as owner, a regular file through `O_NOFOLLOW`, at most 64 bytes,
+the name `request` and the content `check\n`. Root removes every file in
+the directory before it acts, and a bad file is not a request.
+`pullgate apply` never reads this directory, and a check request put in
+the inbox is a bad approval. A run that finds only bad files removes them
+and goes on as a normal run, without a reply. The limit of T18 holds for
+every valid request; the trigger limit of the path unit holds for every
+file.
 
 ### T13. A hostile git server or network
 
@@ -358,6 +394,31 @@ variables stay on purpose: TLS and the attestation protect what comes
 through a proxy. The old binary runs once, as root, to print its version; only
 root can change it, so this gives nothing new to an attacker. The script
 restarts nothing.
+
+### T18. Many check requests
+
+*Attack.* The owner, by mistake, or a taken-over listener sends many
+`/check` requests, so the host fetches all the time and loads the git
+server.
+
+*Defense.* Root allows at most one run per minute from the check directory.
+It keeps the time in its own state, not in the listener. A run that finds a
+request inside that minute removes it, does not fetch, and sends at most one
+reply per minute. A clock that goes back by less than a minute does not
+pass the limit. Many `/check` messages before root reads them are one
+file (a fixed name). The path unit starts the same run unit as the timer,
+and systemd never starts it twice at once; the lock keeps a run and an
+apply apart. A run that sees a request while the lock is held waits for
+it, instead of starting again and again. The listener writes at most one
+request per instance in 10 seconds, so a burst of `/check` from the owner
+does not reach the trigger limit of the path unit.
+
+*Left.* One fetch per minute, and one reply per minute. A taken-over
+listener can write requests fast enough to hit the trigger limit of the
+path unit; systemd then stops the path unit, and `/check` does nothing
+until the owner resets it (DESIGN.md section 8). The run unit has no start
+limit, so the timer goes on. This denies; it never approves. A clock jump back of more than
+a minute allows one more run.
 
 ## 6. Out of scope
 

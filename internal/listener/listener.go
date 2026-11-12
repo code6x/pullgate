@@ -17,6 +17,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -44,8 +45,19 @@ type Question struct {
 // State is the listener's state file.
 type State struct {
 	Offset    int64      `json:"offset"`
+	Seen      []int64    `json:"seen,omitempty"` // the last update IDs handled, at most MaxSeen
 	Questions []Question `json:"questions"`
 }
+
+// MaxSeen is how many handled update IDs the listener keeps, so that a
+// replayed update is ignored.
+const MaxSeen = 200
+
+// CheckGap is the least time between two check requests that the listener
+// writes for one instance. Root keeps its own limit (DESIGN.md section 8);
+// this one keeps a burst of /check from hitting the start limit of the
+// run unit.
+const CheckGap = 10 * time.Second
 
 // Listener holds the parts.
 type Listener struct {
@@ -56,8 +68,9 @@ type Listener struct {
 	Poll     time.Duration // how often the outboxes are read
 	LongPoll int           // getUpdates timeout in seconds
 
-	mu sync.Mutex
-	st State
+	mu        sync.Mutex
+	st        State
+	lastCheck map[string]time.Time // in memory: the last check request per instance
 }
 
 func hash(s string) string {
@@ -263,22 +276,40 @@ func (l *Listener) send(ctx context.Context, inst string, m spool.Message) error
 	}
 }
 
-// Update handles one update: only a valid tap of the owner counts.
+// Update handles one update: only a valid tap or /check of the owner
+// counts. An update with an ID below the offset was handled before and is
+// ignored.
 func (l *Listener) Update(ctx context.Context, u telegram.Update) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if u.UpdateID >= l.st.Offset {
-		l.st.Offset = u.UpdateID + 1
+	if slices.Contains(l.st.Seen, u.UpdateID) {
+		l.Log.Info("update ignored", "reason", "an update that was handled before", "update", u.UpdateID)
+		return
 	}
+	// Telegram may start the IDs again at a random number after a quiet
+	// week, so a lower ID is not dropped; only an ID that was handled.
+	l.st.Seen = append(l.st.Seen, u.UpdateID)
+	if len(l.st.Seen) > MaxSeen {
+		l.st.Seen = l.st.Seen[len(l.st.Seen)-MaxSeen:]
+	}
+	l.st.Offset = u.UpdateID + 1
 	defer func() {
 		if err := l.save(); err != nil {
 			l.Log.Error("save the listener state", "err", err)
 		}
 	}()
-	cq := u.CallbackQuery
-	if cq == nil {
-		return
+	switch {
+	case u.CallbackQuery != nil:
+		l.tap(ctx, u.CallbackQuery)
+	case u.Message != nil:
+		l.command(ctx, u.Message)
+	case u.EditedMessage != nil:
+		l.Log.Info("message ignored", "reason", "an edited message")
 	}
+}
+
+// tap handles a button tap.
+func (l *Listener) tap(ctx context.Context, cq *telegram.CallbackQuery) {
 	answer := Closed
 	defer func() {
 		if err := l.TG.AnswerCallbackQuery(ctx, cq.ID, answer); err != nil {
@@ -348,4 +379,85 @@ func (l *Listener) check(cq *telegram.CallbackQuery) (*Question, string, string)
 		return nil, "", "expired"
 	}
 	return q, action, ""
+}
+
+// checkCommand is the one command the listener takes (DESIGN.md section 9).
+const checkCommand = "/check"
+
+// command handles a message. Only "/check" or "/check NAME" of the owner,
+// in the chat, unedited, counts. The text of a message is never logged.
+func (l *Listener) command(ctx context.Context, m *telegram.Message) {
+	names, why, help := l.checkNames(m)
+	if names == nil {
+		l.Log.Info("message ignored", "reason", why, "from", fromID(m))
+		if help {
+			l.sendReply(ctx, m, "Use <code>/check</code> for all instances, or <code>/check NAME</code>. NAME is one of: "+html.EscapeString(strings.Join(l.Cfg.Instances, ", "))+".")
+		}
+		return
+	}
+	var ok, failed, soon []string
+	if l.lastCheck == nil {
+		l.lastCheck = map[string]time.Time{}
+	}
+	now := l.now()
+	for _, n := range names {
+		if d := now.Sub(l.lastCheck[n]); d < CheckGap && d > -CheckGap {
+			soon = append(soon, n)
+			continue
+		}
+		if err := l.dirs(n).WriteCheck(); err != nil {
+			l.Log.Error("write the check request", "instance", n, "err", err)
+			failed = append(failed, n)
+			continue
+		}
+		l.lastCheck[n] = now
+		ok = append(ok, n)
+	}
+	l.Log.Info("check request taken", "instances", ok)
+	var text []string
+	if len(ok) > 0 {
+		text = append(text, "Checking <b>"+html.EscapeString(strings.Join(ok, ", "))+"</b>…")
+	}
+	if len(soon) > 0 {
+		text = append(text, "<b>"+html.EscapeString(strings.Join(soon, ", "))+"</b>: a check was asked a few seconds ago. Wait for its answer.")
+	}
+	if len(failed) > 0 {
+		text = append(text, "Error: the check request for <b>"+html.EscapeString(strings.Join(failed, ", "))+"</b> was not saved. Check the journal of the listener, and that the host ran pullgate once for it.")
+	}
+	l.sendReply(ctx, m, strings.Join(text, "\n"))
+}
+
+// checkNames returns the instances that a message asks to check, or nil,
+// why not, and whether the owner should get the usage text.
+func (l *Listener) checkNames(m *telegram.Message) ([]string, string, bool) {
+	switch {
+	case m.From == nil || m.From.ID != l.Cfg.OwnerID:
+		return nil, "not the owner", false
+	case m.Chat.ID != l.Cfg.ChatID:
+		return nil, "not the configured chat", false
+	case m.EditDate != 0:
+		return nil, "an edited message", false
+	case !strings.HasPrefix(m.Text, checkCommand):
+		return nil, "not a command", false
+	case m.Text == checkCommand:
+		return slices.Clone(l.Cfg.Instances), "", false
+	}
+	name, ok := strings.CutPrefix(m.Text, checkCommand+" ")
+	if !ok || !slices.Contains(l.Cfg.Instances, name) {
+		return nil, "not /check or /check NAME of a known instance", true
+	}
+	return []string{name}, "", false
+}
+
+func fromID(m *telegram.Message) int64 {
+	if m.From == nil {
+		return 0
+	}
+	return m.From.ID
+}
+
+func (l *Listener) sendReply(ctx context.Context, m *telegram.Message, text string) {
+	if _, err := l.TG.SendMessage(ctx, l.Cfg.ChatID, text, nil, m.MessageID); err != nil {
+		l.Log.Warn("send a reply", "err", err)
+	}
 }

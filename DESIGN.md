@@ -27,6 +27,9 @@ protects, and where it stops.
   button. It holds the code and the button (apply or skip). Nothing else.
 - **tree**: a clean, read-only copy of the files of one commit, written by
   pullgate itself from git objects.
+- **check request**: a small file that the listener writes when the owner
+  sends `/check` or `/check NAME`. It holds no data from the message. It
+  starts a normal run now, instead of at the next timer (sections 8 and 9).
 - **pause file**: `/var/lib/pullgate/NAME/paused`. While it exists, the
   instance does nothing: no run, no apply.
 
@@ -49,7 +52,9 @@ These rules come from issue #1. Each one has tests (section 14).
    no port. It accepts a tap only from the configured owner user ID, in the
    configured chat, on an open question. All it can do is write an approval
    for that open question. The approval carries only the code. Root looks
-   up the SHA in its own state.
+   up the SHA in its own state. The only other thing it can write is a
+   check request for `/check` of the owner. That request holds no data, and
+   it only starts a normal run sooner (sections 8 and 9).
 5. **Root does the apply.** It acts only on an approval whose code matches a
    question that root recorded itself, and only within the time limit of that
    question. By default it moves forward only: the new SHA must descend from
@@ -66,7 +71,7 @@ These rules come from issue #1. Each one has tests (section 14).
 
 | process | user | started by | holds |
 |---|---|---|---|
-| `pullgate run NAME` | root | a timer (`pullgate-run@NAME.timer`) | the clone, the state, the deploy key |
+| `pullgate run NAME` | root | a timer (`pullgate-run@NAME.timer`), or a path unit (`pullgate-check@NAME.path`) when a check request exists | the clone, the state, the deploy key |
 | `pullgate apply NAME` | root | a path unit (`pullgate-apply@NAME.path`) when the inbox is not empty, or the auto approval exists | the state |
 | `pullgate listen` | `pullgate` (own user) | a service (`pullgate-listen.service`) | the bot token, its list of open questions |
 | `check`, `summary` | `check_user` (default `pullgate-check`) | `pullgate run` | nothing |
@@ -74,7 +79,9 @@ These rules come from issue #1. Each one has tests (section 14).
 | `pullgate status NAME` | root | the owner | nothing |
 
 Root and the listener never talk directly. They use a spool directory
-(section 8).
+(section 8). Both units start the same `pullgate-run@NAME.service`, so a
+run on `/check` has the same sandbox, the same lock and the same rules as a
+run on the timer. systemd never starts one unit twice at once.
 
 The run unit is sandboxed (read-only system, private `/tmp`, no new
 privileges). The apply unit runs the owner's `apply` command as root, so it
@@ -99,6 +106,7 @@ can be less strict; each example sets what its `apply` needs.
 | `/var/spool/pullgate/` and `/var/spool/pullgate/NAME/` | root, 0755 | the spool |
 | `/var/spool/pullgate/NAME/outbox` | root, group listener, 0770 | messages from root to the listener |
 | `/var/spool/pullgate/NAME/inbox` | listener, 0700 | approvals from the listener to root |
+| `/var/spool/pullgate/NAME/check` | listener, 0700 | check requests from the listener to root |
 | `/var/lib/pullgate-listener/state.json` | listener, 0600 | the listener's open questions |
 
 The paths can be changed with `--config-dir`, `--state-dir` and
@@ -121,8 +129,8 @@ path that the listener can change. It opens the spool directories with
 through the open directory, creates files in them with
 `O_CREAT|O_EXCL|O_NOFOLLOW` under a random temporary name and renames them
 in the same directory. `/var/spool/pullgate` and `NAME/` are owned by root
-and pass the check of section 6, so the listener cannot swap `outbox` or
-`inbox` for a symlink.
+and pass the check of section 6, so the listener cannot swap `outbox`,
+`inbox` or `check` for a symlink.
 
 ## 5. The instance config
 
@@ -266,8 +274,11 @@ used again.
 ## 7. One run (`pullgate run NAME`)
 
 1. Read the config. Take the lock (`flock`, no wait). If another run or
-   apply holds it, log "busy" and exit 0. If the pause file exists, log
-   "paused" and exit 0. If `mode = "off"`, log "off" and exit 0.
+   apply holds it, log "busy" and exit 0; but when a check request waits,
+   wait for the lock instead (section 8). If the pause file exists, log
+   "paused" and exit 0. If `mode = "off"`, log "off" and exit 0. When a
+   check request waits, take it first (section 8); then paused and off
+   send a reply ("NAME is paused" or "NAME is off"), and do not fetch.
 2. If the state shows an apply in progress (section 10), write the pause
    file, report, and exit.
 3. Make sure the clone and the spool directories exist with the right owners
@@ -338,6 +349,58 @@ files older than one minute.
 auto approval (`PathExists=`), and starts `pullgate apply NAME`. The apply
 service has a start limit, so a stuck file cannot start it in a loop.
 
+**Check requests** (the listener writes, root reads and removes). The
+listener writes `/var/spool/pullgate/NAME/check/request` for `/check`
+(section 9): a `.tmp-*` file renamed to that one fixed name, so many
+requests before root reads them are one file. The content is always the
+six bytes `check\n`. It holds nothing from the message: not the text, not
+a SHA, not a code. A check request can only start a normal run. It is not
+an approval, and `pullgate apply` never reads this directory.
+
+`pullgate-check@NAME.path` watches the directory (`DirectoryNotEmpty=`) and
+starts `pullgate-run@NAME.service`, the unit of the timer. `pullgate run`,
+with the lock held:
+
+1. Reads and removes every file in the directory, with the checks of an
+   approval: through `os.OpenRoot` with `O_NOFOLLOW`, a regular file owned
+   by the listener user, at most 64 bytes. It must also have the name
+   `request` and exactly the content `check\n`. Root removes each file
+   before it acts. A bad file is logged and removed; it is not a request.
+   A run that finds only bad files goes on as a normal (timer) run, with
+   no reply and no mark against the limit.
+2. **The limit**, kept by root in its own `state.json` (`check_at`), not
+   by the listener: at most one run per minute (`CheckInterval`) starts
+   from a check request. When the last one is less than a minute away
+   (before or after, so a clock jump back of less than a minute does not
+   pass it), the run removes the request and exits without a fetch. It
+   sends one reply per minute: "A check ran less than a minute ago, so this
+   /check was dropped." (`check_note`).
+3. Paused or off: reply so, do not fetch.
+4. Else the normal run (section 7). After it, a reply says what it found,
+   unless the question or a notice says it already: "No new commit. The
+   applied commit is SHA.", "the question for SHA is still open", "SHA was
+   handled before (mark)", "the last apply of SHA failed and it is held",
+   or, in `auto` mode, "New commit SHA … it is applied now, without a tap"
+   (section 13). A run that fails sends "The check failed. See the journal
+   of the host", without the error text.
+
+**A request while the lock is held.** A run started by the timer exits
+"busy" when another process holds the lock. A run that sees a check request
+waits for the lock instead (`flock` with a wait), so the request is not
+lost and the path unit does not start the run again and again. The lock
+makes sure that two runs, or a run and an apply, never run at once. The
+run unit's `TimeoutStartSec` caps the wait.
+
+**The start limit.** Each check request starts the run unit. The path unit
+has a trigger limit (`TriggerLimitBurst=10` in 60 seconds), which stops a
+loop when a run fails before it removes the request. If the limit is hit,
+systemd stops the path unit until the owner runs `systemctl reset-failed
+pullgate-check@NAME.path` and starts it again. The run unit has no start
+limit (`StartLimitIntervalSec=0`), so many requests never stop the timer.
+So that `/check` alone never hits the limit, the listener also writes at
+most one request per instance in 10 seconds (`CheckGap`, kept in
+memory). Root does not trust this: its own limit is the one above.
+
 ## 9. Questions and approvals
 
 Root keeps its questions in `state.json`:
@@ -355,7 +418,11 @@ still counts (rule 2). The listener forgets a code when it handles the
 Every list entry is removed when it is answered or expires.
 
 **The listener** calls `deleteWebhook` at start and then `getUpdates` with
-`allowed_updates = ["callback_query"]`. It accepts a tap only when all of
+`allowed_updates = ["callback_query", "message"]`. It keeps the last 200
+`update_id`s that it handled in its state file. An update with one of them
+was handled before: it is ignored, a tap and a message alike. A lower ID
+that is not in the list still counts, because Telegram may start the IDs
+again at a random number after a quiet week. It accepts a tap only when all of
 these hold, else it answers "This question is closed." and writes nothing:
 
 - `from.id` is `owner_id`, and `message.chat.id` is `chat_id`;
@@ -371,6 +438,30 @@ these hold, else it answers "This question is closed." and writes nothing:
 
 Then it writes the approval, edits the question ("Apply tapped. Waiting for
 the host." or "Skipped."), and answers the tap.
+
+**`/check`.** The listener writes a check request (section 8) only when all
+of these hold, else it writes nothing:
+
+- `from.id` is `owner_id`, and `chat.id` is `chat_id`;
+- it is a new message, not an edited one (no `edited_message`, no
+  `edit_date`);
+- the text is exactly `/check` (a request for every instance in
+  `instances`) or exactly `/check NAME`, with one space and a NAME that is
+  in `instances`. Nothing before, after or between: no second word, no new
+  line, no `@`. So `/check@otherbot` does nothing. The listener does not
+  know its own bot name, so it refuses `/check@` for its own name too (in a
+  private chat Telegram sends `/check` without it).
+
+Then it replies "Checking NAME…" to the message. A second `/check` for the
+same instance within 10 seconds writes nothing and gets "a check was asked
+a few seconds ago" (section 8, the start limit). When a request cannot be
+written (for example the host never ran pullgate for NAME, so the directory
+does not exist), it replies that the request was not saved. To the owner in
+the chat, a text that starts with `/check` but does not match gets the
+usage text, which lists the instances and never repeats the message. A
+message of another user, or in another chat, gets no answer. The listener
+never logs the text of a message: only why it was ignored and the sender
+ID.
 
 **Root** (`pullgate apply NAME`) takes the lock (with a wait). If the pause
 file exists or `mode = "off"`, it removes the approvals, replies "ignored:
@@ -528,6 +619,12 @@ closed after a cut.
   0600). The path unit starts `pullgate apply`, which handles it like an
   approval from the inbox, then removes it, and reports. The apply needs
   the same checks (code, time, forward only). For development hosts.
+  **`/check` on an `auto` instance** starts the run as the timer does, so a
+  new commit is applied at once, without a tap. This is a choice: an auto
+  instance applies every new commit within one timer period anyway, so
+  `/check` only makes it sooner. It cannot apply a commit that the timer
+  would not apply. The reply says "it is applied now, without a tap". Who
+  does not want this keeps the instance in `ask` mode.
 - `off`: `pullgate run` and `pullgate apply` do nothing.
 
 `pullgate status NAME` prints the mode, the applied SHA, the open question,
@@ -566,7 +663,8 @@ Each rule and each limit has a test. The tests use a fake Telegram server
 The end-to-end test (`test/e2e`, build tag `e2e`) builds the binary, makes a
 bare repo with two commits, runs `pullgate run`, the listener against the
 fake Telegram server, a tap, `pullgate apply`, and checks that the second
-commit was applied.
+commit was applied. Then it sends `/check` and checks the request, the run
+and the reply "No new commit".
 
 The tests of `install.sh` (`install_linux_test.go`, at the root) run the
 script with `/bin/sh` against a fake release: a fake `curl`, `uname`, `gh`

@@ -26,6 +26,7 @@ const (
 	Nothing       Result = "nothing"
 	Refused       Result = "refused"
 	LimitReached  Result = "limit"
+	CheckLimited  Result = "check-limited"
 	CheckFailed   Result = "check-failed"
 	Asked         Result = "asked"
 	AutoQueued    Result = "auto"
@@ -108,38 +109,83 @@ func (e *Env) closeOpen(st *state.State, why string) {
 	}
 }
 
-// Run is one "pullgate run" (DESIGN.md section 7).
+// Run is one "pullgate run" (DESIGN.md section 7). It also takes the check
+// requests of /check (DESIGN.md section 8).
 func (e *Env) Run(ctx context.Context) (Result, error) {
 	if err := e.Dir.Ensure(); err != nil {
 		return "", err
 	}
 	lock, err := e.Dir.Lock(false)
 	if errors.Is(err, state.ErrBusy) {
-		e.Log.Info("busy: another run or apply holds the lock")
-		return Busy, nil
+		if !e.Spool.HasCheck() {
+			e.Log.Info("busy: another run or apply holds the lock")
+			return Busy, nil
+		}
+		// A check request waits for the lock, so that it is not lost and
+		// the path unit does not start the run again and again.
+		e.Log.Info("busy: a check request waits for the lock")
+		lock, err = e.Dir.Lock(true)
 	}
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = lock.Close() }()
-	if e.Dir.Paused() {
-		e.Log.Info("paused: the pause file exists", "file", e.Dir.PauseFile())
-		return Paused, nil
-	}
-	if e.Cfg.Mode == config.ModeOff {
+	paused, off := e.Dir.Paused(), e.Cfg.Mode == config.ModeOff
+	if (paused || off) && !e.Spool.HasCheck() {
+		if paused {
+			e.Log.Info("paused: the pause file exists", "file", e.Dir.PauseFile())
+			return Paused, nil
+		}
 		e.Log.Info("off: mode is off")
 		return Off, nil
 	}
 	if err := e.Spool.Ensure(e.UID, e.Owners); err != nil {
 		return "", err
 	}
+	// A bad file is removed and is not a request: the run goes on as a
+	// normal run, with no reply and no mark against the limit.
+	requests := e.takeChecks()
 	st, err := e.Dir.Load()
 	if err != nil {
 		return "", err
 	}
+	requested := requests > 0
+	if requested {
+		if r := e.limitCheck(st); r != "" {
+			return r, e.Dir.Save(st)
+		}
+		if err := e.Dir.Save(st); err != nil {
+			return "", err
+		}
+	}
+	if paused || off {
+		why := e.Cfg.Name + " is off (mode = \"off\"), so nothing was fetched."
+		res := Off
+		if paused {
+			why = e.Cfg.Name + " is paused, so nothing was fetched. Run as root: <code>pullgate status " + e.Cfg.Name + " --resume</code>"
+			res = Paused
+		}
+		e.Log.Info(string(res))
+		if requested {
+			e.notice(why)
+		}
+		return res, nil
+	}
 	if st.InProgress != nil {
 		return CutOff, e.cutOff(st)
 	}
+	limitNote := st.LimitNote
+	res, err := e.fetchAndDecide(ctx, st)
+	if requested {
+		e.checkReply(st, res, err, !st.LimitNote.Equal(limitNote))
+	}
+	if serr := e.Dir.Save(st); serr != nil && err == nil {
+		err = serr
+	}
+	return res, err
+}
+
+func (e *Env) fetchAndDecide(ctx context.Context, st *state.State) (Result, error) {
 	if err := e.Git.Init(ctx); err != nil {
 		return "", err
 	}
@@ -151,11 +197,7 @@ func (e *Env) Run(ctx context.Context) (Result, error) {
 	e.Log.Info("fetched", "tip", tip, "applied", st.Applied)
 	st.LastTip = tip
 	e.expire(st)
-	res, err := e.decide(ctx, st, tip)
-	if serr := e.Dir.Save(st); serr != nil && err == nil {
-		err = serr
-	}
-	return res, err
+	return e.decide(ctx, st, tip)
 }
 
 func (e *Env) decide(ctx context.Context, st *state.State, tip string) (Result, error) {

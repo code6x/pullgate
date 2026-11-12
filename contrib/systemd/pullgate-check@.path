@@ -1,0 +1,21 @@
+# Starts pullgate-run@NAME.service when the listener writes a check request
+# for /check on Telegram (DESIGN.md section 8). The run is the normal run:
+# the same unit, sandbox and lock. Root removes the request and allows at
+# most one requested run per minute.
+[Unit]
+Description=pullgate check requests for %i
+
+[Path]
+DirectoryNotEmpty=/var/spool/pullgate/%i/check
+Unit=pullgate-run@%i.service
+# At most 10 starts a minute. This stops a loop when a run fails before it
+# removes the request. The listener writes at most one request per instance
+# in 10 seconds, so /check alone does not reach it. When it is reached,
+# this unit stops; the timer goes on. Start it again with:
+#   systemctl reset-failed pullgate-check@NAME.path
+#   systemctl start pullgate-check@NAME.path
+TriggerLimitIntervalSec=60s
+TriggerLimitBurst=10
+
+[Install]
+WantedBy=paths.target

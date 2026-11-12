@@ -70,6 +70,8 @@ type State struct {
 	InProgress *InProgress      `json:"in_progress,omitempty"`
 	AskTimes   []time.Time      `json:"ask_times,omitempty"`
 	LimitNote  time.Time        `json:"limit_note,omitempty"`
+	CheckAt    time.Time        `json:"check_at,omitzero"`   // the last check request that was taken (DESIGN.md section 8)
+	CheckNote  time.Time        `json:"check_note,omitzero"` // the last "too many check requests" reply
 	NextID     int64            `json:"next_id"`
 }
 

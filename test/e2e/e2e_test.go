@@ -156,7 +156,32 @@ api_url = %q
 		}
 		return false
 	})
+
+	// /check: the listener writes a request; the run (which the path unit
+	// starts on a host) takes it and says that there is no new commit.
+	// A /check from someone else writes nothing.
+	tg.Say(owner+1, chat, "/check", false)
+	tg.Say(owner, chat, "/check config-repo", false)
+	checkDir := filepath.Join(spool, "config-repo", "check")
+	wait(t, "the check request", func() bool {
+		es, _ := os.ReadDir(checkDir)
+		return len(es) == 1
+	})
+	if out := pg("run", "config-repo"); !strings.Contains(out, "result=nothing") {
+		t.Fatalf("run on /check: %s", out)
+	}
+	wait(t, "the check reply", func() bool {
+		checking, none := false, false
+		for _, m := range tg.Messages() {
+			checking = checking || strings.Contains(m.Text, "Checking <b>config-repo</b>")
+			none = none || strings.Contains(m.Text, "No new commit. The applied commit is <code>"+second)
+		}
+		return checking && none
+	})
 	stop()
+	if strings.Contains(logs.String(), "/check") {
+		t.Fatal("the listener must not log the text of a message")
+	}
 	if strings.Contains(logs.String(), token) {
 		t.Fatal("the listener logged the token")
 	}
