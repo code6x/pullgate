@@ -27,6 +27,9 @@ change code. They are the rules the code must follow.
   - `internal/gate/` - `run`, `apply` and `status` (DESIGN.md sections 7,
     9, 10, 13).
 - `contrib/` - example systemd units and example configs.
+- `install.sh` - installs or updates a release on a host, after its checks
+  (DESIGN.md section 16). Its tests are `install_linux_test.go`, at the
+  root. CI runs a pinned ShellCheck on it.
 - `test/e2e/` - the end-to-end test. Build tag `e2e`.
 - `docs/releasing.md` - how releases are made and checked. Only the owner
   merges a release pull request (`chore(main): release …`).

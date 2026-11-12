@@ -39,6 +39,7 @@ on the host, out of reach of the repo.
 | the network | Not trusted. SSH with a pinned host key protects the fetch. |
 | other local users | Not trusted. |
 | the `apply` and `health` commands | Trusted: the owner wrote them. They run as root on the approved tree. |
+| GitHub, the release workflow on `main`, and the gh that `install.sh` pins | Trusted to build and serve the release that `install.sh` installs (T16, T17). |
 
 ## 4. What pullgate promises
 
@@ -299,7 +300,62 @@ move one, releases are immutable, and the `release` environment needs the
 owner's approval. The build job is read-only and checks that the tag is the
 commit of the run. Each tarball has a SHA-256 in `SHA256SUMS` and a build
 provenance attestation tied to `release.yml` on `main`. Check both before
-you install (docs/releasing.md, "Verify a download").
+you install (docs/releasing.md, "Verify a download"), or let `install.sh`
+check them (T17).
+
+### T17. A bad install path
+
+*Attack.* `install.sh` runs as root and puts a binary that root runs later.
+An attacker tries to make it install a file that the release workflow did
+not build, or an older build under a newer name. Or a local user changes a
+file or a directory that the script uses while it runs. Or the
+environment of root changes what `tar`, `curl` or `gh` do.
+
+*What the script trusts.*
+
+- **GitHub**: to serve the release files and the answer of its API over
+  HTTPS, and to run the release workflow on its own runners.
+- **The release workflow identity**: only
+  `https://github.com/code6x/pullgate/.github/workflows/release.yml@refs/heads/main`,
+  on a runner that GitHub hosts, may have built the tarball. Sigstore's
+  public trusted root says whether the attestation is valid.
+- **The pinned gh**: gh 2.102.0, checked against a SHA-256 for each CPU that
+  is written in the script. Or a gh that the owner gives with `--gh`: it
+  must be 2.93.0 or newer, and only root may change it.
+- **The script itself**: the owner downloads it over HTTPS and reads it
+  before running it.
+- **The host**: root, and the programs in `/usr/sbin:/usr/bin:/sbin:/bin`.
+
+*Defense.* (DESIGN.md section 16.) The script installs nothing unless every
+check passes: exactly one line in `SHA256SUMS` for the tarball, and its
+SHA-256 matches; `gh attestation verify` with the bundle of the release,
+`--repo code6x/pullgate`, the identity above and
+`--deny-self-hosted-runners`; the new binary prints `pullgate X.Y.Z` of the
+version asked for. The attestation proves which workflow built a file, not
+its version, so the version check stops an older build under a newer name.
+The new binary runs only after the attestation passed. Every download has
+a size limit, uses HTTPS only with TLS 1.2 or newer, and reads no
+`.curlrc`. The script removes a list of variables that change `tar`,
+`gzip`, `curl`, OpenSSL, gh, name lookups, libc and the dynamic loader, sets
+`LC_ALL=C`, and as root uses a fixed `PATH`. pullgate and gh run with a time
+limit (`timeout`), and curl has its own. It writes the new file to the disk before the rename. gh runs with no token and an empty config. Only root may
+change the bin directory, the old binary, `TMPDIR`, the new temporary
+directory and the `--gh` file, and each directory above them. The old
+binary must be a regular file, never a link. The new file replaces the old
+one by a rename in the same directory, as the last step.
+
+*What is left.* Whoever controls the release workflow on `main` (T16), or
+GitHub itself, can ship a binary that passes. The script cannot check
+itself: a changed copy of `install.sh` can do anything, so read it before
+you run it. The list of removed variables is a block list: a variable that
+is not on it, or one that acts before the first line runs (such as
+`SHELLOPTS` when `sh` is bash), still reaches the programs. Who controls
+root's environment controls root already; to be sure, start the script
+with `env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin sh install.sh`. The proxy
+variables stay on purpose: TLS and the attestation protect what comes
+through a proxy. The old binary runs once, as root, to print its version; only
+root can change it, so this gives nothing new to an attacker. The script
+restarts nothing.
 
 ## 6. Out of scope
 

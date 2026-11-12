@@ -88,3 +88,6 @@ gh attestation verify "pullgate_${VERSION}_linux_${ARCH}.tar.gz" \
 ```
 
 Both checks must say OK before you install the binary.
+
+`install.sh` makes the same checks, and checks the version of the new
+binary too (README.md, section "Install").

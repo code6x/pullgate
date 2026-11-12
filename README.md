@@ -41,17 +41,48 @@ path unit ─> pullgate apply NAME (root)
 
 ## Install
 
-Download a release and check it as [docs/releasing.md](docs/releasing.md)
-says (section "Verify a download"), or build it with Go 1.26 or newer:
+pullgate runs on Linux, on amd64 or arm64. There are three ways to get the
+binary.
+
+**With the install script** (as root, on the host itself). Download the
+script, read it, then run it:
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL -o /root/install.sh https://raw.githubusercontent.com/code6x/pullgate/main/install.sh
+less /root/install.sh
+sh /root/install.sh [--version X.Y.Z] [--bin-dir DIR] [--gh PATH] [--reinstall]
+```
+
+It installs the newest release, or the one of `--version`, as
+`/usr/local/bin/pullgate` (or `DIR/pullgate`). It installs nothing unless
+every check passes: the SHA-256 in `SHA256SUMS`, the build attestation of
+the release (with `gh attestation verify`), and the version that the new
+binary prints. It needs `curl`, `tar`, `gzip` and GNU coreutils. Without
+`--gh`, it downloads a pinned gh and checks its SHA-256. It replaces the old
+binary only in the last step, and restarts nothing: it prints what to
+restart. Run it again to update. `--reinstall` installs the same version
+again, or replaces a build of unknown version. Exit codes: 0 done or nothing
+to do, 1 failure (nothing was installed), 64 wrong usage. To get the
+script of one release, put its tag (`vX.Y.Z`) in the URL instead of `main`.
+To start it with a clean environment, run it as
+`env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin sh /root/install.sh`. What it does and
+what it trusts: [DESIGN.md](DESIGN.md) section 16 and
+[THREAT-MODEL.md](THREAT-MODEL.md) T17.
+
+**By hand.** Download a release and check it as
+[docs/releasing.md](docs/releasing.md) says (section "Verify a download").
+Then, as root: `install -m 0755 pullgate /usr/local/bin/pullgate`.
+
+**From the source**, with Go 1.26 or newer. Then install it as above:
 
 ```sh
 CGO_ENABLED=0 go build -trimpath -o pullgate ./cmd/pullgate
 ```
 
-Then, as root:
+Then, as root, make the users and the directories, and copy the units from
+[contrib/systemd/](contrib/systemd/):
 
 ```sh
-install -m 0755 pullgate /usr/local/bin/pullgate
 useradd --system --no-create-home --shell /usr/sbin/nologin pullgate
 # One check user per instance, never the listener user:
 useradd --system --no-create-home --shell /usr/sbin/nologin pullgate-check-config-repo
