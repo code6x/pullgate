@@ -568,8 +568,80 @@ bare repo with two commits, runs `pullgate run`, the listener against the
 fake Telegram server, a tap, `pullgate apply`, and checks that the second
 commit was applied.
 
+The tests of `install.sh` (`install_linux_test.go`, at the root) run the
+script with `/bin/sh` against a fake release: a fake `curl`, `uname`, `gh`
+and `pullgate`. They never use the network. They show that the script
+installs nothing when a check fails (section 16), and that it installs when
+all checks pass. CI also runs a pinned ShellCheck on the script.
+
 ## 15. Not in version 0.1
 
-- Self-update of pullgate.
+- Self-update of pullgate. `install.sh` updates it only when root runs
+  the script (section 16).
 - Signed commits (`git verify-commit`).
 - A web UI.
+
+## 16. The install script
+
+`install.sh`, at the root of the repo, installs a release, or updates one.
+It is a POSIX `sh` script. Root runs it on the host itself:
+
+```sh
+sh install.sh [--version X.Y.Z] [--bin-dir DIR] [--gh PATH] [--reinstall]
+```
+
+All the work is in functions. Only the last line starts `main`, so a
+download that stops in the middle runs nothing. The steps:
+
+1. Clean the environment: remove `TAR_OPTIONS`, `GZIP`, `CURL_HOME`, the
+   `SSL_CERT_*`, `OPENSSL_*` and `LD_*` variables, `GCONV_PATH`,
+   `GLIBC_TUNABLES`, `GODEBUG`, `CDPATH`, `IFS` and more (the list and the
+   reasons are in `clean_env` of the script). Set `LC_ALL=C`. As root, set
+   `PATH=/usr/sbin:/usr/bin:/sbin:/bin`. pullgate and gh run with a time
+   limit (`timeout`): 60 seconds, and 300 seconds for
+   `gh attestation verify`. curl has its own limit.
+2. Read the arguments. `--version` must be `X.Y.Z`. A wrong argument
+   exits with 64.
+3. Check the platform: Linux on amd64 or arm64 only.
+4. Check the paths: only root may change the bin directory
+   (default `/usr/local/bin`), each directory above it, the old binary and
+   the `--gh` file. The old binary `DIR/pullgate` must be a regular file or
+   missing, never a link. A directory that others can write may pass only
+   above the checked path, and only with the sticky bit (as `/tmp`).
+5. Make a temporary directory with `mktemp -d` in `TMPDIR` (default
+   `/tmp`). Check `TMPDIR`, each directory above it, and the new directory.
+6. Ask the GitHub API for the newest release, or for the release of
+   `--version`. Its tag must be `vX.Y.Z` of that version.
+7. Run the old binary with `version`. The same version: nothing to do,
+   exit 0, unless `--reinstall`. A newer installed version: nothing to do,
+   unless `--version` asks for the older one; then it says that this is a
+   downgrade. An unknown version (`pullgate dev`, no output, or it does not
+   run): fail, unless `--reinstall`.
+8. Download `pullgate_<version>_linux_<arch>.tar.gz`, `SHA256SUMS` and
+   `pullgate_<version>.sigstore.json`. Every download uses
+   `curl -q --proto '=https' --tlsv1.2` and has a size limit: 1 MiB for the
+   API answer, `SHA256SUMS` and the bundle; 64 MiB for a tarball.
+9. `SHA256SUMS` must have exactly one line for the tarball, and the SHA-256
+   must match.
+10. Get gh: the `--gh` file (gh 2.93.0 or newer), or gh 2.102.0, downloaded
+    and checked against the SHA-256 for this CPU that is written in the
+    script. gh runs with no token and an empty config.
+11. Run `gh attestation verify` on the tarball with the bundle,
+    `--repo code6x/pullgate`, `--cert-identity
+    https://github.com/code6x/pullgate/.github/workflows/release.yml@refs/heads/main`
+    and `--deny-self-hosted-runners`.
+12. Take only `pullgate` out of the tarball. Run `pullgate version` from the
+    temporary directory. It must print `pullgate X.Y.Z` of the version
+    asked for, and nothing else.
+13. Copy it into the bin directory under a new name, mode 0755, owner
+    root. Run `pullgate version` there again. Write it to the disk
+    (`sync`), then rename it over the old binary. The rename is atomic: a
+    new process gets the old file or the new one.
+14. Print what to restart. The script restarts nothing.
+    `pullgate-listen.service` runs the old binary until it is restarted.
+    The timers and path units start a new process each time, so they get
+    the new binary at their next start.
+
+A trap removes the temporary directory and a new file that was not renamed
+yet, at every exit. A failure exits with 1, and its last line says that
+nothing was installed. What the script trusts: THREAT-MODEL.md, T17.
