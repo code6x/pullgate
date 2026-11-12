@@ -539,7 +539,7 @@ func TestInstall(t *testing.T) {
 	in.checkTmpGone()
 	for _, s := range []string{"Installing pullgate 0.2.0 as " + in.bin + "/pullgate.", "version says: pullgate 0.2.0",
 		"This script restarts nothing.", "systemctl restart pullgate-listen.service", "pullgate-run@NAME.timer",
-		"pullgate-apply@NAME.path"} {
+		"pullgate-apply@NAME.path", "pullgate-check@NAME.path"} {
 		if !strings.Contains(r.stdout, s) {
 			t.Errorf("stdout does not say %q:\n%s", s, r.stdout)
 		}

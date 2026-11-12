@@ -6,7 +6,9 @@
 Description=pullgate check requests for %i
 
 [Path]
-DirectoryNotEmpty=/var/spool/pullgate/%i/check
+# Only the request file counts, so another file in the directory does not
+# start runs again and again.
+PathExists=/var/spool/pullgate/%i/check/request
 Unit=pullgate-run@%i.service
 # At most 10 starts a minute. This stops a loop when a run fails before it
 # removes the request. The listener writes at most one request per instance
