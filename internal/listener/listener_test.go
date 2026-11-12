@@ -211,3 +211,167 @@ func TestTokenNeverInErrors(t *testing.T) {
 		t.Fatalf("the error must not hold the token: %v", err)
 	}
 }
+
+const inst2 = "playbooks"
+
+// newL2 is newL with two instances.
+func newL2(t *testing.T) (*lfix, spool.Dirs) {
+	f := newL(t)
+	d2 := spool.Dirs{Base: f.d.Base, Name: inst2}
+	if err := d2.Ensure(uint32(os.Geteuid()), spool.Owners{ListenerUID: os.Geteuid(), ListenerGID: os.Getegid()}); err != nil {
+		t.Fatal(err)
+	}
+	f.l.Cfg.Instances = append(f.l.Cfg.Instances, inst2)
+	return f, d2
+}
+
+// say sends one message through getUpdates.
+func (f *lfix) say(from, chatID int64, text string, edited bool) {
+	f.t.Helper()
+	f.tg.Say(from, chatID, text, edited)
+	ups, err := f.l.TG.GetUpdates(context.Background(), f.l.st.Offset, 0)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	for _, u := range ups {
+		f.l.Update(context.Background(), u)
+	}
+}
+
+func TestCheckCommandWritesRequests(t *testing.T) {
+	f, d2 := newL2(t)
+	f.say(owner, chat, "/check "+inst2, false)
+	if f.d.HasCheck() || !d2.HasCheck() {
+		t.Fatal("/check NAME must write a request for that instance only")
+	}
+	ms := f.tg.Messages()
+	if len(ms) != 1 || !strings.Contains(ms[0].Text, "Checking <b>"+inst2+"</b>") || ms[0].ReplyTo == 0 {
+		t.Fatalf("the reply must say checking: %+v", ms)
+	}
+	if n, bad, err := d2.TakeChecks(os.Geteuid()); n != 1 || len(bad) != 0 || err != nil {
+		t.Fatalf("the request must be valid for root: %d %v %v", n, bad, err)
+	}
+	f.now = f.now.Add(CheckGap)
+	f.say(owner, chat, "/check", false)
+	if !f.d.HasCheck() || !d2.HasCheck() {
+		t.Fatal("/check must write a request for every instance")
+	}
+}
+
+func TestCheckCommandsThatDoNotCount(t *testing.T) {
+	cases := map[string]struct {
+		from, chat int64
+		text       string
+		edited     bool
+		help       bool // the owner gets the usage text
+	}{
+		"another user":       {owner + 1, chat, "/check", false, false},
+		"another chat":       {owner, chat + 1, "/check", false, false},
+		"edited message":     {owner, chat, "/check", true, false},
+		"unknown name":       {owner, chat, "/check other", false, true},
+		"extra text":         {owner, chat, "/check " + inst + " now", false, true},
+		"two spaces":         {owner, chat, "/check  " + inst, false, true},
+		"to another bot":     {owner, chat, "/check@otherbot", false, true},
+		"name with @":        {owner, chat, "/check@otherbot " + inst, false, true},
+		"other text":         {owner, chat, "hello", false, false},
+		"command in a line":  {owner, chat, "please /check", false, false},
+		"other user, known":  {owner + 1, chat, "/check " + inst, false, false},
+		"trailing new line":  {owner, chat, "/check\n", false, true},
+		"upper case command": {owner, chat, "/CHECK", false, false},
+	}
+	for n, c := range cases {
+		t.Run(n, func(t *testing.T) {
+			f, d2 := newL2(t)
+			f.say(c.from, c.chat, c.text, c.edited)
+			if f.d.HasCheck() || d2.HasCheck() {
+				t.Fatal("no request may be written")
+			}
+			ms := f.tg.Messages()
+			switch {
+			case c.help && (len(ms) != 1 || ms[0].Chat != chat || !strings.Contains(ms[0].Text, "Use <code>/check</code>")):
+				t.Fatalf("the owner must get the usage text: %+v", ms)
+			case !c.help && len(ms) != 0:
+				t.Fatalf("no answer may be sent: %+v", ms)
+			}
+			for _, m := range ms {
+				if strings.Contains(m.Text, "other") || strings.Contains(m.Text, "now") {
+					t.Fatalf("the reply must not repeat the text of the message: %q", m.Text)
+				}
+			}
+		})
+	}
+}
+
+func TestReplayedUpdateIsIgnored(t *testing.T) {
+	f := newL(t)
+	f.say(owner, chat, "/check", false)
+	if _, _, err := f.d.TakeChecks(os.Geteuid()); err != nil {
+		t.Fatal(err)
+	}
+	f.now = f.now.Add(time.Minute) // past CheckGap
+	u := telegram.Update{UpdateID: f.l.st.Offset - 1, Message: &telegram.Message{MessageID: 1, From: &telegram.User{ID: owner}, Chat: telegram.Chat{ID: chat}, Text: "/check"}}
+	f.l.Update(context.Background(), u)
+	if f.d.HasCheck() {
+		t.Fatal("a replayed update_id must do nothing")
+	}
+	// A replayed tap too, even if the code were still open.
+	msg := f.ask(1, code)
+	f.tap(owner, chat, msg, "a:"+code)
+	f.approvals()
+	old := f.l.st.Offset - 1
+	f.find(inst, 1).Code = code
+	f.l.Update(context.Background(), telegram.Update{UpdateID: old, CallbackQuery: &telegram.CallbackQuery{ID: "cq", From: telegram.User{ID: owner}, Message: &telegram.Message{MessageID: msg, Chat: telegram.Chat{ID: chat}}, Data: "a:" + code}})
+	if es := f.approvals(); len(es) != 0 {
+		t.Fatal("a replayed tap must do nothing")
+	}
+	// A new, lower ID (Telegram starts again after a quiet week) counts.
+	f.l.Update(context.Background(), telegram.Update{UpdateID: 1000000 + 7, Message: &telegram.Message{MessageID: 2, From: &telegram.User{ID: owner}, Chat: telegram.Chat{ID: chat}, Text: "/check"}})
+	_, _, _ = f.d.TakeChecks(os.Geteuid())
+	f.now = f.now.Add(time.Minute)
+	f.l.Update(context.Background(), telegram.Update{UpdateID: 5, Message: &telegram.Message{MessageID: 3, From: &telegram.User{ID: owner}, Chat: telegram.Chat{ID: chat}, Text: "/check"}})
+	if !f.d.HasCheck() || f.l.st.Offset != 6 {
+		t.Fatalf("a new lower update_id must count, offset %d", f.l.st.Offset)
+	}
+}
+
+func TestCheckGapInTheListener(t *testing.T) {
+	f := newL(t)
+	f.say(owner, chat, "/check", false)
+	_, _, _ = f.d.TakeChecks(os.Geteuid())
+	f.now = f.now.Add(CheckGap / 2)
+	f.say(owner, chat, "/check "+inst, false)
+	if f.d.HasCheck() {
+		t.Fatal("a second /check within CheckGap must write nothing")
+	}
+	if ms := f.tg.Messages(); !strings.Contains(ms[len(ms)-1].Text, "a few seconds ago") {
+		t.Fatalf("the owner must learn why: %+v", ms[len(ms)-1])
+	}
+	f.now = f.now.Add(CheckGap)
+	f.say(owner, chat, "/check", false)
+	if !f.d.HasCheck() {
+		t.Fatal("after CheckGap /check works again")
+	}
+}
+
+func (f *lfix) find(i string, id int64) *Question { return f.l.find(i, id) }
+
+func TestCheckRequestWriteFailsSaysSo(t *testing.T) {
+	f := newL(t)
+	if err := os.RemoveAll(f.d.CheckDir()); err != nil {
+		t.Fatal(err)
+	}
+	f.say(owner, chat, "/check", false)
+	ms := f.tg.Messages()
+	if len(ms) != 1 || !strings.Contains(ms[0].Text, "was not saved") {
+		t.Fatalf("the owner must learn that the request was not saved: %+v", ms)
+	}
+}
+
+func TestListenerAsksForMessages(t *testing.T) {
+	// getUpdates must ask for messages, or /check never arrives.
+	f := newL(t)
+	f.say(owner, chat, "/check", false)
+	if !f.d.HasCheck() {
+		t.Fatal("the message must arrive")
+	}
+}

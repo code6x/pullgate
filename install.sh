@@ -681,7 +681,7 @@ print_restart() {
 	fi
 	say "This script restarts nothing. The listener still runs the old version. Restart it:"
 	say "  systemctl restart pullgate-listen.service"
-	say "The timers (pullgate-run@NAME.timer) and the path units (pullgate-apply@NAME.path)"
+	say "The timers (pullgate-run@NAME.timer) and the path units (pullgate-apply@NAME.path, pullgate-check@NAME.path)"
 	say "start a new process each time, so they use the new file from their next start."
 	say "A run or an apply that is running now ends with the old version. See them with:"
 	say "  systemctl list-timers 'pullgate-run@*'"

@@ -109,9 +109,35 @@ cp contrib/systemd/* /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now pullgate-listen.service
 systemctl enable --now pullgate-apply@NAME.path pullgate-run@NAME.timer
+systemctl enable --now pullgate-check@NAME.path   # optional: /check
 ```
 
 Every step logs to the journal: `journalctl -t pullgate`.
+
+## Check now: `/check`
+
+The timer runs every 5 minutes. After a push you do not have to wait: send
+the bot `/check` (all instances) or `/check NAME` (one instance). The
+listener answers "Checking NAME…" and writes a check request.
+`pullgate-check@NAME.path` then starts the normal run at once. You get the
+usual Apply question, or "No new commit (the applied commit is …)", or
+"NAME is paused" / "NAME is off" (then nothing is fetched).
+
+- Only your user ID in your chat counts. The text must be exactly
+  `/check` or `/check NAME`. Other messages get no request. Edited messages
+  do not count.
+- `/check` never applies anything in `ask` mode: it only fetches and asks.
+  **In `auto` mode, `/check` applies a new commit at once, without a tap**,
+  as the timer would a few minutes later.
+- Root allows at most one run per minute from `/check`. More requests in
+  that minute are dropped, with one reply. The listener also takes at most
+  one `/check` per instance in 10 seconds.
+- `pullgate-check@NAME.path` stops after 10 starts in a minute. Then
+  `/check` waits for the timer until you run
+  `systemctl reset-failed pullgate-check@NAME.path` and
+  `systemctl start pullgate-check@NAME.path`.
+- Without `pullgate-check@NAME.path`, the request waits for the next timer
+  run.
 
 ## Config
 

@@ -1,6 +1,6 @@
 // Package spool holds the files between root and the listener (DESIGN.md
-// section 8): the outbox (root to listener) and the inbox (listener to
-// root). Root never follows a path that the listener can change: it works
+// section 8): the outbox (root to listener), the inbox (listener to root)
+// and the check directory (check requests, listener to root). Root never follows a path that the listener can change: it works
 // through os.Root, and creates files with O_EXCL|O_NOFOLLOW.
 package spool
 
@@ -73,6 +73,19 @@ func (d Dirs) Outbox() string { return filepath.Join(d.inst(), "outbox") }
 // Inbox is the path of the inbox.
 func (d Dirs) Inbox() string { return filepath.Join(d.inst(), "inbox") }
 
+// CheckDir is the path of the directory of check requests.
+func (d Dirs) CheckDir() string { return filepath.Join(d.inst(), "check") }
+
+// CheckFile is the one name a check request has in the check directory.
+const CheckFile = "request"
+
+// CheckContent is the whole content of a check request. It holds no data
+// from the message (DESIGN.md section 8).
+const CheckContent = "check\n"
+
+// MaxCheck is the largest check request file root reads.
+const MaxCheck = 64
+
 // Ensure makes the spool of the instance with the owners and modes of
 // DESIGN.md section 4. Base and Base/NAME belong to root (uid) and must
 // pass the check of rule 6; outbox and inbox are fixed through an open
@@ -103,6 +116,7 @@ func (d Dirs) Ensure(uid uint32, o Owners) error {
 	}{
 		{"outbox", int(uid), o.ListenerGID, 0o770 | os.ModeSetgid},
 		{"inbox", o.ListenerUID, o.ListenerGID, 0o700},
+		{"check", o.ListenerUID, o.ListenerGID, 0o700},
 	} {
 		if err := root.Mkdir(s.name, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
 			return fmt.Errorf("make %s: %w", s.name, err)
@@ -135,8 +149,9 @@ func seqName() string {
 }
 
 // writeIn writes data as a new file in dir, through os.Root: a random
-// temporary name with O_EXCL|O_NOFOLLOW, then a rename in the same dir.
-func writeIn(dir string, data []byte, mode os.FileMode) error {
+// temporary name with O_EXCL|O_NOFOLLOW, then a rename in the same dir to
+// final (a new sequence name when final is "").
+func writeIn(dir string, data []byte, mode os.FileMode, final string) error {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", dir, err)
@@ -157,8 +172,11 @@ func writeIn(dir string, data []byte, mode os.FileMode) error {
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
+	if final == "" {
+		final = seqName()
+	}
 	if err == nil {
-		err = root.Rename(tmp, seqName())
+		err = root.Rename(tmp, final)
 	}
 	if err != nil {
 		_ = root.Remove(tmp)
@@ -173,7 +191,7 @@ func (d Dirs) Send(m Message) error {
 	if err != nil {
 		return err
 	}
-	return writeIn(d.Outbox(), b, 0o640)
+	return writeIn(d.Outbox(), b, 0o640, "")
 }
 
 // WriteApproval writes an approval to the inbox (the listener).
@@ -182,7 +200,85 @@ func (d Dirs) WriteApproval(a Approval) error {
 	if err != nil {
 		return err
 	}
-	return writeIn(d.Inbox(), b, 0o600)
+	return writeIn(d.Inbox(), b, 0o600, "")
+}
+
+// WriteCheck writes a check request (the listener). It always has the same
+// name, so many requests before root reads them are one file.
+func (d Dirs) WriteCheck() error {
+	return writeIn(d.CheckDir(), []byte(CheckContent), 0o600, CheckFile)
+}
+
+// HasCheck reports whether the check directory holds a file whose name
+// does not start with ".". It reads and removes nothing. It opens the
+// instance directory first and "check" inside it, so it never follows a
+// symlink in place of "check".
+func (d Dirs) HasCheck() bool {
+	inst, err := os.OpenRoot(d.inst())
+	if err != nil {
+		return false
+	}
+	defer func() { _ = inst.Close() }()
+	root, err := inst.OpenRoot("check")
+	if err != nil {
+		return false
+	}
+	defer func() { _ = root.Close() }()
+	f, err := root.Open(".")
+	if err != nil {
+		return false
+	}
+	names, err := f.Readdirnames(-1)
+	_ = f.Close()
+	if err != nil {
+		return false
+	}
+	for _, n := range names {
+		if !strings.HasPrefix(n, ".") {
+			return true
+		}
+	}
+	return false
+}
+
+// TakeChecks reads and removes every file in the check directory (root).
+// It returns how many were valid check requests, and an error for each bad
+// file. A valid request is a regular file named CheckFile, owned by the
+// listener user, with exactly CheckContent in it.
+func (d Dirs) TakeChecks(listenerUID int) (int, []error, error) {
+	root, err := os.OpenRoot(d.CheckDir())
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return 0, nil, nil
+		}
+		return 0, nil, fmt.Errorf("open the check directory: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	names, err := list(root)
+	if err != nil {
+		return 0, nil, fmt.Errorf("read the check directory: %w", err)
+	}
+	n := 0
+	var bad []error
+	for _, name := range names {
+		b, err := readOne(root, name, MaxCheck, listenerUID)
+		if rerr := root.RemoveAll(name); rerr != nil {
+			return n, bad, fmt.Errorf("remove %s/%s: %w. Fix: remove it as root", d.CheckDir(), name, rerr)
+		}
+		switch {
+		case err != nil:
+		case name != CheckFile:
+			err = errors.New("not the name of a check request")
+		case string(b) != CheckContent:
+			err = errors.New("not the content of a check request")
+		}
+		if err != nil {
+			bad = append(bad, fmt.Errorf("check file %s: %w", name, err))
+			continue
+		}
+		n++
+	}
+	return n, bad, nil
 }
 
 // list returns the names in dir, sorted, without names that start with ".".

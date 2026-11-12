@@ -1,10 +1,14 @@
 # pullgate run NAME: fetch, check, and ask (DESIGN.md section 7).
-# Started by pullgate-run@NAME.timer. Runs as root, because root owns the
-# clone (rule 6). check and summary run as check_user inside this sandbox.
+# Started by pullgate-run@NAME.timer, and by pullgate-check@NAME.path on
+# /check. Runs as root, because root owns the clone (rule 6). check and
+# summary run as check_user inside this sandbox.
 [Unit]
 Description=pullgate run for %i
 After=network-online.target
 Wants=network-online.target
+# No start limit here: pullgate-check@NAME.path has the limit of /check
+# (TriggerLimitBurst=), so many check requests can never stop the timer.
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot

@@ -44,6 +44,7 @@ type Chat struct {
 // Message is a Telegram message.
 type Message struct {
 	MessageID int64  `json:"message_id"`
+	From      *User  `json:"from,omitempty"`
 	Chat      Chat   `json:"chat"`
 	Text      string `json:"text"`
 	EditDate  int64  `json:"edit_date,omitempty"`
@@ -61,6 +62,8 @@ type CallbackQuery struct {
 type Update struct {
 	UpdateID      int64          `json:"update_id"`
 	CallbackQuery *CallbackQuery `json:"callback_query,omitempty"`
+	Message       *Message       `json:"message,omitempty"`
+	EditedMessage *Message       `json:"edited_message,omitempty"`
 }
 
 // Button is an inline keyboard button.
@@ -152,11 +155,11 @@ func (c *Client) DeleteWebhook(ctx context.Context) error {
 	return c.call(ctx, "deleteWebhook", map[string]any{"drop_pending_updates": false}, nil)
 }
 
-// GetUpdates long-polls for button taps.
+// GetUpdates long-polls for button taps and messages (for /check).
 func (c *Client) GetUpdates(ctx context.Context, offset int64, timeout int) ([]Update, error) {
 	var ups []Update
 	err := c.call(ctx, "getUpdates", map[string]any{
-		"offset": offset, "timeout": timeout, "allowed_updates": []string{"callback_query"},
+		"offset": offset, "timeout": timeout, "allowed_updates": []string{"callback_query", "message"},
 	}, &ups)
 	return ups, err
 }

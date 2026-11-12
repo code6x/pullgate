@@ -139,3 +139,87 @@ func TestOldTempFilesAreRemoved(t *testing.T) {
 		t.Fatal("an old temp file must be removed")
 	}
 }
+
+func TestCheckRequestRoundTrip(t *testing.T) {
+	d := dirs(t)
+	if d.HasCheck() {
+		t.Fatal("an empty check directory has no request")
+	}
+	// Many requests before root reads them are one file.
+	for range 3 {
+		if err := d.WriteCheck(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !d.HasCheck() {
+		t.Fatal("the request must be seen")
+	}
+	n, bad, err := d.TakeChecks(os.Geteuid())
+	if err != nil || n != 1 || len(bad) != 0 {
+		t.Fatalf("n=%d bad=%v err=%v", n, bad, err)
+	}
+	if n, _, _ := d.TakeChecks(os.Geteuid()); n != 0 {
+		t.Fatal("a request is used once")
+	}
+}
+
+func TestBadCheckRequests(t *testing.T) {
+	putCheck := func(t *testing.T, d Dirs, name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(d.CheckDir(), name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cases := map[string]func(t *testing.T, d Dirs) int{
+		"symlink": func(t *testing.T, d Dirs) int {
+			if err := os.Symlink("/etc/hostname", filepath.Join(d.CheckDir(), CheckFile)); err != nil {
+				t.Fatal(err)
+			}
+			return os.Geteuid()
+		},
+		"wrong owner": func(t *testing.T, d Dirs) int {
+			putCheck(t, d, CheckFile, CheckContent)
+			return os.Geteuid() + 1 // the listener is another user
+		},
+		"too big": func(t *testing.T, d Dirs) int {
+			putCheck(t, d, CheckFile, string(make([]byte, MaxCheck+1)))
+			return os.Geteuid()
+		},
+		"other content": func(t *testing.T, d Dirs) int {
+			putCheck(t, d, CheckFile, "check config-repo\n")
+			return os.Geteuid()
+		},
+		"other name": func(t *testing.T, d Dirs) int {
+			putCheck(t, d, "1.json", CheckContent)
+			return os.Geteuid()
+		},
+		"directory": func(t *testing.T, d Dirs) int {
+			if err := os.MkdirAll(filepath.Join(d.CheckDir(), CheckFile, "x"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			return os.Geteuid()
+		},
+		"fifo": func(t *testing.T, d Dirs) int {
+			if err := syscall.Mkfifo(filepath.Join(d.CheckDir(), CheckFile), 0o600); err != nil {
+				t.Skip(err)
+			}
+			return os.Geteuid()
+		},
+	}
+	for n, c := range cases {
+		t.Run(n, func(t *testing.T) {
+			d := dirs(t)
+			uid := c(t, d)
+			got, bad, err := d.TakeChecks(uid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != 0 || len(bad) != 1 {
+				t.Fatalf("must be refused: n=%d bad=%v", got, bad)
+			}
+			if left, _ := os.ReadDir(d.CheckDir()); len(left) != 0 {
+				t.Fatal("a bad request must be removed")
+			}
+		})
+	}
+}
