@@ -89,7 +89,9 @@ const MaxCheck = 64
 // Ensure makes the spool of the instance with the owners and modes of
 // DESIGN.md section 4. Base and Base/NAME belong to root (uid) and must
 // pass the check of rule 6; outbox and inbox are fixed through an open
-// directory, never through a path.
+// directory, never through a path. No directory gets the setgid bit:
+// pullgate-run@.service has RestrictSUIDSGID=yes, which refuses a chmod
+// that sets it. Send gives each outbox file its group itself.
 func (d Dirs) Ensure(uid uint32, o Owners) error {
 	for _, p := range []string{d.Base, d.inst()} {
 		if err := os.Mkdir(p, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
@@ -114,7 +116,7 @@ func (d Dirs) Ensure(uid uint32, o Owners) error {
 		uid, gid int
 		mode     os.FileMode
 	}{
-		{"outbox", int(uid), o.ListenerGID, 0o770 | os.ModeSetgid},
+		{"outbox", int(uid), o.ListenerGID, 0o770},
 		{"inbox", o.ListenerUID, o.ListenerGID, 0o700},
 		{"check", o.ListenerUID, o.ListenerGID, 0o700},
 	} {
@@ -150,8 +152,9 @@ func seqName() string {
 
 // writeIn writes data as a new file in dir, through os.Root: a random
 // temporary name with O_EXCL|O_NOFOLLOW, then a rename in the same dir to
-// final (a new sequence name when final is "").
-func writeIn(dir string, data []byte, mode os.FileMode, final string) error {
+// final (a new sequence name when final is ""). With gid >= 0 the file gets
+// that group before it is renamed, so a reader never sees it with another.
+func writeIn(dir string, data []byte, mode os.FileMode, gid int, final string) error {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", dir, err)
@@ -163,6 +166,9 @@ func writeIn(dir string, data []byte, mode os.FileMode, final string) error {
 		return fmt.Errorf("write in %s: %w", dir, err)
 	}
 	_, err = f.Write(data)
+	if err == nil && gid >= 0 {
+		err = f.Chown(-1, gid)
+	}
 	if err == nil {
 		err = f.Chmod(mode)
 	}
@@ -185,13 +191,18 @@ func writeIn(dir string, data []byte, mode os.FileMode, final string) error {
 	return nil
 }
 
-// Send writes a message to the outbox (root).
-func (d Dirs) Send(m Message) error {
+// Send writes a message to the outbox (root). The file is owned by root,
+// with group gid (the group of the listener user, Owners.ListenerGID) and
+// mode 0640, so the listener can read it (DESIGN.md section 4).
+func (d Dirs) Send(gid int, m Message) error {
+	if gid < 0 {
+		return errors.New("write in the outbox: no group for the listener. This is a bug in pullgate")
+	}
 	b, err := json.Marshal(m)
 	if err != nil {
 		return err
 	}
-	return writeIn(d.Outbox(), b, 0o640, "")
+	return writeIn(d.Outbox(), b, 0o640, gid, "")
 }
 
 // WriteApproval writes an approval to the inbox (the listener).
@@ -200,13 +211,13 @@ func (d Dirs) WriteApproval(a Approval) error {
 	if err != nil {
 		return err
 	}
-	return writeIn(d.Inbox(), b, 0o600, "")
+	return writeIn(d.Inbox(), b, 0o600, -1, "")
 }
 
 // WriteCheck writes a check request (the listener). It always has the same
 // name, so many requests before root reads them are one file.
 func (d Dirs) WriteCheck() error {
-	return writeIn(d.CheckDir(), []byte(CheckContent), 0o600, CheckFile)
+	return writeIn(d.CheckDir(), []byte(CheckContent), 0o600, -1, CheckFile)
 }
 
 // HasCheck reports whether the check directory holds a file whose name

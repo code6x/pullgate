@@ -85,8 +85,8 @@ if ! systemctl start "pullgate-run@$name.service"; then
 fi
 inv="$(systemctl show -p InvocationID --value "pullgate-run@$name.service")"
 journalctl --no-pager -o cat "_SYSTEMD_INVOCATION_ID=$inv" || true
-if journalctl --no-pager -o cat "_SYSTEMD_INVOCATION_ID=$inv" | grep -q 'level=ERROR'; then
-	err "the first run logged an error"
+if journalctl --no-pager -o cat "_SYSTEMD_INVOCATION_ID=$inv" | grep -q -E 'level=(ERROR|WARN)'; then
+	err "the first run logged an error or a warning"
 fi
 
 # The owners and modes of DESIGN.md section 4.
@@ -153,8 +153,8 @@ fi
 if [ -n "$(ls -A "$spool/outbox")" ]; then
 	err "the listener did not remove the message from the outbox"
 fi
-if journalctl --no-pager -o cat -u pullgate-listen.service | grep -q 'level=ERROR'; then
-	err "the listener logged an error"
+if journalctl --no-pager -o cat -u pullgate-listen.service | grep -q -E 'level=(ERROR|WARN)'; then
+	err "the listener logged an error or a warning"
 fi
 if ! systemctl is-active --quiet pullgate-listen.service; then
 	err "the listener is not running"

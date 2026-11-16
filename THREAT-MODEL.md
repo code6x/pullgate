@@ -105,7 +105,10 @@ user can write in the outbox and the inbox. Root never follows a path there:
 the spool directories above them are root-owned, root opens them with
 `os.OpenRoot`, and creates files with `O_CREAT|O_EXCL|O_NOFOLLOW` under a
 random name. So a symlink that the listener plants cannot make root write
-or change a file elsewhere.
+or change a file elsewhere. Root gives an outbox file the listener's group
+with `fchown` on the open file, never through a path, and no spool
+directory has the setgid bit. So the run unit keeps `RestrictSUIDSGID=yes`
+(DESIGN.md section 4).
 
 *Check requests.* The listener can also write check requests at any time,
 without the owner. A request holds no data: root checks it like an

@@ -243,6 +243,22 @@ The run unit sets `MemoryDenyWriteExecute=yes`, which also holds for
 `check` and `summary`. A command that needs a JIT (for example Node.js) does
 not work there.
 
+### Update from 0.1.0
+
+In 0.1.0 the first `pullgate run` failed under `pullgate-run@.service`
+with `chmod .../outbox: operation not permitted` (issue #19). A host may
+have a drop-in with `RestrictSUIDSGID=no` for the run unit as a
+workaround. Newer versions do not need it. After you update the binary:
+
+1. Find the drop-in: `systemctl cat pullgate-run@NAME.service` shows each
+   file and its path. It is in `/etc/systemd/system/pullgate-run@.service.d/`
+   or in `/etc/systemd/system/pullgate-run@NAME.service.d/`.
+2. Remove the line `RestrictSUIDSGID=no`, or the whole file when that is
+   all it holds.
+3. Run `systemctl daemon-reload`.
+
+The next run takes the setgid bit off the outbox by itself.
+
 ## Development
 
 ```sh

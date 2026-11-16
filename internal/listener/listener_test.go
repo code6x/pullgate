@@ -55,7 +55,7 @@ func newL(t *testing.T) *lfix {
 // ask puts a question in the outbox and lets the listener send it.
 func (f *lfix) ask(id int64, c string) int64 {
 	f.t.Helper()
-	if err := f.d.Send(spool.Message{Kind: spool.KindAsk, Question: id, Code: c, Expires: f.now.Add(time.Hour), Text: "pullgate on <b>example-host</b>\nApply this commit?"}); err != nil {
+	if err := f.d.Send(os.Getegid(), spool.Message{Kind: spool.KindAsk, Question: id, Code: c, Expires: f.now.Add(time.Hour), Text: "pullgate on <b>example-host</b>\nApply this commit?"}); err != nil {
 		f.t.Fatal(err)
 	}
 	f.l.Outbox(context.Background())
@@ -131,7 +131,7 @@ func TestTapsThatDoNotCount(t *testing.T) {
 			f.tap(owner, chat, msg, "a:"+code)
 		},
 		"closed question": func(f *lfix, msg int64) {
-			if err := f.d.Send(spool.Message{Kind: spool.KindEdit, Question: 1, Text: "closed"}); err != nil {
+			if err := f.d.Send(os.Getegid(), spool.Message{Kind: spool.KindEdit, Question: 1, Text: "closed"}); err != nil {
 				f.t.Fatal(err)
 			}
 			f.l.Outbox(context.Background())
@@ -159,7 +159,7 @@ func TestTapsThatDoNotCount(t *testing.T) {
 
 func TestExpiredAskIsNotSent(t *testing.T) {
 	f := newL(t)
-	if err := f.d.Send(spool.Message{Kind: spool.KindAsk, Question: 1, Code: code, Expires: f.now.Add(-time.Minute), Text: "old"}); err != nil {
+	if err := f.d.Send(os.Getegid(), spool.Message{Kind: spool.KindAsk, Question: 1, Code: code, Expires: f.now.Add(-time.Minute), Text: "old"}); err != nil {
 		t.Fatal(err)
 	}
 	f.l.Outbox(context.Background())
@@ -186,8 +186,8 @@ func TestStateSurvivesRestart(t *testing.T) {
 func TestReplyAndNotice(t *testing.T) {
 	f := newL(t)
 	msg := f.ask(1, code)
-	_ = f.d.Send(spool.Message{Kind: spool.KindReply, Question: 1, Text: "applied"})
-	_ = f.d.Send(spool.Message{Kind: spool.KindNotice, Text: "notice"})
+	_ = f.d.Send(os.Getegid(), spool.Message{Kind: spool.KindReply, Question: 1, Text: "applied"})
+	_ = f.d.Send(os.Getegid(), spool.Message{Kind: spool.KindNotice, Text: "notice"})
 	f.l.Outbox(context.Background())
 	ms := f.tg.Messages()
 	if len(ms) != 3 || ms[1].ReplyTo != msg || ms[2].Text != "notice" {

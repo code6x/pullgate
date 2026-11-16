@@ -104,7 +104,8 @@ can be less strict; each example sets what its `apply` needs.
 | `/var/lib/pullgate/NAME/auto-approval` | root, 0600 | the approval that `auto` mode writes (section 13) |
 | `/var/lib/pullgate/NAME/trees/` | root, 0711 | the trees of one process (section 6) |
 | `/var/spool/pullgate/` and `/var/spool/pullgate/NAME/` | root, 0755 | the spool |
-| `/var/spool/pullgate/NAME/outbox` | root, group listener, 0770 | messages from root to the listener |
+| `/var/spool/pullgate/NAME/outbox` | root, group listener, 0770 (no setgid) | messages from root to the listener |
+| `/var/spool/pullgate/NAME/outbox/*.json` | root, group listener, 0640 | one message |
 | `/var/spool/pullgate/NAME/inbox` | listener, 0700 | approvals from the listener to root |
 | `/var/spool/pullgate/NAME/check` | listener, 0700 | check requests from the listener to root |
 | `/var/lib/pullgate-listener/state.json` | listener, 0600 | the listener's open questions |
@@ -131,6 +132,19 @@ through the open directory, creates files in them with
 in the same directory. `/var/spool/pullgate` and `NAME/` are owned by root
 and pass the check of section 6, so the listener cannot swap `outbox`,
 `inbox` or `check` for a symlink.
+
+**No setgid bit on the outbox.** Root gives each outbox file the group of
+the listener user itself: it creates the file, then calls `fchown` on the
+open file (group only) and `fchmod` to 0640, all before the rename. So the
+listener never sees an outbox file with another group, and no directory
+needs the setgid bit. This matters because `pullgate-run@.service` sets
+`RestrictSUIDSGID=yes`, which refuses every `chmod` that sets a setuid or
+setgid bit. Version 0.1.0 made the outbox `2770`, and its first run failed
+under the unit (issue #19). The other choice was to remove
+`RestrictSUIDSGID=yes` from the run unit. We keep it: the run unit runs as
+root with `CAP_FOWNER`, and it must never make a setuid or setgid file.
+`Ensure` also takes the setgid bit off an outbox made by 0.1.0. Removing a
+bit is allowed under `RestrictSUIDSGID=yes`.
 
 ## 5. The instance config
 
@@ -672,6 +686,15 @@ script with `/bin/sh` against a fake release: a fake `curl`, `uname`, `gh`
 and `pullgate`. They never use the network. They show that the script
 installs nothing when a check fails (section 16), and that it installs when
 all checks pass. CI also runs a pinned ShellCheck on the script.
+
+`test/units/first-run.sh` runs on CI as root, on the throwaway runner. It
+installs the binary and the units of `contrib/systemd/` as the README
+says, with no drop-in. It runs the first `pullgate run` under the real
+`pullgate-run@.service`, checks the owners and modes of section 4, then
+runs `pullgate listen` under the real `pullgate-listen.service` against a
+fake Telegram on `127.0.0.1`, and checks that the listener sent the
+question and removed it from the outbox. So a unit setting that breaks a
+run or the listener fails CI.
 
 ## 15. Not in version 0.1
 
