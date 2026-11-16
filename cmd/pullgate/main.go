@@ -23,6 +23,8 @@ import (
 var version = "dev"
 
 const usage = `usage: pullgate [--config-dir DIR] [--state-dir DIR] [--spool-dir DIR] COMMAND
+       pullgate --version | -version   print the version (same as: pullgate version)
+       pullgate --help
 commands:
   run NAME       fetch, check, and ask (the timer runs it, as root)
   apply NAME     act on approvals (the path unit runs it, as root)
@@ -48,12 +50,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 	configDir := fs.String("config-dir", "/etc/pullgate", "")
 	stateDir := fs.String("state-dir", "/var/lib/pullgate", "")
 	spoolDir := fs.String("spool-dir", "/var/spool/pullgate", "")
+	showVersion := fs.Bool("version", false, "")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			_, _ = fmt.Fprintln(stdout, usage)
 			return 0
 		}
 		return usageErr(stderr, err.Error())
+	}
+	if *showVersion {
+		_, _ = fmt.Fprintln(stdout, "pullgate", version)
+		return 0
 	}
 	rest := fs.Args()
 	if len(rest) == 0 {
