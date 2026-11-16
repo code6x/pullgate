@@ -48,3 +48,8 @@ SystemCallFilter=~@privileged @resources
 SystemCallErrorNumber=EPERM
 DevicePolicy=closed
 PrivateIPC=yes
+
+[Install]
+# systemctl enable starts the listener at boot. Without it, no question
+# gets an answer after a reboot.
+WantedBy=multi-user.target
