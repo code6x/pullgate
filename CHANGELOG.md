@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.1](https://github.com/code6x/pullgate/compare/v0.1.0...v0.1.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* accept --version and -version as a global flag ([#15](https://github.com/code6x/pullgate/issues/15)) ([5450bbc](https://github.com/code6x/pullgate/commit/5450bbc7683c3ad19a7969ed566540d1e1fa2254))
+* pullgate-listen.service gets an [Install] section ([#24](https://github.com/code6x/pullgate/issues/24)) ([053d0aa](https://github.com/code6x/pullgate/commit/053d0aae8208822b7e5c4d2d6f144c5ca68e1bc8))
+* the first run works under RestrictSUIDSGID=yes (no setgid outbox) ([#21](https://github.com/code6x/pullgate/issues/21)) ([1236625](https://github.com/code6x/pullgate/commit/12366256c83e6ef0d51511f82c78417f680a890d))
+
 ## 0.1.0 (2026-11-12)
 
 
