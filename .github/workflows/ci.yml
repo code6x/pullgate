@@ -124,7 +124,8 @@ jobs:
         # A fresh install with contrib/systemd/ and no drop-in: pullgate run
         # under pullgate-run@.service, then pullgate listen under
         # pullgate-listen.service against a fake Telegram. A unit setting
-        # that breaks a run fails here (issue #19).
+        # that breaks a run fails here (issue #19). Then it enables the
+        # units as the README says, and each must be enabled (issue #20).
         run: sudo sh test/units/first-run.sh "${RUNNER_TEMP}/pullgate"
 
   lint:

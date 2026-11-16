@@ -247,7 +247,9 @@ not work there.
 
 To update a host from 0.1.0: update the binary, and copy the units of
 `contrib/systemd/` of the new version to `/etc/systemd/system/` again.
-Then undo the two workarounds below, if the host has them.
+The copy replaces the unit files, so keep your own changes in drop-ins
+(`systemctl edit UNIT`); `systemctl cat UNIT` shows them. Then do the two
+steps below.
 
 **The run unit (issue #19).** In 0.1.0 the first `pullgate run` failed
 under `pullgate-run@.service` with
@@ -265,20 +267,22 @@ The next run takes the setgid bit off the outbox by itself.
 
 **The listener at boot (issue #20).** In 0.1.0, `pullgate-listen.service`
 had no `[Install]` section, so `systemctl enable` did nothing and the
-listener did not start after a reboot. A host may have the workaround
+listener did not start after a reboot. Every host updated from 0.1.0 must
+enable it again. A host may have the workaround
 `systemctl add-wants multi-user.target pullgate-listen.service`. That made
 the same link that `systemctl enable` makes now
-(`/etc/systemd/system/multi-user.target.wants/pullgate-listen.service`).
-systemd has no `remove-wants`. Run:
+(`/etc/systemd/system/multi-user.target.wants/pullgate-listen.service`), so
+there is nothing to remove first (systemd has no `remove-wants`). With or
+without the workaround, run:
 
 ```sh
 systemctl daemon-reload
 systemctl reenable pullgate-listen.service
-systemctl is-enabled pullgate-listen.service   # prints: enabled
+ls -l /etc/systemd/system/multi-user.target.wants/pullgate-listen.service
 ```
 
-`reenable` removes the old link and makes it again from the new
-`[Install]` section.
+`reenable` removes the old link, if there is one, and makes it again from
+the new `[Install]` section. The `ls` shows the link.
 
 ## Development
 

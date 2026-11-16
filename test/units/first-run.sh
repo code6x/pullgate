@@ -177,12 +177,21 @@ if ! systemctl is-active --quiet pullgate-listen.service; then
 fi
 systemctl stop pullgate-listen.service
 
-# A host with the workaround of 0.1.0 for issue #20, updated as the README
-# says ("Update from 0.1.0"): add-wants, then reenable.
+# A host updated from 0.1.0 with its workaround for issue #20, as the
+# README says ("Update from 0.1.0"): the old unit (no [Install]) and
+# add-wants, then the new unit, daemon-reload and reenable.
+sed '/^\[Install\]/,$d' "$top/contrib/systemd/pullgate-listen.service" >/etc/systemd/system/pullgate-listen.service
+systemctl daemon-reload
 systemctl add-wants multi-user.target pullgate-listen.service || err "systemctl add-wants failed"
+install -m 0644 -o root -g root "$top/contrib/systemd/pullgate-listen.service" /etc/systemd/system/
+systemctl daemon-reload
 systemctl reenable pullgate-listen.service || err "systemctl reenable pullgate-listen.service failed"
 if [ ! -L /etc/systemd/system/multi-user.target.wants/pullgate-listen.service ]; then
 	err "after reenable, multi-user.target does not want pullgate-listen.service"
+fi
+state="$(systemctl is-enabled pullgate-listen.service 2>/dev/null || true)"
+if [ "$state" != enabled ]; then
+	err "after reenable, systemctl is-enabled says '$state', want 'enabled'"
 fi
 systemctl disable pullgate-listen.service || err "systemctl disable pullgate-listen.service failed"
 

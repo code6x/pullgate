@@ -6,13 +6,18 @@
 # Usage: sh test/units/install-sections.sh   (from the top of the repo)
 set -eu
 
-units="$(grep -E '^[[:space:]]*systemctl enable' README.md \
+# Lines joined at a trailing backslash; "sudo" and options before
+# "enable" are allowed.
+units="$(sed -e ':a' -e '/\\$/N; s/\\\n//; ta' README.md \
+	| grep -E '^[[:space:]]*(sudo[[:space:]]+)?systemctl([[:space:]]+--?[A-Za-z-]+)*[[:space:]]+(re)?enable[[:space:]]' \
 	| sed -e 's/#.*//' \
 	| tr -s ' \t' '\n' \
 	| grep -E '^pullgate-[A-Za-z0-9@._-]+\.(service|path|timer|socket)$' \
 	| sort -u || true)"
-if [ -z "$units" ]; then
-	echo "FAIL: found no 'systemctl enable' unit in README.md" >&2
+# The README enables 4 units today. Fewer means the parsing broke.
+n="$(echo "$units" | grep -c . || true)"
+if [ "$n" -lt 4 ]; then
+	echo "FAIL: found $n 'systemctl enable' units in README.md, want at least 4. Fix: check the README, or this script" >&2
 	exit 1
 fi
 
