@@ -83,10 +83,15 @@ systemctl daemon-reload
 if ! systemctl start "pullgate-run@$name.service"; then
 	err "the first run failed under pullgate-run@.service"
 fi
-inv="$(systemctl show -p InvocationID --value "pullgate-run@$name.service")"
-journalctl --no-pager -o cat "_SYSTEMD_INVOCATION_ID=$inv" || true
-if journalctl --no-pager -o cat "_SYSTEMD_INVOCATION_ID=$inv" | grep -q -E 'level=(ERROR|WARN)'; then
+# The machine is fresh, so the unit's journal holds only this run.
+journalctl --sync || true
+runlog="$(journalctl --no-pager -o cat -u "pullgate-run@$name.service" || true)"
+echo "$runlog"
+if echo "$runlog" | grep -q -E 'level=(ERROR|WARN)'; then
 	err "the first run logged an error or a warning"
+fi
+if ! echo "$runlog" | grep -q 'msg=asked '; then
+	err "the first run did not log 'asked': it did not ask the question"
 fi
 
 # The owners and modes of DESIGN.md section 4.
@@ -132,7 +137,16 @@ tglog="$(mktemp)"
 python3 -I "$here/faketg.py" "$port" "$tglog" &
 tgpid=$!
 trap 'kill "$tgpid" 2>/dev/null || true' EXIT
-sleep 1
+# Wait until the fake Telegram takes connections.
+i=0
+until python3 -I -c 'import socket, sys; socket.create_connection(("127.0.0.1", int(sys.argv[1])), 1)' "$port" 2>/dev/null; do
+	i=$((i + 1))
+	if [ "$i" -ge 20 ]; then
+		echo "FAIL: the fake Telegram did not start on 127.0.0.1:$port" >&2
+		exit 1
+	fi
+	sleep 0.5
+done
 if ! systemctl start pullgate-listen.service; then
 	err "the listener did not start under pullgate-listen.service"
 fi
@@ -146,6 +160,7 @@ while [ "$i" -lt 30 ]; do
 	i=$((i + 1))
 	sleep 1
 done
+journalctl --sync || true
 journalctl --no-pager -o cat -u pullgate-listen.service || true
 if ! grep -qx sendMessage "$tglog"; then
 	err "the listener sent no message"

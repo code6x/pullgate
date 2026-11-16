@@ -1,7 +1,9 @@
 # pullgate apply NAME: act on approvals as root (DESIGN.md sections 9, 10).
 # It runs the owner's apply and health commands. What they need decides
 # how strict this unit can be, so the sandbox here is light. Add more in a
-# drop-in for your instance, for example:
+# drop-in for your instance. Keep CAP_CHOWN if you set
+# CapabilityBoundingSet=: root needs it to give its replies in the outbox
+# the listener's group (DESIGN.md section 4). For example:
 #   systemctl edit pullgate-apply@config-repo.service
 # The example configs in contrib/examples say what fits them.
 [Unit]

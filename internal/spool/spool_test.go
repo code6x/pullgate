@@ -256,6 +256,9 @@ func ownerMode(t *testing.T, p string) (uid, gid int, mode os.FileMode) {
 // can read it.
 func TestOwnersAndModes(t *testing.T) {
 	uid, lgid := os.Geteuid(), otherGroup(t)
+	if lgid == os.Getegid() {
+		t.Log("the test user has only one group, so this test cannot show that Send sets the group")
+	}
 	d := Dirs{Base: filepath.Join(testgit.PrivateDir(t), "spool"), Name: "x"}
 	// A spool made by v0.1.0 has a setgid outbox: Ensure takes the bit off.
 	if err := os.MkdirAll(d.Outbox(), 0o700); err != nil {

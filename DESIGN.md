@@ -144,7 +144,10 @@ under the unit (issue #19). The other choice was to remove
 `RestrictSUIDSGID=yes` from the run unit. We keep it: the run unit runs as
 root with `CAP_FOWNER`, and it must never make a setuid or setgid file.
 `Ensure` also takes the setgid bit off an outbox made by 0.1.0. Removing a
-bit is allowed under `RestrictSUIDSGID=yes`.
+bit is allowed under `RestrictSUIDSGID=yes`. Because root is not in the
+listener's group, the `fchown` needs `CAP_CHOWN`: every unit that runs
+`pullgate run` or `pullgate apply` must keep it. Without it, root cannot
+write to the outbox, and the owner gets no question and no reply.
 
 ## 5. The instance config
 
