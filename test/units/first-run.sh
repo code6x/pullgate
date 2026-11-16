@@ -5,7 +5,8 @@
 # `pullgate listen` under the real pullgate-listen.service, with no
 # drop-in. Then it checks the owners and modes of DESIGN.md section 4, and
 # that the listener read the outbox and sent the question. So a unit
-# setting that breaks a run fails here (issue #19).
+# setting that breaks a run fails here (issue #19). At the end it enables
+# the units as the README says, and checks that each is enabled (#20).
 #
 # It changes the system: it installs /usr/local/bin/pullgate, adds users,
 # and writes to /etc and /var. Run it only as root, on a machine you throw
@@ -175,6 +176,26 @@ if ! systemctl is-active --quiet pullgate-listen.service; then
 	err "the listener is not running"
 fi
 systemctl stop pullgate-listen.service
+
+# A host with the workaround of 0.1.0 for issue #20, updated as the README
+# says ("Update from 0.1.0"): add-wants, then reenable.
+systemctl add-wants multi-user.target pullgate-listen.service || err "systemctl add-wants failed"
+systemctl reenable pullgate-listen.service || err "systemctl reenable pullgate-listen.service failed"
+if [ ! -L /etc/systemd/system/multi-user.target.wants/pullgate-listen.service ]; then
+	err "after reenable, multi-user.target does not want pullgate-listen.service"
+fi
+systemctl disable pullgate-listen.service || err "systemctl disable pullgate-listen.service failed"
+
+# Enable the units as the README says (no --now here). Each must then be
+# "enabled", not "static": a unit with no [Install] section does not start
+# after a reboot (issue #20).
+for u in pullgate-listen.service "pullgate-apply@$name.path" "pullgate-run@$name.timer" "pullgate-check@$name.path"; do
+	systemctl enable "$u" || err "systemctl enable $u failed"
+	state="$(systemctl is-enabled "$u" 2>/dev/null || true)"
+	if [ "$state" != enabled ]; then
+		err "$u: systemctl is-enabled says '$state' after enable, want 'enabled'"
+	fi
+done
 
 if [ "$fail" -ne 0 ]; then
 	exit 1
