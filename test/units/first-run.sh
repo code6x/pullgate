@@ -38,7 +38,7 @@ err() {
 install -m 0755 -o root -g root "$1" /usr/local/bin/pullgate
 id pullgate >/dev/null 2>&1 || useradd --system --no-create-home --user-group --shell /usr/sbin/nologin pullgate
 id pullgate-check >/dev/null 2>&1 || useradd --system --no-create-home --user-group --shell /usr/sbin/nologin pullgate-check
-install -d -m 0755 -o root -g root /etc/pullgate
+install -d -m 0755 -o root -g root /etc/pullgate /var/spool/pullgate
 install -d -m 0711 -o root -g root /var/lib/pullgate
 install -m 0644 -o root -g root "$top"/contrib/systemd/* /etc/systemd/system/
 
@@ -133,7 +133,9 @@ python3 -I "$here/faketg.py" "$port" "$tglog" &
 tgpid=$!
 trap 'kill "$tgpid" 2>/dev/null || true' EXIT
 sleep 1
-systemctl start pullgate-listen.service
+if ! systemctl start pullgate-listen.service; then
+	err "the listener did not start under pullgate-listen.service"
+fi
 
 # The listener sends the question, then removes the file from the outbox.
 i=0
