@@ -245,10 +245,14 @@ not work there.
 
 ### Update from 0.1.0
 
-In 0.1.0 the first `pullgate run` failed under `pullgate-run@.service`
-with `chmod .../outbox: operation not permitted` (issue #19). A host may
-have a drop-in with `RestrictSUIDSGID=no` for the run unit as a
-workaround. Newer versions do not need it. After you update the binary:
+To update a host from 0.1.0: update the binary, and copy the units of
+`contrib/systemd/` of the new version to `/etc/systemd/system/` again.
+Then undo the two workarounds below, if the host has them.
+
+**The run unit (issue #19).** In 0.1.0 the first `pullgate run` failed
+under `pullgate-run@.service` with
+`chmod .../outbox: operation not permitted`. A host may have a drop-in
+with `RestrictSUIDSGID=no` for the run unit. Newer versions do not need it.
 
 1. Find the drop-in: `systemctl cat pullgate-run@NAME.service` shows each
    file and its path. It is in `/etc/systemd/system/pullgate-run@.service.d/`
@@ -258,6 +262,23 @@ workaround. Newer versions do not need it. After you update the binary:
 3. Run `systemctl daemon-reload`.
 
 The next run takes the setgid bit off the outbox by itself.
+
+**The listener at boot (issue #20).** In 0.1.0, `pullgate-listen.service`
+had no `[Install]` section, so `systemctl enable` did nothing and the
+listener did not start after a reboot. A host may have the workaround
+`systemctl add-wants multi-user.target pullgate-listen.service`. That made
+the same link that `systemctl enable` makes now
+(`/etc/systemd/system/multi-user.target.wants/pullgate-listen.service`).
+systemd has no `remove-wants`. Run:
+
+```sh
+systemctl daemon-reload
+systemctl reenable pullgate-listen.service
+systemctl is-enabled pullgate-listen.service   # prints: enabled
+```
+
+`reenable` removes the old link and makes it again from the new
+`[Install]` section.
 
 ## Development
 

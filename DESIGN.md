@@ -696,8 +696,13 @@ says, with no drop-in. It runs the first `pullgate run` under the real
 `pullgate-run@.service`, checks the owners and modes of section 4, then
 runs `pullgate listen` under the real `pullgate-listen.service` against a
 fake Telegram on `127.0.0.1`, and checks that the listener sent the
-question and removed it from the outbox. So a unit setting that breaks a
-run or the listener fails CI.
+question and removed it from the outbox. At the end it runs
+`systemctl enable` on the units the README names, and checks that each is
+`enabled`. So a unit setting that breaks a run or the listener, or a unit
+that cannot be enabled, fails CI. Without root, CI also runs
+`systemd-analyze verify` on every unit, and `test/units/install-sections.sh`
+checks that each unit the README tells you to enable has an `[Install]`
+section with `WantedBy=`.
 
 ## 15. Not in version 0.1
 
