@@ -114,6 +114,10 @@ systemctl enable --now pullgate-check@NAME.path   # optional: /check
 
 Every step logs to the journal: `journalctl -t pullgate`.
 
+To see the version of a binary, run `pullgate --version` or
+`pullgate version`. Both print `pullgate X.Y.Z` and exit 0. A build from
+the source without `-ldflags "-X main.version=..."` prints `pullgate dev`.
+
 ## Check now: `/check`
 
 The timer runs every 5 minutes. After a push you do not have to wait: send
