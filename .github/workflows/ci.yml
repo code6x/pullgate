@@ -85,10 +85,23 @@ jobs:
         run: |
           set -eu
           for f in contrib/examples/*/*.sh; do sh -n "$f"; done
-          # The binary is not installed here; every other message fails.
+          # The binary is not installed here. Messages about the runner's
+          # own units (/usr/lib/systemd/, /etc/systemd/) are not ours. Our
+          # unit files show with their absolute checkout path, so this
+          # filter never hides them. Every other message fails.
           out="$(systemd-analyze verify --man=no contrib/systemd/* 2>&1 || true)"
           echo "$out"
-          if echo "$out" | grep -v "Command /usr/local/bin/pullgate is not executable" | grep -q .; then
+          # The "not executable" line of each service shows that systemd
+          # really loaded our units.
+          n="$(echo "$out" | grep -c -E '^pullgate-(apply@[^ ]*|listen|run@[^ ]*)\.service: Command /usr/local/bin/pullgate is not executable' || true)"
+          if [ "$n" -ne 3 ]; then
+            echo "expected 3 'not executable' lines (apply, listen, run), got $n" >&2
+            exit 1
+          fi
+          if echo "$out" \
+            | grep -v "Command /usr/local/bin/pullgate is not executable" \
+            | grep -v -E "^(/usr/lib/systemd/|/etc/systemd/)" \
+            | grep -q .; then
             exit 1
           fi
 
