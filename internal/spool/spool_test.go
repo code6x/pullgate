@@ -105,7 +105,7 @@ func TestSendRefusesSymlinkedOutboxAndUnsafeSpool(t *testing.T) {
 	if err := os.Symlink(target, filepath.Join(d.Outbox(), "00000000000000000001-x.json")); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.Send(Message{Kind: KindNotice, Text: "x"}); err != nil {
+	if err := d.Send(os.Getegid(), Message{Kind: KindNotice, Text: "x"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(target); err == nil {
@@ -221,5 +221,105 @@ func TestBadCheckRequests(t *testing.T) {
 				t.Fatal("a bad request must be removed")
 			}
 		})
+	}
+}
+
+// otherGroup is a group of the test user other than its main group, or
+// its main group when it has no other.
+func otherGroup(t *testing.T) int {
+	t.Helper()
+	gs, err := os.Getgroups()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range gs {
+		if g != os.Getegid() {
+			return g
+		}
+	}
+	return os.Getegid()
+}
+
+func ownerMode(t *testing.T, p string) (uid, gid int, mode os.FileMode) {
+	t.Helper()
+	fi, err := os.Lstat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := fi.Sys().(*syscall.Stat_t)
+	return int(st.Uid), int(st.Gid), fi.Mode()
+}
+
+// TestOwnersAndModes checks the spool of DESIGN.md section 4: no setgid
+// bit anywhere (pullgate-run@.service has RestrictSUIDSGID=yes, issue
+// #19), and every outbox file has the listener's group, so the listener
+// can read it.
+func TestOwnersAndModes(t *testing.T) {
+	uid, lgid := os.Geteuid(), otherGroup(t)
+	if lgid == os.Getegid() {
+		t.Log("the test user has only one group, so this test cannot show that Send sets the group")
+	}
+	d := Dirs{Base: filepath.Join(testgit.PrivateDir(t), "spool"), Name: "x"}
+	// A spool made by v0.1.0 has a setgid outbox: Ensure takes the bit off.
+	if err := os.MkdirAll(d.Outbox(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(d.Outbox(), 0o770|os.ModeSetgid); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Ensure(uint32(uid), Owners{ListenerUID: uid, ListenerGID: lgid}); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		path string
+		gid  int
+		mode os.FileMode
+	}{
+		{d.Base, -1, os.ModeDir | 0o755},
+		{filepath.Join(d.Base, d.Name), -1, os.ModeDir | 0o755},
+		{d.Outbox(), lgid, os.ModeDir | 0o770},
+		{d.Inbox(), lgid, os.ModeDir | 0o700},
+		{d.CheckDir(), lgid, os.ModeDir | 0o700},
+	} {
+		u, g, m := ownerMode(t, c.path)
+		if u != uid || (c.gid >= 0 && g != c.gid) || m != c.mode {
+			t.Errorf("%s: owner %d group %d mode %v, want owner %d group %d mode %v", c.path, u, g, m, uid, c.gid, c.mode)
+		}
+	}
+	if err := d.Send(lgid, Message{Kind: KindNotice, Text: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	fs, err := d.ReadOutbox()
+	if err != nil || len(fs) != 1 || fs[0].Err != nil || fs[0].Message.Text != "x" {
+		t.Fatalf("the outbox must hold the message: %+v %v", fs, err)
+	}
+	u, g, m := ownerMode(t, filepath.Join(d.Outbox(), fs[0].Name))
+	if u != uid || g != lgid || m != 0o640 {
+		t.Errorf("outbox file: owner %d group %d mode %v, want owner %d group %d mode -rw-r-----", u, g, m, uid, lgid)
+	}
+}
+
+func TestSendDeny(t *testing.T) {
+	d := dirs(t)
+	if err := d.Send(-1, Message{Kind: KindNotice, Text: "x"}); err == nil {
+		t.Error("a message with no group must be refused")
+	}
+	if os.Geteuid() != 0 {
+		// A group the user is not in: the chown fails, and no file stays.
+		gs, _ := os.Getgroups()
+		in := map[int]bool{os.Getegid(): true}
+		for _, g := range gs {
+			in[g] = true
+		}
+		other := 1
+		for in[other] {
+			other++
+		}
+		if err := d.Send(other, Message{Kind: KindNotice, Text: "x"}); err == nil {
+			t.Error("a group the chown cannot give must be an error")
+		}
+	}
+	if left, _ := os.ReadDir(d.Outbox()); len(left) != 0 {
+		t.Fatalf("a refused message must leave no file: %v", left)
 	}
 }
