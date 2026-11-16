@@ -105,6 +105,26 @@ jobs:
             exit 1
           fi
 
+  units-first-run:
+    name: first run under the units
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: CGO_ENABLED=0 go build -trimpath -o "${RUNNER_TEMP}/pullgate" ./cmd/pullgate
+      - name: The first run and the listener under the real units
+        # A fresh install with contrib/systemd/ and no drop-in: pullgate run
+        # under pullgate-run@.service, then pullgate listen under
+        # pullgate-listen.service against a fake Telegram. A unit setting
+        # that breaks a run fails here (issue #19).
+        run: sudo sh test/units/first-run.sh "${RUNNER_TEMP}/pullgate"
+
   lint:
     runs-on: ubuntu-latest
     steps:
