@@ -254,7 +254,12 @@ tap on a closed or expired question, writes nothing. The listener also
 keeps the last 200 update IDs it handled and ignores an update with one of
 them, a tap or a `/check` alike. Root removes a question
 from its state before it acts, so a replayed approval finds no question.
-Root checks the time limit itself. A tap on a superseded question that the
+Root checks the time limit itself. `--ask-again` removes an open question
+for the tip from root's state (its message may be lost), so a tap on it,
+even one already written, finds no question; the new question has a new
+code. A question lost in the outbox is not silent: the listener tells the
+owner when it removes an outbox file that it cannot read, and names the
+instance, but shows no part of the file. A tap on a superseded question that the
 listener took before it handled the close still applies the old SHA
 (rule 2); the forward-only check still holds then.
 

@@ -29,6 +29,8 @@ commands:
   run NAME       fetch, check, and ask (the timer runs it, as root)
   apply NAME     act on approvals (the path unit runs it, as root)
   status NAME [--ask-again] [--pause] [--resume]
+                 --ask-again: ask about the last tip again; it also closes
+                 an open question for it, so the next run sends a new one
   listen [--config FILE]   the Telegram listener (its own user)
   version`
 

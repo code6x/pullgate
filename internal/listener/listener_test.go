@@ -198,6 +198,64 @@ func TestReplyAndNotice(t *testing.T) {
 	}
 }
 
+// TestBadOutboxFileTellsTheOwner: an outbox file that the listener cannot
+// read is removed, and the owner gets one notice that names the instance
+// and the command to ask again (code6x/pullgate#22).
+func TestBadOutboxFileTellsTheOwner(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can read a file with mode 0")
+	}
+	f := newL(t)
+	out := f.d.Outbox()
+	if err := os.WriteFile(filepath.Join(out, "0-a-unreadable"), []byte(`{"kind":"notice","text":"secret text"}`), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(out, "0-b-broken"), []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.d.Send(os.Getegid(), spool.Message{Kind: spool.KindNotice, Text: "good notice"})
+	f.l.Outbox(context.Background())
+	ms := f.tg.Messages()
+	if len(ms) != 2 {
+		t.Fatalf("want one notice for the bad files and the good message, got %+v", ms)
+	}
+	n := ms[0].Text
+	if !strings.Contains(n, "<b>"+inst+"</b>") || !strings.Contains(n, "<code>pullgate status "+inst+" --ask-again</code>") || !strings.Contains(n, "removed") {
+		t.Fatalf("the notice must name the instance and the command: %q", n)
+	}
+	if strings.Contains(n, "secret") || strings.Contains(n, "json") || strings.Contains(n, "0-a-unreadable") {
+		t.Fatalf("the notice must not show the file: %q", n)
+	}
+	if ms[1].Text != "good notice" {
+		t.Fatalf("the good message must still be sent: %+v", ms[1])
+	}
+	if left, _ := os.ReadDir(out); len(left) != 0 {
+		t.Fatalf("the bad files must be removed: %v", left)
+	}
+	// A pass with no bad file sends no notice.
+	f.l.Outbox(context.Background())
+	if len(f.tg.Messages()) != 2 {
+		t.Fatal("no new notice without a bad file")
+	}
+}
+
+// TestBadOutboxEntryThatStaysSendsNoNotice: an outbox entry that cannot
+// be removed (a directory with a file in it) gets no "removed" notice, so
+// the chat is not filled with one notice per round.
+func TestBadOutboxEntryThatStaysSendsNoNotice(t *testing.T) {
+	f := newL(t)
+	dir := filepath.Join(f.d.Outbox(), "0-dir")
+	if err := os.MkdirAll(filepath.Join(dir, "x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		f.l.Outbox(context.Background())
+	}
+	if ms := f.tg.Messages(); len(ms) != 0 {
+		t.Fatalf("no notice for an entry that was not removed: %+v", ms)
+	}
+}
+
 func TestTokenNeverInErrors(t *testing.T) {
 	c := telegram.New("http://127.0.0.1:1", token)
 	_, err := c.SendMessage(context.Background(), 1, "x", nil, 0)

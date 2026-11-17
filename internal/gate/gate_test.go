@@ -229,6 +229,134 @@ func TestSkip(t *testing.T) {
 	_ = a
 }
 
+// TestAskAgainReplacesALostQuestion: the message of an open question was
+// lost (code6x/pullgate#22). --ask-again closes it, the next run asks
+// again with a new question, and an approval for the old code does not
+// apply.
+func TestAskAgainReplacesALostQuestion(t *testing.T) {
+	f := newFixture(t, ``, "")
+	tip := f.commit("first", "one", nil)
+	if r := f.run(); r != Asked {
+		t.Fatalf("run: %s", r)
+	}
+	old := f.ask() // read and dropped: as if the listener lost it
+	if r := f.run(); r != Nothing {
+		t.Fatalf("an open question is not asked again by a plain run: %s", r)
+	}
+	var out strings.Builder
+	if err := f.env.Status(&out, StatusFlags{AskAgain: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "question:    none") {
+		t.Fatalf("--ask-again must close the open question:\n%s", out.String())
+	}
+	ms := f.outbox()
+	if len(ms) != 1 || ms[0].Kind != spool.KindEdit || ms[0].Question != old.Question || !strings.Contains(ms[0].Text, "closed") {
+		t.Fatalf("--ask-again must close the old message: %+v", ms)
+	}
+	if r := f.run(); r != Asked {
+		t.Fatalf("the run after --ask-again must ask: %s", r)
+	}
+	nq := f.ask()
+	if nq.Question == old.Question || nq.Code == old.Code {
+		t.Fatalf("the new question must have a new ID and code: old %d, new %d", old.Question, nq.Question)
+	}
+	if q := f.state().Open(); q == nil || q.ID != nq.Question || q.SHA != tip {
+		t.Fatalf("the new question must be open: %+v", q)
+	}
+	// An Apply for the old question applies nothing.
+	f.tap(old.Code, "apply")
+	if r := f.apply(); r == Applied || f.state().Applied != "" {
+		t.Fatalf("an Apply for the closed question must not apply: %s", r)
+	}
+	if q := f.state().Open(); q == nil || q.ID != nq.Question {
+		t.Fatal("the new question must stay open")
+	}
+	// The new one still works.
+	f.tap(nq.Code, "apply")
+	if r := f.apply(); r != Applied || f.state().Applied != tip {
+		t.Fatalf("an Apply for the new question applies: %s", r)
+	}
+}
+
+// TestAskAgainDropsAnApprovalWrittenBefore: a tap on the lost question
+// that reached the inbox before --ask-again finds no question.
+func TestAskAgainDropsAnApprovalWrittenBefore(t *testing.T) {
+	f := newFixture(t, ``, "")
+	f.commit("first", "one", nil)
+	f.run()
+	old := f.ask()
+	f.tap(old.Code, "apply")
+	if err := f.env.Status(new(strings.Builder), StatusFlags{AskAgain: true}); err != nil {
+		t.Fatal(err)
+	}
+	if r := f.apply(); r == Applied || f.state().Applied != "" {
+		t.Fatalf("an approval written before --ask-again must not apply: %s", r)
+	}
+	if r := f.run(); r != Asked {
+		t.Fatalf("the next run asks again: %s", r)
+	}
+}
+
+// TestAskAgainInAutoMode: an auto question for the tip is removed too, with
+// no edit (it has no message), and the old auto approval applies nothing.
+func TestAskAgainInAutoMode(t *testing.T) {
+	f := newFixture(t, `mode = "auto"`, "")
+	tip := f.commit("first", "one", nil)
+	if r := f.run(); r != AutoQueued {
+		t.Fatalf("run: %s", r)
+	}
+	autoCode := func() string {
+		b, _ := os.ReadFile(f.env.Dir.AutoFile())
+		return strings.TrimSpace(string(b))
+	}
+	oldAuto := autoCode()
+	if oldAuto == "" {
+		t.Fatal("no auto approval file")
+	}
+	if err := f.env.Status(new(strings.Builder), StatusFlags{AskAgain: true}); err != nil {
+		t.Fatal(err)
+	}
+	if f.state().Open() != nil {
+		t.Fatal("--ask-again must remove the open auto question")
+	}
+	if ms := f.outbox(); len(ms) != 0 {
+		t.Fatalf("an auto question has no message to edit: %+v", ms)
+	}
+	if r := f.apply(); r == Applied || f.state().Applied != "" {
+		t.Fatalf("the old auto approval must not apply: %s", r)
+	}
+	if r := f.run(); r != AutoQueued || autoCode() == oldAuto || autoCode() == "" {
+		t.Fatalf("the next run queues a new auto approval: %s", r)
+	}
+	if r := f.apply(); r != Applied || f.state().Applied != tip {
+		t.Fatalf("the new auto approval applies: %s", r)
+	}
+}
+
+// TestAskAgainKeepsAnOpenQuestionForAnotherSHA: --ask-again acts only on
+// the tip; an open question for another SHA is left alone.
+func TestAskAgainKeepsAnOpenQuestionForAnotherSHA(t *testing.T) {
+	f := newFixture(t, ``, "")
+	f.commit("first", "one", nil)
+	f.run()
+	q := f.ask()
+	st := f.state()
+	st.LastTip = strings.Repeat("b", 40)
+	if err := f.env.Dir.Save(st); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.Status(new(strings.Builder), StatusFlags{AskAgain: true}); err != nil {
+		t.Fatal(err)
+	}
+	if o := f.state().Open(); o == nil || o.ID != q.Question {
+		t.Fatal("an open question for another SHA must stay open")
+	}
+	if ms := f.outbox(); len(ms) != 0 {
+		t.Fatalf("no edit for a question that stays: %+v", ms)
+	}
+}
+
 func TestExpiredApprovalIsIgnored(t *testing.T) {
 	f := newFixture(t, ``, "[limits]\napproval_ttl = \"1h\"\n")
 	f.commit("first", "one", nil)

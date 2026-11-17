@@ -195,7 +195,10 @@ sections 5 and 11.
 `pullgate status NAME` shows the state. As root:
 `pullgate status NAME --pause` stops the instance,
 `pullgate status NAME --resume` starts it again, and
-`pullgate status NAME --ask-again` asks about the tip again.
+`pullgate status NAME --ask-again` asks about the tip again. If a question
+for the tip is still open (for example its Telegram message was lost), it
+closes that question too: the next run sends a new question, and the Apply
+button of the old one no longer works.
 
 ## Example 1: a config file and a service reload
 
