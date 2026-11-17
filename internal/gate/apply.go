@@ -318,4 +318,6 @@ func (e *Env) afterApply(st *state.State) {
 	st.Questions = keep
 }
 
-func esc(err error) string { return message.Esc(err.Error()) }
+// esc shows an error in a message, in <code>: it may hold text from the
+// repo (DESIGN.md section 12).
+func esc(err error) string { return message.Code(err.Error()) }

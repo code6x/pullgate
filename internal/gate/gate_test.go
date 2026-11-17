@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/code6x/pullgate/internal/message"
 	"github.com/code6x/pullgate/internal/spool"
 	"github.com/code6x/pullgate/internal/state"
 )
@@ -39,7 +40,7 @@ func TestFirstRunAsksWithAllFilesThenApplies(t *testing.T) {
 	if f.read("live") != "one" || f.state().Applied != sha {
 		t.Fatalf("not applied: live %q, state %q", f.read("live"), f.state().Applied)
 	}
-	if !contains(f.outbox(), "✅ Applied <code>"+sha) {
+	if !contains(f.outbox(), "✅ Applied <code>"+message.Short(sha)+"</code>") {
 		t.Error("no report")
 	}
 	// The next run has nothing to do.
@@ -56,7 +57,7 @@ func TestSecondCommitGetsOldTreeAndForwardOnly(t *testing.T) {
 		t.Fatalf("run: %s", r)
 	}
 	q := f.ask()
-	if !strings.Contains(q.Text, "Since <code>"+a+"</code>") || !strings.Contains(q.Text, "old value one") || !strings.Contains(q.Text, "• second") {
+	if !strings.Contains(q.Text, "Since <code>"+message.Short(a)+"</code>") || !strings.Contains(q.Text, "old value one") || !strings.Contains(q.Text, "• <code>second</code>") {
 		t.Fatalf("the question must show the old tree and the commits:\n%s", q.Text)
 	}
 	f.tap(q.Code, "apply")
@@ -76,7 +77,7 @@ func TestSecondCommitGetsOldTreeAndForwardOnly(t *testing.T) {
 		t.Fatalf("an older commit must be refused, got %s", r)
 	}
 	ms := f.outbox()
-	if !contains(ms, "Refused <code>"+a) || contains(ms, "Apply this commit?") {
+	if !contains(ms, "Refused <code>"+message.Short(a)+"</code>") || contains(ms, a) || contains(ms, "Apply this commit?") {
 		t.Fatal("a refusal sends a notice and no question")
 	}
 	// It is not offered again.
@@ -155,7 +156,7 @@ func TestTapOnSupersededQuestionAppliesOldSHA(t *testing.T) {
 		t.Fatalf("run: %s", r)
 	}
 	q := f.ask()
-	if !strings.Contains(q.Text, "<code>"+b+"</code>") || !strings.Contains(q.Text, "Since <code>"+a) {
+	if !strings.Contains(q.Text, "<code>"+message.Short(b)+"</code>") || !strings.Contains(q.Text, "Since <code>"+message.Short(a)+"</code>") {
 		t.Fatalf("the new question is wrong:\n%s", q.Text)
 	}
 }
@@ -506,7 +507,7 @@ func TestFailingApplyRollsBack(t *testing.T) {
 			if !strings.Contains(f.read("log"), "apply "+a+" old="+b+" rb=1 failed="+b) {
 				t.Fatalf("the rollback env is wrong:\n%s", f.read("log"))
 			}
-			if !contains(f.outbox(), "Rolled back to <code>"+a) {
+			if !contains(f.outbox(), "Rolled back to <code>"+message.Short(a)+"</code>") {
 				t.Fatal("no report")
 			}
 			// max_failed_tries = 1: not asked again.
@@ -588,7 +589,7 @@ func TestOnFailurePauseHoldsAndAsksNewer(t *testing.T) {
 		t.Fatalf("a newer commit is asked: %s", r)
 	}
 	q := f.ask()
-	if !strings.Contains(q.Text, "⚠ The last apply (<code>"+b+"</code>) failed.") {
+	if !strings.Contains(q.Text, "⚠ The last apply (<code>"+message.Short(b)+"</code>) failed.") {
 		t.Fatalf("the warning is missing:\n%s", q.Text)
 	}
 	f.tap(q.Code, "apply")

@@ -8,8 +8,9 @@ root applies it, with a health check and a rollback or a hold.
 - **The gate lives on the host.** What runs, who may approve and which paths
   get a warning come from `/etc/pullgate`, never from the repo. A commit
   cannot change the gate.
-- **One exact commit.** The question shows the full SHA. Apply applies only
-  that SHA, even when a newer commit arrives in between.
+- **One exact commit.** The question shows a short SHA at the top and the
+  full SHA once, on its last line. Apply applies only that full SHA, even
+  when a newer commit arrives in between.
 - **No code from the new commit runs before Apply.** Optional `check` and
   `summary` commands read the commit as data, as an unprivileged user.
 - **Only the listener holds the bot token.** It runs as its own user and

@@ -42,25 +42,25 @@ func Short(sha string) string {
 func (q *Question) Text() string {
 	head := []string{Head(q.Host, q.Instance)}
 	if q.Held != "" {
-		head = append(head, fmt.Sprintf("⚠ The last apply (<code>%s</code>) failed.", q.Held))
+		head = append(head, "⚠ The last apply ("+SHA(q.Held)+") failed.")
 	}
 	if q.NotDescendant {
 		head = append(head, "⚠ This commit is not a descendant of the applied commit.")
 	}
-	head = append(head, "Apply this commit?", "<code>"+q.SHA+"</code>")
+	head = append(head, "Apply this commit?", SHA(q.SHA))
 	if q.Applied == "" {
 		head = append(head, fmt.Sprintf("First apply: there is no applied commit yet. All %d files are listed.", len(q.Files)))
 	} else {
-		head = append(head, "Since <code>"+q.Applied+"</code>:")
+		head = append(head, "Since "+SHA(q.Applied)+":")
 	}
 	for _, f := range Watched(q.Watch, q.Files) {
-		head = append(head, "⚠ Watched path changed: <code>"+Esc(f)+"</code>")
+		head = append(head, "⚠ Watched path changed: "+Code(f))
 	}
 	for _, s := range q.Symlinks {
-		head = append(head, "⚠ Symlink out of the tree: <code>"+Esc(s.Path)+"</code> → <code>"+Esc(s.Target)+"</code>")
+		head = append(head, "⚠ Symlink out of the tree: "+Code(s.Path)+" → "+Code(s.Target))
 	}
 	for _, s := range q.Submodules {
-		head = append(head, "⚠ Submodule skipped: <code>"+Esc(s)+"</code>")
+		head = append(head, "⚠ Submodule skipped: "+Code(s))
 	}
 	// The head holds text from the commit too (watched paths); keep it
 	// within the limit on its own.
@@ -70,30 +70,32 @@ func (q *Question) Text() string {
 	var body []string
 	body = append(body, "", fmt.Sprintf("Commits (%d):", q.TotalCommits))
 	for _, s := range q.Subjects {
-		body = append(body, "• "+Esc(s))
+		body = append(body, "• "+Code(s))
 	}
 	if q.TotalCommits > len(q.Subjects) {
 		body = append(body, fmt.Sprintf("… and %d more", q.TotalCommits-len(q.Subjects)))
 	}
 	body = append(body, fmt.Sprintf("Changed files (%d):", len(q.Files)))
 	for _, f := range q.Files {
-		body = append(body, "• "+Esc(f))
+		body = append(body, "• "+Code(f))
 	}
 	pre := -1
 	switch {
 	case q.SummaryFailed != "":
-		body = append(body, "⚠ The summary command failed: "+Esc(q.SummaryFailed))
+		body = append(body, "⚠ The summary command failed: "+Code(q.SummaryFailed))
 	case strings.TrimSpace(q.Summary) != "":
 		body = append(body, "Summary:")
 		pre = len(body)
 		lines := strings.Split(strings.TrimRight(q.Summary, "\n"), "\n")
-		body = append(body, "<pre>"+Esc(lines[0]))
+		body = append(body, "<pre>"+esc(lines[0]))
 		for _, l := range lines[1:] {
-			body = append(body, Esc(l))
+			body = append(body, esc(l))
 		}
 		body = append(body, "</pre>")
 	}
-	return Fit(head, body, pre)
+	// The full SHA once, at the end, to copy and compare. The tap is bound
+	// to the question, not to this text.
+	return Fit(head, body, "Full: "+Code(q.SHA), pre)
 }
 
 // cutHead keeps the fixed lines and as many warnings as fit.

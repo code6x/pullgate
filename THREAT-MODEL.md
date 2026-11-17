@@ -152,6 +152,22 @@ or during the review.
 - **Commit subjects and summary output.** The same cleaning; HTML-escaped,
   each line capped. The head of the question (host, instance, SHA, the
   warnings) always comes first, before any text from the commit.
+- **Hostile text shown as a link in a trusted message.** A commit picks its
+  own file names, subjects and command output. Telegram turns text that
+  looks like a domain or a URL (`README.md`, `login.example.com`), an
+  `@username`, a `#tag` or a `/command` into something to tap, in a message
+  from the owner's own bot, next to the Apply button. So all text from the
+  repo is shown only inside `<code>` or `<pre>`, where Telegram makes none
+  of these, and only through one function (DESIGN.md section 12). Link
+  previews are off for every message, so a link that slips through still
+  shows no preview. A test feeds hostile values into every field of every
+  message kind.
+- **A short SHA that looks right.** Messages show 12 characters of a SHA
+  (48 bits). Someone could grind a commit whose short SHA matches one the
+  owner expects. This does not change what is applied: root applies the
+  full SHA from its own state, and the tap is bound to the question code,
+  not to the text. The question also shows the full SHA once, on its last
+  line, and `pullgate status` shows the full applied SHA.
 - **Symlinks.** They are written as symlinks and never followed by
   pullgate. The tree is written with `O_NOFOLLOW|O_EXCL` into directories
   that pullgate made itself, so a symlink cannot make pullgate write

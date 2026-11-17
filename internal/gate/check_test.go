@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/code6x/pullgate/internal/message"
 	"github.com/code6x/pullgate/internal/spool"
 )
 
@@ -52,7 +53,7 @@ func TestCheckRequestStartsANormalRun(t *testing.T) {
 	if r := f.run(); r != Nothing {
 		t.Fatalf("run: %s", r)
 	}
-	if !contains(f.outbox(), "No new commit. The applied commit is <code>"+f.state().Applied+"</code>") {
+	if !contains(f.outbox(), "No new commit. The applied commit is <code>"+message.Short(f.state().Applied)+"</code>") {
 		t.Fatal("the reply must name the applied SHA")
 	}
 }
