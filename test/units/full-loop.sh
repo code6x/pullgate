@@ -76,8 +76,8 @@ step() {
 # readme NAME: run the README block NAME as written, with NAME=config-repo.
 readme() {
 	cmds="$(sh "$here/readme-block.sh" "$1" "$top/README.md")" || die "README.md has no install-test:$1 block"
-	echo "$cmds" | sed 's/^/README> /'
-	echo "$cmds" | sed "s/NAME/$name/g" | sh -eu || die "the README block install-test:$1 failed (see the output above)"
+	printf '%s\n' "$cmds" | sed 's/^/README> /'
+	printf '%s\n' "$cmds" | sed "s/NAME/$name/g" | sh -eu || die "the README block install-test:$1 failed (see the output above)"
 }
 
 # wait_text TEXT SECONDS: wait until the fake Telegram got a message with TEXT.
@@ -109,6 +109,10 @@ outbox_empty() {
 # unit_quiet UNIT: the unit logged no error and no warning.
 unit_quiet() {
 	journalctl --sync || true
+	# No log line at all would make the check below pass without checking.
+	if ! journalctl --no-pager -o cat -u "$1" | grep -q 'level=INFO'; then
+		err "$1: no log line found in the journal, so its errors cannot be checked"
+	fi
 	if journalctl --no-pager -o cat -u "$1" | grep -E 'level=(ERROR|WARN)'; then
 		err "$1 logged an error or a warning (above)"
 	fi
@@ -124,6 +128,22 @@ listener_read_all() {
 	if grep -q -F 'could not be read' "$texts"; then
 		err "$1: the listener could not read a message that root wrote"
 	fi
+}
+
+# run_until_tip SHA: start runs until one has fetched SHA. A run that the
+# timer started before the push is joined by `systemctl start` and does
+# not see the new commit, so one start is not enough.
+run_until_tip() {
+	i=0
+	while [ "$i" -lt 10 ]; do
+		systemctl start "pullgate-run@$name.service" || err "pullgate-run@$name.service failed"
+		if pullgate status "$name" | grep -q "^last tip: *$1\$"; then
+			return 0
+		fi
+		i=$((i + 1))
+		sleep 1
+	done
+	die "after 10 runs, pullgate status does not show the last tip $1"
 }
 
 # applied_sha: the applied SHA that `pullgate status` shows.
@@ -263,7 +283,7 @@ readme start
 
 step "5. A good commit: ask, tap, apply"
 # The timer may have started a run already; start waits for it.
-systemctl start "pullgate-run@$name.service" || err "pullgate-run@$name.service failed"
+run_until_tip "$sha1"
 if ! wait_text "✅ Applied" 90; then
 	journalctl --no-pager -o cat -u "pullgate-run@$name.service" -u pullgate-listen.service -u "pullgate-apply@$name.service" || true
 	die "no 'Applied' message reached the fake Telegram"
@@ -296,7 +316,7 @@ systemctl is-active --quiet pullgate-listen.service || err "the listener is not 
 
 step "7. A commit whose apply fails: rollback"
 sha2="$(commit 'fail = true' 'a commit whose apply fails')"
-systemctl start "pullgate-run@$name.service" || err "pullgate-run@$name.service failed"
+run_until_tip "$sha2"
 if ! wait_text "Rolled back to" 90; then
 	journalctl --no-pager -o cat -u "pullgate-run@$name.service" -u pullgate-listen.service -u "pullgate-apply@$name.service" || true
 	die "no 'Rolled back' notice reached the fake Telegram"

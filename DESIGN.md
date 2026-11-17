@@ -760,8 +760,9 @@ and on `main`) is the path a user takes, as root on the throwaway runner:
    `setup`, `start`) before its `sh` block, and the script runs the block
    as written, with `NAME` set to `config-repo`.
    `test/units/readme-block.sh --check` fails when a block is missing, or
-   when an install command (`useradd`, `install -d`,
-   `cp contrib/systemd`, `systemctl enable`) is in an unmarked block. So
+   when an install command (`useradd`, `groupadd`, `install -X`, `chown`,
+   `chmod`, `cp contrib/systemd`, `systemctl enable`) is in an unmarked
+   fenced block. So
    the README cannot drift from what CI runs.
 2. A local bare repo is the remote. A fake Telegram on `127.0.0.1`
    (`test/units/faketg.py --tap`) records each message and taps Apply on

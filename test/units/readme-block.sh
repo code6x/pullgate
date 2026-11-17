@@ -59,11 +59,14 @@ if [ "$1" = --check ]; then
 	# Install commands in ```sh blocks that are not marked: CI would not
 	# run them. The "Update from 0.1.0" steps use "reenable", which is
 	# not matched here.
+	# Every fenced block counts, indented or not, in any language.
 	out="$(awk '
 		/^<!-- install-test:[a-z]+ -->$/ { marked = 1; next }
-		/^```sh$/ { inblock = 1; next }
-		/^```$/ { inblock = 0; marked = 0; next }
-		inblock && !marked && /(^|[[:space:]])(useradd|install -d|cp contrib\/systemd|systemctl( --?[A-Za-z-]+)* enable)([[:space:]]|$)/ { print FILENAME ":" NR ": " $0 }
+		/^[[:space:]]*```/ {
+			if (inblock) { inblock = 0; marked = 0 } else { inblock = 1 }
+			next
+		}
+		inblock && !marked && /(^|[[:space:]])(useradd|groupadd|install -[a-zA-Z]|chown|chmod|cp contrib\/systemd|systemctl( --?[A-Za-z-]+)* enable)([[:space:]]|$)/ { print FILENAME ":" NR ": " $0 }
 	' "$readme")"
 	if [ -n "$out" ]; then
 		echo "$out" >&2

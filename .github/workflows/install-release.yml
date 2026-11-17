@@ -43,11 +43,13 @@ jobs:
     steps:
       - name: The version
         id: version
+        shell: bash
         run: |
           set -eu
           v="${INPUT_VERSION:-${RELEASE_TAG#v}}"
-          if ! printf '%s\n' "$v" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "::error::'$v' is not a version X.Y.Z. Give the version without the v."
+          # The whole string, so a value with a newline does not pass.
+          if ! [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::The version is not X.Y.Z. Give the version without the v, for example 0.3.0."
             exit 1
           fi
           echo "version=$v" >>"$GITHUB_OUTPUT"

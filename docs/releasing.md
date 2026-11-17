@@ -45,7 +45,10 @@ workflow checks it.
    of the tag, and a full loop under the units (`test/units/full-loop.sh`).
    A failure here does not undo the release: fix it in a `fix:` pull
    request and make a new release. You can also start this workflow by
-   hand, with a version from 0.3.0 on.
+   hand, with a version from 0.3.0 on. The Release run keeps its
+   concurrency group until this job ends (up to 20 minutes): do not merge
+   other pull requests in that time, so no Release run waits and gets
+   cancelled.
 
 If `build` or `publish` fails, the release stays a draft. Fix the problem
 in a new `fix:` pull request and merge the next release pull request.
