@@ -119,6 +119,14 @@ To see the version of a binary, run `pullgate --version` or
 `pullgate version`. Both print `pullgate X.Y.Z` and exit 0. A build from
 the source without `-ldflags "-X main.version=..."` prints `pullgate dev`.
 
+## Commands: `/help`
+
+Send the bot `/help` to get the list of commands, the instances of this
+listener, what Apply and Skip do, and the `pullgate status` commands for
+the host. Any other text from you (not a command) gets one short reply:
+"Not a command. Send /help for the list.", at most once a minute.
+Messages from other users, or in other chats, get no answer.
+
 ## Check now: `/check`
 
 The timer runs every 5 minutes. After a push you do not have to wait: send

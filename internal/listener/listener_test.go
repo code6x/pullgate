@@ -343,20 +343,21 @@ func TestCheckCommandsThatDoNotCount(t *testing.T) {
 		text       string
 		edited     bool
 		help       bool // the owner gets the usage text
+		hint       bool // the owner gets "Not a command"
 	}{
-		"another user":       {owner + 1, chat, "/check", false, false},
-		"another chat":       {owner, chat + 1, "/check", false, false},
-		"edited message":     {owner, chat, "/check", true, false},
-		"unknown name":       {owner, chat, "/check other", false, true},
-		"extra text":         {owner, chat, "/check " + inst + " now", false, true},
-		"two spaces":         {owner, chat, "/check  " + inst, false, true},
-		"to another bot":     {owner, chat, "/check@otherbot", false, true},
-		"name with @":        {owner, chat, "/check@otherbot " + inst, false, true},
-		"other text":         {owner, chat, "hello", false, false},
-		"command in a line":  {owner, chat, "please /check", false, false},
-		"other user, known":  {owner + 1, chat, "/check " + inst, false, false},
-		"trailing new line":  {owner, chat, "/check\n", false, true},
-		"upper case command": {owner, chat, "/CHECK", false, false},
+		"another user":       {owner + 1, chat, "/check", false, false, false},
+		"another chat":       {owner, chat + 1, "/check", false, false, false},
+		"edited message":     {owner, chat, "/check", true, false, false},
+		"unknown name":       {owner, chat, "/check other", false, true, false},
+		"extra text":         {owner, chat, "/check " + inst + " now", false, true, false},
+		"two spaces":         {owner, chat, "/check  " + inst, false, true, false},
+		"to another bot":     {owner, chat, "/check@otherbot", false, true, false},
+		"name with @":        {owner, chat, "/check@otherbot " + inst, false, true, false},
+		"other text":         {owner, chat, "hello", false, false, true},
+		"command in a line":  {owner, chat, "please /check", false, false, true},
+		"other user, known":  {owner + 1, chat, "/check " + inst, false, false, false},
+		"trailing new line":  {owner, chat, "/check\n", false, true, false},
+		"upper case command": {owner, chat, "/CHECK", false, false, true},
 	}
 	for n, c := range cases {
 		t.Run(n, func(t *testing.T) {
@@ -369,7 +370,9 @@ func TestCheckCommandsThatDoNotCount(t *testing.T) {
 			switch {
 			case c.help && (len(ms) != 1 || ms[0].Chat != chat || !strings.Contains(ms[0].Text, "Use <code>/check</code>")):
 				t.Fatalf("the owner must get the usage text: %+v", ms)
-			case !c.help && len(ms) != 0:
+			case c.hint && (len(ms) != 1 || ms[0].Text != "Not a command. Send <code>/help</code> for the list."):
+				t.Fatalf("the owner must get the hint: %+v", ms)
+			case !c.help && !c.hint && len(ms) != 0:
 				t.Fatalf("no answer may be sent: %+v", ms)
 			}
 			for _, m := range ms {
@@ -378,6 +381,73 @@ func TestCheckCommandsThatDoNotCount(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestHelp: /help from the owner in the chat gets the list, which names
+// each instance (code6x/pullgate#26).
+func TestHelp(t *testing.T) {
+	f, _ := newL2(t)
+	f.say(owner, chat, "/help", false)
+	ms := f.tg.Messages()
+	if len(ms) != 1 || ms[0].Chat != chat || ms[0].ReplyTo == 0 {
+		t.Fatalf("want one reply: %+v", ms)
+	}
+	for _, want := range []string{"<code>/check</code>", "<code>/check NAME</code>", "<code>/help</code>", "<b>" + inst + "</b>", "<b>" + inst2 + "</b>", "Apply", "Skip", "--pause", "--resume", "--ask-again"} {
+		if !strings.Contains(ms[0].Text, want) {
+			t.Errorf("the help must hold %q:\n%s", want, ms[0].Text)
+		}
+	}
+	if strings.Contains(ms[0].Text, token) || strings.Contains(ms[0].Text, f.l.Cfg.SpoolDir) {
+		t.Error("the help must hold no secret and no path")
+	}
+	if f.d.HasCheck() {
+		t.Error("/help writes no request")
+	}
+	// A second /help within a minute gets nothing.
+	f.say(owner, chat, "/help", false)
+	if len(f.tg.Messages()) != 1 {
+		t.Fatal("a second /help within a minute must get no reply")
+	}
+}
+
+// TestHelpAndHintNotForOthers: /help and other text from another user, in
+// another chat, or edited, get no reply.
+func TestHelpAndHintNotForOthers(t *testing.T) {
+	for _, c := range []struct {
+		from, chat int64
+		edited     bool
+	}{{owner + 1, chat, false}, {owner, chat + 1, false}, {owner + 1, chat + 1, false}, {owner, chat, true}} {
+		f := newL(t)
+		f.say(c.from, c.chat, "/help", c.edited)
+		f.say(c.from, c.chat, "hello", c.edited)
+		if ms := f.tg.Messages(); len(ms) != 0 {
+			t.Fatalf("%+v: no reply may be sent: %+v", c, ms)
+		}
+	}
+}
+
+// TestHintOncePerMinute: other text from the owner gets the hint once; a
+// second one in the same minute gets nothing; after a minute it comes
+// again.
+func TestHintOncePerMinute(t *testing.T) {
+	f := newL(t)
+	f.say(owner+1, chat, "hi", false) // a stranger does not use up the hint
+	f.say(owner, chat, "hello", false)
+	f.now = f.now.Add(30 * time.Second)
+	f.say(owner, chat, "a long paste", false)
+	if ms := f.tg.Messages(); len(ms) != 1 || !strings.Contains(ms[0].Text, "Not a command") {
+		t.Fatalf("want one hint: %+v", ms)
+	}
+	f.now = f.now.Add(31 * time.Second)
+	f.say(owner, chat, "hello again", false)
+	if ms := f.tg.Messages(); len(ms) != 2 {
+		t.Fatalf("a minute later the hint comes again: %+v", ms)
+	}
+	// /help is not limited by the hint.
+	f.say(owner, chat, "/help", false)
+	if ms := f.tg.Messages(); len(ms) != 3 || !strings.Contains(ms[2].Text, "commands") {
+		t.Fatalf("/help must answer: %+v", ms)
 	}
 }
 

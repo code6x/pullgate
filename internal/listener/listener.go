@@ -71,6 +71,8 @@ type Listener struct {
 	mu        sync.Mutex
 	st        State
 	lastCheck map[string]time.Time // in memory: the last check request per instance
+	lastHint  time.Time            // in memory: the last "Not a command" reply
+	lastHelp  time.Time            // in memory: the last /help reply
 }
 
 func hash(s string) string {
@@ -405,15 +407,68 @@ func (l *Listener) check(cq *telegram.CallbackQuery) (*Question, string, string)
 	return q, action, ""
 }
 
-// checkCommand is the one command the listener takes (DESIGN.md section 9).
+// checkCommand asks for a run now (DESIGN.md section 9).
 const checkCommand = "/check"
+
+// helpCommand lists what the bot can do.
+const helpCommand = "/help"
+
+// HintGap is the least time between two "Not a command" replies, so that a
+// stuck client or a long paste cannot make the bot fill the chat.
+const HintGap = time.Minute
+
+// helpText is the answer to /help. It holds no secret and nothing about
+// the host beyond the instance names, which every question shows too.
+func (l *Listener) helpText() string {
+	var names []string
+	for _, n := range l.Cfg.Instances {
+		names = append(names, "<b>"+html.EscapeString(n)+"</b>")
+	}
+	return strings.Join([]string{
+		"<b>pullgate</b> commands:",
+		"<code>/check</code>: look for a new commit now, on every instance",
+		"<code>/check NAME</code>: the same, on one instance",
+		"<code>/help</code>: this list",
+		"",
+		"Instances: " + strings.Join(names, ", "),
+		"",
+		"A question has two buttons. <b>Apply</b> applies that one commit. <b>Skip</b> skips it; a newer commit is asked again.",
+		"",
+		"On the host, as root:",
+		"<code>pullgate status NAME</code>: the mode, the applied commit, the open question, paused or not",
+		"<code>pullgate status NAME --pause</code> and <code>--resume</code>: stop and start the instance",
+		"<code>pullgate status NAME --ask-again</code>: ask again about the newest commit of the branch",
+	}, "\n")
+}
 
 // command handles a message. Only "/check" or "/check NAME" of the owner,
 // in the chat, unedited, counts. The text of a message is never logged.
 func (l *Listener) command(ctx context.Context, m *telegram.Message) {
 	names, why, help := l.checkNames(m)
+	if why == "help" {
+		now := l.now()
+		if d := now.Sub(l.lastHelp); d < HintGap && d > -HintGap {
+			l.Log.Info("message ignored", "reason", "a second /help within a minute", "from", fromID(m))
+			return
+		}
+		l.lastHelp = now
+		l.Log.Info("help sent", "from", fromID(m))
+		l.sendReply(ctx, m, l.helpText())
+		return
+	}
 	if names == nil {
 		l.Log.Info("message ignored", "reason", why, "from", fromID(m))
+		if why == "not a command" {
+			// The owner, in the chat: one short hint, at most once per
+			// HintGap. The text is never repeated.
+			now := l.now()
+			if d := now.Sub(l.lastHint); d < HintGap && d > -HintGap {
+				return
+			}
+			l.lastHint = now
+			l.sendReply(ctx, m, "Not a command. Send <code>/help</code> for the list.")
+			return
+		}
 		if help {
 			l.sendReply(ctx, m, "Use <code>/check</code> for all instances, or <code>/check NAME</code>. NAME is one of: "+html.EscapeString(strings.Join(l.Cfg.Instances, ", "))+".")
 		}
@@ -461,6 +516,8 @@ func (l *Listener) checkNames(m *telegram.Message) ([]string, string, bool) {
 		return nil, "not the configured chat", false
 	case m.EditDate != 0:
 		return nil, "an edited message", false
+	case m.Text == helpCommand:
+		return nil, "help", false
 	case !strings.HasPrefix(m.Text, checkCommand):
 		return nil, "not a command", false
 	case m.Text == checkCommand:

@@ -482,8 +482,22 @@ a few seconds ago" (section 8, the start limit). When a request cannot be
 written (for example the host never ran pullgate for NAME, so the directory
 does not exist), it replies that the request was not saved. To the owner in
 the chat, a text that starts with `/check` but does not match gets the
-usage text, which lists the instances and never repeats the message. A
-message of another user, or in another chat, gets no answer. The listener
+usage text, which lists the instances and never repeats the message.
+
+**`/help`.** When the text is exactly `/help`, from `owner_id`, in
+`chat_id`, not edited, the listener replies with a fixed list: the
+commands (`/check`, `/check NAME`, `/help`), the instance names from
+`instances`, what Apply and Skip do, and the root commands for the host
+(`pullgate status NAME`, `--pause`, `--resume`, `--ask-again`), at most
+once per minute. The
+listener does not know the mode or the pause file of an instance (root's
+files), so the list points to `pullgate status NAME` for them. Any other
+text of the owner in the chat that is not a command (does not start with
+`/check`) gets one reply, "Not a command. Send /help for the list.", at
+most once per minute (in memory), so a stuck client or a long paste cannot
+fill the chat. A message of another user, or in another chat, or an
+edited message, gets no answer, so the bot does not tell strangers that it
+exists. The listener
 never logs the text of a message: only why it was ignored and the sender
 ID.
 
