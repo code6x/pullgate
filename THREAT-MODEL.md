@@ -444,6 +444,23 @@ until the owner resets it (DESIGN.md section 8). The run unit has no start
 limit, so the timer goes on. This denies; it never approves. A clock jump back of more than
 a minute allows one more run.
 
+### T19. What the bot tells
+
+*Attack or accident.* Someone sends the bot messages to learn what it runs,
+or the owner's client sends many messages.
+
+*Defense.* Only the owner, in the owner's chat, gets an answer: `/help`, the
+usage text of `/check`, or "Not a command". Others get nothing, so the bot
+does not tell strangers that it exists. The `/help` text is fixed: the
+commands, the instance names and the `pullgate status` commands. It holds
+no secret, no path and nothing about the host beyond the instance names,
+which every question shows too (with the `host` value). It never repeats the text of a message.
+The `/help` reply and the "Not a command" reply are each sent at most
+once per minute.
+
+*Left.* Someone with the bot token can read the help, as they can read
+every question.
+
 ## 6. Out of scope
 
 - An attacker who is root on the host.
