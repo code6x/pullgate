@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/code6x/pullgate/internal/config"
@@ -281,7 +282,7 @@ func (e *Env) decide(ctx context.Context, st *state.State, tip string) (Result, 
 		if err != nil {
 			st.SetMark(tip, state.MarkCheckFailed, now)
 			e.Log.Warn("check failed; not asking", "sha", tip, "err", err)
-			e.notice("⚠ The check of " + code(tip) + " failed, so it is not asked and not checked again: " + message.Code(err.Error()) + "\n" + message.Output(out, 10))
+			e.notice("⚠ The check of " + code(tip) + " failed, so it is not asked and not checked again: " + message.Code(err.Error()) + "\n" + message.Output(shortTrees(out, p.env.Tree, p.env.OldTree), 10))
 			return CheckFailed, nil
 		}
 		e.Log.Info("check passed", "sha", tip)
@@ -346,4 +347,17 @@ func (e *Env) decide(ctx context.Context, st *state.State, tip string) (Result, 
 	st.AskTimes = append(st.AskTimes, now)
 	e.Log.Info("asked", "sha", tip, "question", nq.ID)
 	return Asked, nil
+}
+
+// shortTrees replaces the long tree paths in command output with NEW and
+// OLD: they say nothing to the owner and push the reason out of the
+// message (code6x/pullgate#25).
+func shortTrees(out, tree, oldTree string) string {
+	if tree != "" {
+		out = strings.ReplaceAll(out, tree, "NEW")
+	}
+	if oldTree != "" {
+		out = strings.ReplaceAll(out, oldTree, "OLD")
+	}
+	return out
 }

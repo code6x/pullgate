@@ -150,8 +150,10 @@ or during the review.
   are cleaned and escaped before they are shown, so a name cannot fake a
   line of the question.
 - **Commit subjects and summary output.** The same cleaning; HTML-escaped,
-  each line capped. The head of the question (host, instance, SHA, the
-  warnings) always comes first, before any text from the commit.
+  each line capped. The output of a failed `check` keeps its end, so the
+  reason is not cut away; root's tree paths in it become `NEW` and `OLD`.
+  The head of the question (host, instance, SHA, the warnings) always
+  comes first, before any text from the commit.
 - **Hostile text shown as a link in a trusted message.** A commit picks its
   own file names, subjects and command output. Telegram turns text that
   looks like a domain or a URL (`README.md`, `login.example.com`), an

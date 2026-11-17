@@ -72,25 +72,51 @@ func Code(s string) string { return "<code>" + esc(s) + "</code>" }
 // The full SHA is shown once per question, on the "Full:" line.
 func SHA(sha string) string { return Code(Short(sha)) }
 
+// OutputLine is the most characters of one line of command output in a
+// message. A longer line keeps its start and its end, with "…" between:
+// most tools print the reason last (code6x/pullgate#25).
+const OutputLine = 300
+
+// OutputMax is the most characters of command output in one message.
+const OutputMax = 1500
+
 // Output is the way to put the output of a command into a message: its
-// last n lines, each cleaned and cut, in a <pre> block. It is "" for empty
-// output.
+// last lines (at most n, and at most OutputMax characters), each cleaned
+// and cut in the middle, in a <pre> block. It is "" for empty output.
 func Output(out string, n int) string {
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	for i, l := range lines {
-		if r := []rune(l); len(r) > 100 {
-			l = string(r[:100]) + "…"
+	var keep []string
+	used := 0
+	for i := len(lines) - 1; i >= 0 && len(keep) < n; i-- {
+		l := cutMiddle(lines[i], OutputLine)
+		r := Len(l) + 1 // UTF-16 units, as Telegram counts
+		if used+r > OutputMax && len(keep) > 0 {
+			break
 		}
-		lines[i] = esc(l)
+		used += r
+		keep = append([]string{html.EscapeString(l)}, keep...)
 	}
-	s := strings.Join(lines, "\n")
+	s := strings.Join(keep, "\n")
 	if strings.TrimSpace(s) == "" {
 		return ""
 	}
 	return "<pre>" + s + "</pre>"
+}
+
+// cutMiddle cleans one line like clean, but a line longer than max keeps
+// its first max/4 and its last characters, with "…" between.
+func cutMiddle(s string, max int) string {
+	r := []rune(s)
+	for i, c := range r {
+		if c == utf8.RuneError || unicode.IsControl(c) || isInvisible(c) {
+			r[i] = '?'
+		}
+	}
+	if len(r) > max {
+		head := max / 4
+		r = append(append(r[:head:head], '…'), r[len(r)-(max-head-1):]...)
+	}
+	return string(r)
 }
 
 // Len is the length of s in UTF-16 units, as Telegram counts.
