@@ -310,7 +310,8 @@ used again.
    - tip is the held SHA, or was asked before and the question expired or
      was skipped, or its check failed, or it was refused, or it failed
      `max_failed_tries` times: nothing to do. `pullgate status NAME
-     --ask-again` clears this mark.
+     --ask-again` clears this mark, and also closes an open question for
+     the tip (section 13).
    - tip is not a descendant of the applied SHA (an older commit, a force
      push, a rewritten branch) and `allow_older` is false: refuse. Send one
      notice for this SHA and mark it refused. When `allow_older` is true,
@@ -350,7 +351,11 @@ name order and skips names that start with `.`. Kinds:
 - `reply`: `question`, `text`: a reply to that question, or a new message
   when the listener does not know the question.
 
-A file the listener cannot parse is removed and logged. If Telegram refuses
+A file the listener cannot read or parse is removed and logged. The owner
+also gets one notice per round for such files: "an outbox message of
+instance NAME could not be read and was removed", with the command
+`pullgate status NAME --ask-again`. The notice shows no part of the file,
+because it may be a question that the owner never saw. If Telegram refuses
 a message, the listener tries again on the next round, and drops it after
 one day with a log line.
 
@@ -649,7 +654,12 @@ closed after a cut.
 the held SHA, the pause file and an apply in progress. Flags:
 
 - `--ask-again`: clear the marks of the last fetched tip (expired, skipped,
-  check failed, refused, failed, held), so the next run asks again;
+  check failed, refused, failed, held), so the next run asks again. If a
+  question for the tip is open (for example its message was lost), root
+  removes it from its state, then asks the listener to close its message.
+  The next run asks again with a new question ID and a new code. An
+  approval for the old code finds no question and does nothing, even one
+  that the listener wrote before the close;
 - `--pause`: write the pause file;
 - `--resume`: remove the pause file and clear an apply in progress.
 

@@ -36,6 +36,7 @@ func (e *Env) Status(w io.Writer, f StatusFlags) error {
 		return err
 	}
 	changed := false
+	var closed *state.Question
 	if f.Resume {
 		if err := e.Dir.Resume(); err != nil {
 			return err
@@ -50,12 +51,19 @@ func (e *Env) Status(w io.Writer, f StatusFlags) error {
 		if st.Held == st.LastTip {
 			st.Held = ""
 		}
+		closed = forgetOpen(st, st.LastTip)
 		changed = true
 	}
 	if changed {
 		if err := e.Dir.Save(st); err != nil {
 			return err
 		}
+	}
+	if closed != nil && !closed.Auto {
+		// After the save: the listener forgets the code only when root
+		// has forgotten it too.
+		e.edit(closed.ID, "This question for "+code(closed.SHA)+" is closed: the owner ran --ask-again. The next run asks again.")
+		_, _ = fmt.Fprintf(w, "The open question %d for %s is closed. The next run asks again.\n", closed.ID, closed.SHA)
 	}
 	show := func(k, v string) { _, _ = fmt.Fprintf(w, "%-12s %s\n", k+":", v) }
 	show("instance", e.Cfg.Name)
@@ -85,11 +93,25 @@ func (e *Env) Status(w io.Writer, f StatusFlags) error {
 	return nil
 }
 
+// forgetOpen removes the open question for sha from the state and returns
+// it, so that the next run asks again with a new question and a new code.
+// Its message may never have reached the owner (a lost outbox file).
+// Unlike a superseded question, it does not stay in the list: an approval
+// for its code, even one written before this, finds no question and is
+// ignored (fail closed).
+func forgetOpen(st *state.State, sha string) *state.Question {
+	for i := range st.Questions {
+		if q := st.Questions[i]; q.Open && q.SHA == sha {
+			st.Remove(i)
+			return &q
+		}
+	}
+	return nil
+}
+
 func orNone(s string) string {
 	if s == "" {
 		return "none"
 	}
 	return s
 }
-
-var _ = state.MarkAsked

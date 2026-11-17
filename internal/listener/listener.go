@@ -195,10 +195,23 @@ instances:
 			l.Log.Warn("read the outbox", "instance", inst, "err", err)
 			continue
 		}
+		told := false
 		for _, f := range files {
 			if f.Err != nil {
+				if err := d.Done(f.Name); err != nil {
+					// Not removed: say nothing to the owner, or every
+					// round would send the same notice.
+					l.Log.Warn("bad outbox file, could not remove it", "instance", inst, "file", f.Name, "err", f.Err, "remove_err", err)
+					continue
+				}
 				l.Log.Warn("bad outbox file, removed", "instance", inst, "file", f.Name, "err", f.Err)
-				_ = d.Done(f.Name)
+				if !told {
+					// The text cannot be read, but the owner must know that
+					// a message (maybe a question) is lost. One notice per
+					// pass is enough, also for many bad files.
+					told = true
+					l.badOutboxNotice(ctx, inst)
+				}
 				continue
 			}
 			err := l.send(ctx, inst, f.Message)
@@ -223,6 +236,17 @@ instances:
 				l.Log.Warn("remove an outbox file", "instance", inst, "err", err)
 			}
 		}
+	}
+}
+
+// badOutboxNotice tells the owner that an outbox file of inst could not be
+// read and was removed. It shows no part of the file. A failed send is
+// only logged: the file is gone either way.
+func (l *Listener) badOutboxNotice(ctx context.Context, inst string) {
+	name := html.EscapeString(inst)
+	text := "pullgate: an outbox message of instance <b>" + name + "</b> could not be read and was removed. It may have been a question. To ask again, run as root: <code>pullgate status " + name + " --ask-again</code>"
+	if _, err := l.TG.SendMessage(ctx, l.Cfg.ChatID, text, nil, 0); err != nil {
+		l.Log.Warn("send the notice about a bad outbox file", "instance", inst, "err", err)
 	}
 }
 
