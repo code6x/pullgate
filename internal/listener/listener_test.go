@@ -256,6 +256,27 @@ func TestBadOutboxEntryThatStaysSendsNoNotice(t *testing.T) {
 	}
 }
 
+// TestLinkPreviewsAreOff: every message and every edit is sent with link
+// previews off (code6x/pullgate#23, #29).
+func TestLinkPreviewsAreOff(t *testing.T) {
+	f := newL(t)
+	msg := f.ask(1, code)
+	_ = f.d.Send(os.Getegid(), spool.Message{Kind: spool.KindReply, Question: 1, Text: "see https://example.com"})
+	_ = f.d.Send(os.Getegid(), spool.Message{Kind: spool.KindNotice, Text: "https://example.com"})
+	_ = f.d.Send(os.Getegid(), spool.Message{Kind: spool.KindAsk, Question: 2, Code: "x", Expires: f.now.Add(time.Hour), Text: "broken"})
+	f.l.Outbox(context.Background())
+	f.tap(owner, chat, msg, "a:"+code)
+	ms := f.tg.Messages()
+	if len(ms) < 5 {
+		t.Fatalf("want a question, a reply, a notice, an expired note and an edit: %+v", ms)
+	}
+	for _, m := range ms {
+		if (m.Method == "sendMessage" || m.Method == "editMessageText") && !m.NoPreview {
+			t.Errorf("%s without link previews off: %q", m.Method, m.Text)
+		}
+	}
+}
+
 func TestTokenNeverInErrors(t *testing.T) {
 	c := telegram.New("http://127.0.0.1:1", token)
 	_, err := c.SendMessage(context.Background(), 1, "x", nil, 0)

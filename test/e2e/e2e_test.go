@@ -122,7 +122,7 @@ api_url = %q
 		}
 		return false
 	})
-	if !strings.Contains(q.Text, "<code>"+second+"</code>") || !strings.Contains(q.Text, "Watched path changed") {
+	if !strings.Contains(q.Text, "Full: <code>"+second+"</code>") || !strings.Contains(q.Text, "Watched path changed") {
 		t.Fatalf("the question:\n%s", q.Text)
 	}
 	if strings.Contains(q.Buttons[0].CallbackData, second[:10]) {
@@ -150,7 +150,7 @@ api_url = %q
 	}
 	wait(t, "the report", func() bool {
 		for _, m := range tg.Messages() {
-			if strings.Contains(m.Text, "✅ Applied <code>"+second) {
+			if strings.Contains(m.Text, "✅ Applied <code>"+second[:12]+"</code>") {
 				return true
 			}
 		}
@@ -174,7 +174,7 @@ api_url = %q
 		checking, none := false, false
 		for _, m := range tg.Messages() {
 			checking = checking || strings.Contains(m.Text, "Checking <b>config-repo</b>")
-			none = none || strings.Contains(m.Text, "No new commit. The applied commit is <code>"+second)
+			none = none || strings.Contains(m.Text, "No new commit. The applied commit is <code>"+second[:12]+"</code>")
 		}
 		return checking && none
 	})

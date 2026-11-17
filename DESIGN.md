@@ -41,8 +41,9 @@ These rules come from issue #1. Each one has tests (section 14).
    approve and which paths get a warning come only from the host config:
    `/etc/pullgate/NAME.toml` and `/etc/pullgate/listener.toml`. pullgate
    never reads any setting from the repo. A commit cannot change the gate.
-2. **One exact commit.** The question shows the full SHA. Apply applies only
-   that SHA, even when a newer commit arrives in between.
+2. **One exact commit.** The question shows the full SHA once, on its last
+   line. Apply applies only that SHA, even when a newer commit arrives in
+   between. The tap is bound to the question (its code), not to the text.
 3. **No code from the new commit runs before Apply.** Before the tap,
    pullgate only fetches the commit and reads it with git. The optional
    `check` and `summary` commands may read the tree as data. They run as an
@@ -606,26 +607,43 @@ pullgate on <b>HOST</b>, instance <b>NAME</b>
 ⚠ The last apply (SHA) failed.            (only when a SHA is held)
 ⚠ This commit is not a descendant of …     (only with allow_older)
 Apply this commit?
-<code>FULL SHA</code>
+<code>SHORT SHA</code>
 First apply: there is no applied commit yet. All N files are listed.
-or: Since <code>APPLIED SHA</code>:
-⚠ Watched path changed: path
-⚠ Symlink out of the tree: path → target
-⚠ Submodule skipped: path
+or: Since <code>SHORT APPLIED SHA</code>:
+⚠ Watched path changed: <code>path</code>
+⚠ Symlink out of the tree: <code>path</code> → <code>target</code>
+⚠ Submodule skipped: <code>path</code>
 
 Commits (N):
-• subject
+• <code>subject</code>
 Changed files (N):
-• path
+• <code>path</code>
 Summary:
 <pre>output of the summary command</pre>
+Full: <code>FULL SHA</code>
 ```
 
-Text from the commit (subjects, paths, symlink targets, summary output) is
-cleaned before it is shown: control and invisible characters become `?`
-(newlines stay only in the summary output), each line is cut to 200
-characters, and then it is HTML-escaped. At most 50 commit subjects are
-read.
+**SHAs.** Every message shows a SHA as its first 12 characters, in
+`<code>`. The question, as it is sent, shows the full SHA once, on its last line
+("Full:"), so it can be copied and compared. That line stays after a cut.
+(After a tap, the listener adds its note below it.) Logs,
+the state and `pullgate status` keep the full SHA. Root applies the full
+SHA from its own state, never a SHA from the text.
+
+**Text from the repo is only shown as code.** Text from the repo, the
+commit, or a command that ran on it (paths, subjects, symlink targets,
+submodule paths, the output of `summary` and `check`, and errors that may
+hold any of them) is put into a message only by `message.Code` (one line in
+`<code>`) or `message.Output` (lines in `<pre>`). Telegram makes no link,
+mention, hashtag or bot command of text inside `<code>` or `<pre>`, so a
+file named `README.md` or `login.example.com` stays plain text. The escape
+function is not exported, so other code cannot put repo text into a message
+another way; a test also checks the gate code for its own HTML. Before that,
+the text is cleaned: control and invisible characters (also right-to-left
+marks) become `?` (newlines stay only in the summary output), each line is
+cut to 200 characters, and then it is HTML-escaped. At most 50 commit
+subjects are read. Every message and every edit is sent with link previews
+off.
 
 The message must fit one Telegram message (4096 characters). pullgate cuts
 it to 3800 characters, counted on the escaped text in UTF-16 units: the head

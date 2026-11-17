@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/code6x/pullgate/internal/config"
@@ -58,7 +57,8 @@ func (e *Env) edit(q int64, text string) {
 	}
 }
 
-func code(sha string) string { return "<code>" + sha + "</code>" }
+// code shows a SHA in a message: short, in <code> (DESIGN.md section 12).
+func code(sha string) string { return message.SHA(sha) }
 
 // cutOff handles an apply in progress found at start (DESIGN.md section 10).
 func (e *Env) cutOff(st *state.State) error {
@@ -270,7 +270,7 @@ func (e *Env) decide(ctx context.Context, st *state.State, tip string) (Result, 
 		if errors.As(err, &hostile) {
 			// The commit itself is bad: it is not tried again.
 			st.SetMark(tip, state.MarkCheckFailed, now)
-			e.notice("⚠ " + code(tip) + " is refused, so it is not asked: " + message.Esc(err.Error()))
+			e.notice("⚠ " + code(tip) + " is refused, so it is not asked: " + message.Code(err.Error()))
 			return CheckFailed, nil
 		}
 		return "", fmt.Errorf("export %s: %w", tip, err)
@@ -281,7 +281,7 @@ func (e *Env) decide(ctx context.Context, st *state.State, tip string) (Result, 
 		if err != nil {
 			st.SetMark(tip, state.MarkCheckFailed, now)
 			e.Log.Warn("check failed; not asking", "sha", tip, "err", err)
-			e.notice("⚠ The check of " + code(tip) + " failed (" + message.Esc(err.Error()) + "), so it is not asked. It is not checked again.\n" + lastLines(out, 10))
+			e.notice("⚠ The check of " + code(tip) + " failed, so it is not asked and not checked again: " + message.Code(err.Error()) + "\n" + message.Output(out, 10))
 			return CheckFailed, nil
 		}
 		e.Log.Info("check passed", "sha", tip)
@@ -346,24 +346,4 @@ func (e *Env) decide(ctx context.Context, st *state.State, tip string) (Result, 
 	st.AskTimes = append(st.AskTimes, now)
 	e.Log.Info("asked", "sha", tip, "question", nq.ID)
 	return Asked, nil
-}
-
-// lastLines returns the last n lines of a command's output, cleaned, in a
-// <pre> block.
-func lastLines(out string, n int) string {
-	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	for i, l := range lines {
-		if r := []rune(l); len(r) > 100 {
-			l = string(r[:100]) + "…"
-		}
-		lines[i] = message.Esc(l)
-	}
-	s := strings.Join(lines, "\n")
-	if strings.TrimSpace(s) == "" {
-		return ""
-	}
-	return "<pre>" + s + "</pre>"
 }

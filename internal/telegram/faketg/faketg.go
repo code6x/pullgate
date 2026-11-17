@@ -20,6 +20,8 @@ type Sent struct {
 	Text    string
 	Buttons []telegram.Button
 	ReplyTo int64
+	// NoPreview is true when the request turned link previews off.
+	NoPreview bool
 }
 
 // Server is the fake server.
@@ -120,6 +122,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 					sent.Buttons = append(sent.Buttons, telegram.Button{Text: bm["text"].(string), CallbackData: bm["callback_data"].(string)})
 				}
 			}
+		}
+		if lp, ok := req["link_preview_options"].(map[string]any); ok {
+			sent.NoPreview, _ = lp["is_disabled"].(bool)
 		}
 		if rp, ok := req["reply_parameters"].(map[string]any); ok {
 			f, _ := rp["message_id"].(float64)

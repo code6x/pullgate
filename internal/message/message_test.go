@@ -2,6 +2,7 @@ package message
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -17,11 +18,11 @@ func TestClean(t *testing.T) {
 		string([]byte{0xff, 'x'}): "?x",
 		strings.Repeat("x", 300):  strings.Repeat("x", 200) + "…",
 	} {
-		if got := Clean(in); got != want {
-			t.Errorf("Clean(%q) = %q, want %q", in, got, want)
+		if got := clean(in); got != want {
+			t.Errorf("clean(%q) = %q, want %q", in, got, want)
 		}
 	}
-	if got := Esc("<b>&</b>"); got != "&lt;b&gt;&amp;&lt;/b&gt;" {
+	if got := esc("<b>&</b>"); got != "&lt;b&gt;&amp;&lt;/b&gt;" {
 		t.Errorf("Esc: %q", got)
 	}
 }
@@ -143,10 +144,103 @@ func TestFirstApplyAndHeld(t *testing.T) {
 	if !strings.Contains(text, "First apply: there is no applied commit yet. All 2 files are listed.") {
 		t.Error("the first question must say so")
 	}
-	if !strings.Contains(text, "⚠ The last apply (<code>"+q.Held+"</code>) failed.") {
+	if !strings.Contains(text, "⚠ The last apply (<code>"+Short(q.Held)+"</code>) failed.") {
 		t.Error("the held SHA warning is missing")
 	}
 	if strings.Index(text, "The last apply") > strings.Index(text, "Apply this commit?") {
 		t.Error("the held warning must be at the top")
+	}
+}
+
+// hostile are values that a commit may hold to make Telegram show a link,
+// a mention, a hashtag, a command or markup in a trusted message
+// (code6x/pullgate#23, #29).
+var hostile = []string{
+	"README.md",
+	"login.example.com",
+	"docs.example.org/setup",
+	"https://example.com/x",
+	"<a href=\"https://example.com\">Apply</a>",
+	"@username",
+	"#tag",
+	"/command",
+	"\u202Edm.EMDAER",
+	strings.Repeat("long.example.net ", 300),
+}
+
+// markers must never be seen outside <code> and <pre>.
+var markers = []string{"README.md", "example.com", "example.org", "example.net", "a href", "@username", "#tag", "/command", "EMDAER"}
+
+var codeOrPre = regexp.MustCompile(`(?s)<code>.*?</code>|<pre>.*?</pre>`)
+
+// outsideCode returns what is left of text without its <code> and <pre>
+// parts.
+func outsideCode(text string) string { return codeOrPre.ReplaceAllString(text, "") }
+
+// TestRepoTextIsOnlyInsideCode feeds hostile values into every field of the
+// question that comes from the repo.
+func TestRepoTextIsOnlyInsideCode(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		q := baseQuestion()
+		q.Watch = []string{"**"}
+		for _, h := range hostile {
+			q.Subjects = append(q.Subjects, h)
+			q.Files = append(q.Files, h)
+			q.Symlinks = append(q.Symlinks, Symlink{Path: h, Target: h})
+			q.Submodules = append(q.Submodules, h)
+		}
+		q.TotalCommits = len(q.Subjects)
+		q.Summary = strings.Join(hostile, "\n")
+		if failed {
+			q.SummaryFailed = strings.Join(hostile, " ")
+		}
+		for _, cut := range []bool{false, true} {
+			if cut {
+				q.Files = append(q.Files, make([]string, 500)...) // force a cut
+			}
+			text := q.Text()
+			if Len(text) > 4096 {
+				t.Fatalf("too long for Telegram: %d", Len(text))
+			}
+			out := outsideCode(text)
+			for _, m := range markers {
+				if strings.Contains(out, m) {
+					t.Errorf("failed=%v cut=%v: %q is outside <code>/<pre>:\n%s", failed, cut, m, out)
+				}
+			}
+			if strings.ContainsRune(text, '‮') {
+				t.Error("a right-to-left mark must not reach the message")
+			}
+		}
+	}
+	for _, h := range hostile {
+		for _, s := range []string{Code(h), Output(h+"\n"+h, 10)} {
+			if out := outsideCode(s); out != "" {
+				t.Errorf("Code/Output leave text outside: %q", out)
+			}
+		}
+	}
+}
+
+// TestShortSHAsAndOneFullSHA: the question shows short SHAs, and the full
+// SHA of the commit once, on the last line (code6x/pullgate#30).
+func TestShortSHAsAndOneFullSHA(t *testing.T) {
+	q := baseQuestion()
+	q.Held = strings.Repeat("c", 40)
+	q.Files = make([]string, 2000) // the last line stays after a cut
+	text := q.Text()
+	if strings.Count(text, q.SHA) != 1 || !strings.HasSuffix(text, "\nFull: <code>"+q.SHA+"</code>") {
+		t.Fatalf("the full SHA must be on the last line, once:\n%s", text)
+	}
+	for _, s := range []string{q.Applied, q.Held} {
+		if strings.Contains(text, s) || !strings.Contains(text, "<code>"+Short(s)+"</code>") {
+			t.Errorf("only the short form of %s must be shown", Short(s))
+		}
+	}
+	if !strings.Contains(text, "Apply this commit?\n<code>"+Short(q.SHA)+"</code>") {
+		t.Error("the short SHA must follow the question line")
+	}
+	if Len(text) > Limit {
+		t.Fatalf("too long: %d", Len(text))
 	}
 }

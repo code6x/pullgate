@@ -20,10 +20,10 @@ const Limit = 3800
 // MaxLine is the most characters of one cleaned line.
 const MaxLine = 200
 
-// Clean makes text from the commit safe to show: control and invisible
+// clean makes text from the commit safe to show: control and invisible
 // characters become "?", and the text is cut to MaxLine characters. It
-// does not escape HTML; Esc does.
-func Clean(s string) string {
+// does not escape HTML; esc does.
+func clean(s string) string {
 	var b strings.Builder
 	n := 0
 	for _, r := range s {
@@ -57,8 +57,41 @@ func isInvisible(r rune) bool {
 	return unicode.Is(unicode.Variation_Selector, r)
 }
 
-// Esc cleans and HTML-escapes text from the commit.
-func Esc(s string) string { return html.EscapeString(Clean(s)) }
+// esc cleans and HTML-escapes text from the commit. It is not exported:
+// text from the repo leaves this package only through Code and Output, so
+// it is always inside <code> or <pre> (code6x/pullgate#29).
+func esc(s string) string { return html.EscapeString(clean(s)) }
+
+// Code is the one way to put one line of text from the repo, the commit,
+// or a command that ran on it into a message: cleaned, HTML-escaped and
+// inside <code>. Telegram makes no link, mention, hashtag or command of
+// text inside <code> (code6x/pullgate#23).
+func Code(s string) string { return "<code>" + esc(s) + "</code>" }
+
+// SHA shows a commit as its short form, in <code> (code6x/pullgate#30).
+// The full SHA is shown once per question, on the "Full:" line.
+func SHA(sha string) string { return Code(Short(sha)) }
+
+// Output is the way to put the output of a command into a message: its
+// last n lines, each cleaned and cut, in a <pre> block. It is "" for empty
+// output.
+func Output(out string, n int) string {
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	for i, l := range lines {
+		if r := []rune(l); len(r) > 100 {
+			l = string(r[:100]) + "…"
+		}
+		lines[i] = esc(l)
+	}
+	s := strings.Join(lines, "\n")
+	if strings.TrimSpace(s) == "" {
+		return ""
+	}
+	return "<pre>" + s + "</pre>"
+}
 
 // Len is the length of s in UTF-16 units, as Telegram counts.
 func Len(s string) int { return len(utf16.Encode([]rune(s))) }
@@ -114,28 +147,33 @@ func Watched(patterns, files []string) []string {
 	return out
 }
 
-// Fit joins head and body lines with newlines. The head always stays. Body
-// lines are added while the text fits Limit; when some are left out, the
-// last line says how many. The lines must be escaped already; the cut is on
+// Fit joins head and body lines with newlines, then tail, if it is not
+// "". The head and the tail always stay. Body lines are added while the
+// text fits Limit; when some are left out, a line says how many. The lines must be escaped already; the cut is on
 // whole lines, so it never splits a tag. preOpen is the index of a body
 // line that opens a <pre> block that ends with a line "</pre>"; when the
 // cut falls inside it, the block is closed (-1: none).
-func Fit(head, body []string, preOpen int) string {
+func Fit(head, body []string, tail string, preOpen int) string {
 	text := strings.Join(head, "\n")
 	used := Len(text)
 	reserve := Len("\n</pre>\n… 99999 more lines left out")
+	end := ""
+	if tail != "" {
+		end = "\n" + tail
+		reserve += Len(end)
+	}
 	for i, l := range body {
 		if used+1+Len(l)+reserve > Limit {
 			left := len(body) - i
 			if preOpen >= 0 && i > preOpen && !closedBefore(body, preOpen, i) {
 				text += "\n</pre>"
 			}
-			return text + fmt.Sprintf("\n… %d more lines left out", left)
+			return text + fmt.Sprintf("\n… %d more lines left out", left) + end
 		}
 		text += "\n" + l
 		used += 1 + Len(l)
 	}
-	return text
+	return text + end
 }
 
 func closedBefore(body []string, open, i int) bool {
