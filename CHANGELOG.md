@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.0](https://github.com/code6x/pullgate/compare/v0.1.1...v0.2.0) (2026-11-17)
+
+
+### Features
+
+* /help in Telegram, and a hint for messages the bot does not handle ([#38](https://github.com/code6x/pullgate/issues/38)) ([c341ec1](https://github.com/code6x/pullgate/commit/c341ec1441f01f9aee08954d996c08d6a0d80adf)), closes [#26](https://github.com/code6x/pullgate/issues/26)
+
+
+### Bug Fixes
+
+* --ask-again closes a lost open question, and the listener reports a bad outbox file ([#35](https://github.com/code6x/pullgate/issues/35)) ([38ecde6](https://github.com/code6x/pullgate/commit/38ecde6bc5fb2869f1ec49f42d39f1206de4adb8)), closes [#22](https://github.com/code6x/pullgate/issues/22)
+* a failed check notice shows the end of the output, with short tree paths ([#39](https://github.com/code6x/pullgate/issues/39)) ([a7b20af](https://github.com/code6x/pullgate/commit/a7b20afcf01f5558a2a821f11e7745ff37b9fc8d)), closes [#25](https://github.com/code6x/pullgate/issues/25)
+* all text from the repo is shown only as code, and SHAs are short ([#37](https://github.com/code6x/pullgate/issues/37)) ([44afa8b](https://github.com/code6x/pullgate/commit/44afa8b6da2aa96e25aa6e6aef05d91c65395003)), closes [#29](https://github.com/code6x/pullgate/issues/29) [#23](https://github.com/code6x/pullgate/issues/23) [#30](https://github.com/code6x/pullgate/issues/30)
+
 ## [0.1.1](https://github.com/code6x/pullgate/compare/v0.1.0...v0.1.1) (2026-11-16)
 
 
