@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestClean(t *testing.T) {
@@ -242,5 +243,25 @@ func TestShortSHAsAndOneFullSHA(t *testing.T) {
 	}
 	if Len(text) > Limit {
 		t.Fatalf("too long: %d", Len(text))
+	}
+}
+
+// TestOutputKeepsTheEnd: command output keeps its last lines, and a long
+// line keeps its start and its end (code6x/pullgate#25).
+func TestOutputKeepsTheEnd(t *testing.T) {
+	if Output("a\nb", 0) != "" || Output("\n\n", 10) != "" {
+		t.Error("no lines, no block")
+	}
+	long := "start " + strings.Repeat("ж", 1000) + " the \"reason\"\x07"
+	got := Output(strings.Repeat("noise\n", 50)+long, 10)
+	if !strings.HasSuffix(got, " the &#34;reason&#34;?</pre>") || !strings.Contains(got, "start жж") || !strings.Contains(got, "…") {
+		t.Fatalf("the long line must keep its start and end, cleaned and escaped: %q", got)
+	}
+	if !utf8.ValidString(got) || strings.Count(got, "noise") != 9 {
+		t.Fatalf("want valid text and the last 10 lines: %q", got)
+	}
+	big := Output(strings.Repeat(strings.Repeat("x", 299)+"\n", 20)+"last", 20)
+	if !strings.HasSuffix(big, "\nlast</pre>") || utf8.RuneCountInString(big) > OutputMax+20 {
+		t.Fatalf("output over OutputMax keeps its last line and stays short: %d", utf8.RuneCountInString(big))
 	}
 }

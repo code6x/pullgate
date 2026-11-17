@@ -323,8 +323,12 @@ used again.
 6. Export the tree of the tip, and the tree of the applied SHA
    (`PULLGATE_OLD_TREE`).
 7. Run `check` as `check_user` (section 11). If it fails, mark the SHA
-   "check failed", send a notice with the last lines of its output, and do
-   not ask. The same SHA is not checked again.
+   "check failed", send a notice with the end of its output, and do not
+   ask. The same SHA is not checked again. In that output the tree paths
+   (`PULLGATE_TREE`, `PULLGATE_OLD_TREE`) become `NEW` and `OLD`. The
+   notice keeps the last lines, at most 10 and at most 1500 characters,
+   so the reason (most tools print it last) is shown. A line longer than
+   300 characters keeps its start and its end, with `…` between.
 8. Run `summary` as `check_user`, and build the message (section 12).
 9. If a question is open, close it: root marks it superseded in its state,
    and asks the listener to edit it ("a newer commit replaced this

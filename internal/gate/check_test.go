@@ -332,3 +332,48 @@ func TestCheckWaiterStopsWhenRequestIsGone(t *testing.T) {
 		t.Fatalf("the waiter must not reply: %d messages", len(out))
 	}
 }
+
+// TestCheckNoticeShowsTheReason: a check that prints a long tree path
+// before its reason gives a notice that holds the reason, with NEW for the
+// tree path (code6x/pullgate#25).
+func TestCheckNoticeShowsTheReason(t *testing.T) {
+	f := newFixture(t, ``, "")
+	f.script("check.sh", `echo "broker check: config $PULLGATE_TREE/broker.toml: [secret.x] preapprove: is not allowed with ask = \"never\""
+echo "$PULLGATE_TREE" > `+f.ctrl+`/tree
+exit 1
+`)
+	f.commit("first", "one", nil)
+	if r := f.run(); r != CheckFailed {
+		t.Fatalf("run: %s", r)
+	}
+	tree := f.read("tree")
+	ms := f.outbox()
+	if tree == "" || contains(ms, tree) {
+		t.Fatalf("the notice must not hold the tree path %q: %+v", tree, ms)
+	}
+	if !contains(ms, "NEW/broker.toml: [secret.x] preapprove: is not allowed with ask = &#34;never&#34;") {
+		t.Fatalf("the notice must hold the reason: %+v", ms)
+	}
+}
+
+// TestCheckNoticeKeepsTheLastLine: output longer than the limit keeps its
+// last line, and a long line keeps its end.
+func TestCheckNoticeKeepsTheLastLine(t *testing.T) {
+	f := newFixture(t, ``, "")
+	f.script("check.sh", `i=0
+while [ $i -lt 60 ]; do printf 'noise %0250d\n' $i; i=$((i+1)); done
+printf 'start %0900d the real reason\n' 0
+exit 1
+`)
+	f.commit("first", "one", nil)
+	if r := f.run(); r != CheckFailed {
+		t.Fatalf("run: %s", r)
+	}
+	ms := f.outbox()
+	if len(ms) != 1 || !strings.Contains(ms[0].Text, "the real reason</pre>") || !strings.Contains(ms[0].Text, "start 000") {
+		t.Fatalf("the notice must keep the start and the end of the last line: %+v", ms)
+	}
+	if message.Len(ms[0].Text) > 4096 || strings.Count(ms[0].Text, "noise") < 2 {
+		t.Fatalf("the notice must show more than one line and fit: %d", message.Len(ms[0].Text))
+	}
+}
