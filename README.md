@@ -72,7 +72,12 @@ what it trusts: [DESIGN.md](DESIGN.md) section 16 and
 
 **By hand.** Download a release and check it as
 [docs/releasing.md](docs/releasing.md) says (section "Verify a download").
-Then, as root: `install -m 0755 pullgate /usr/local/bin/pullgate`.
+Then, as root:
+
+<!-- install-test:binary -->
+```sh
+install -m 0755 pullgate /usr/local/bin/pullgate
+```
 
 **From the source**, with Go 1.26 or newer. Then install it as above:
 
@@ -83,6 +88,7 @@ CGO_ENABLED=0 go build -trimpath -o pullgate ./cmd/pullgate
 Then, as root, make the users and the directories, and copy the units from
 [contrib/systemd/](contrib/systemd/):
 
+<!-- install-test:setup -->
 ```sh
 useradd --system --no-create-home --shell /usr/sbin/nologin pullgate
 # One check user per instance, never the listener user:
@@ -106,6 +112,7 @@ cp contrib/systemd/* /etc/systemd/system/
    the examples below.
 6. Start it:
 
+<!-- install-test:start -->
 ```sh
 systemctl daemon-reload
 systemctl enable --now pullgate-listen.service
@@ -304,6 +311,11 @@ go vet ./...
 golangci-lint run --build-tags e2e
 go test -race -tags e2e ./test/e2e/...
 ```
+
+CI runs the install commands of this README as written: each install
+block above has an `<!-- install-test:… -->` comment before it, and
+`test/units/full-loop.sh` runs those blocks as root, then a full loop
+under the units. Keep that comment when you change a block.
 
 The rules for changes are in [AGENTS.md](AGENTS.md).
 

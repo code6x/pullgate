@@ -752,6 +752,42 @@ that cannot be enabled, fails CI. Without root, CI also runs
 checks that each unit the README tells you to enable has an `[Install]`
 section with `WantedBy=`.
 
+`test/units/full-loop.sh` (CI job `install-loop`, on each pull request
+and on `main`) is the path a user takes, as root on the throwaway runner:
+
+1. It runs the install commands **from README.md itself**: each install
+   block has a comment line `<!-- install-test:NAME -->` (`binary`,
+   `setup`, `start`) before its `sh` block, and the script runs the block
+   as written, with `NAME` set to `config-repo`.
+   `test/units/readme-block.sh --check` fails when a block is missing, or
+   when an install command (`useradd`, `groupadd`, `install -X`, `chown`,
+   `chmod`, `cp contrib/systemd`, `systemctl enable`) is in an unmarked
+   fenced block. So
+   the README cannot drift from what CI runs.
+2. A local bare repo is the remote. A fake Telegram on `127.0.0.1`
+   (`test/units/faketg.py --tap`) records each message and taps Apply on
+   each question as the owner.
+3. A good commit: `pullgate run` under `pullgate-run@.service` asks (with
+   `check` and `summary` as the check user), the listener (user
+   `pullgate`) sends the question and writes the approval,
+   `pullgate-apply@.service` applies it, and `pullgate status` shows it as
+   applied.
+4. It restarts the listener and checks that it polls again.
+5. A commit whose apply fails: the rollback runs, and its notice reaches
+   the fake Telegram.
+6. Each unit of the README `start` block is `enabled` and `active`.
+
+After each loop, the outbox must be empty and the listener must have
+logged no error and no warning. So a message that root writes and the
+listener cannot read fails the job.
+
+The workflow **Install a release** (`install-release.yml`) runs the same
+script against a published release: it installs the release with the
+tag's own `install.sh --version X.Y.Z`, then runs
+`full-loop.sh --installed X.Y.Z` with the README and units of the tag.
+The Release workflow calls it after it publishes; it also runs on
+`release: published` and by hand.
+
 ## 15. Not in version 0.1
 
 - Self-update of pullgate. `install.sh` updates it only when root runs

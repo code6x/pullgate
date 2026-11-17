@@ -83,6 +83,10 @@ jobs:
           persist-credentials: false
       - name: Each unit the README enables has an [Install] section
         run: sh test/units/install-sections.sh
+      - name: CI runs every install command of the README
+        # The README marks its install blocks; the install-loop job runs
+        # them as written. An install command outside a marked block fails.
+        run: sh test/units/readme-block.sh --check
       - name: Check the example scripts and units
         run: |
           set -eu
@@ -128,6 +132,26 @@ jobs:
         # units as the README says, and each must be enabled (issue #20).
         run: sudo sh test/units/first-run.sh "${RUNNER_TEMP}/pullgate"
 
+  install-loop:
+    name: README install and a full loop under the units
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: CGO_ENABLED=0 go build -trimpath -o "${RUNNER_TEMP}/pullgate" ./cmd/pullgate
+      - name: The README install, then a good commit and a failed one
+        # The install commands come from README.md itself. Root and the
+        # listener are different users, under the real units. A tap on a
+        # fake Telegram applies a commit; a failing commit rolls back
+        # (DESIGN.md section 14, issue #27).
+        run: sudo sh test/units/full-loop.sh "${RUNNER_TEMP}/pullgate"
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -150,7 +174,7 @@ jobs:
           echo "${SHELLCHECK_SHA256}  $dir/shellcheck.tar.xz" | sha256sum --strict -c -
           tar -xJf "$dir/shellcheck.tar.xz" -C "$dir"
           "$dir/shellcheck-${SHELLCHECK_VERSION}/shellcheck" --version
-          "$dir/shellcheck-${SHELLCHECK_VERSION}/shellcheck" --shell=sh install.sh test/units/first-run.sh test/units/install-sections.sh
+          "$dir/shellcheck-${SHELLCHECK_VERSION}/shellcheck" --shell=sh install.sh test/units/*.sh
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
