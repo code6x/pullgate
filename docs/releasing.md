@@ -39,6 +39,13 @@ workflow checks it.
    build provenance attestation (`pullgate_<version>.sigstore.json`),
    checks the tarballs with it, uploads everything to the draft release and
    publishes it. The release is never public without its files.
+6. The `install-test` job runs the **Install a release** workflow
+   (`install-release.yml`): on a fresh runner, it installs the release
+   with its own `install.sh --version`, runs the README install commands
+   of the tag, and a full loop under the units (`test/units/full-loop.sh`).
+   A failure here does not undo the release: fix it in a `fix:` pull
+   request and make a new release. You can also start this workflow by
+   hand, with a version from 0.3.0 on.
 
 If `build` or `publish` fails, the release stays a draft. Fix the problem
 in a new `fix:` pull request and merge the next release pull request.

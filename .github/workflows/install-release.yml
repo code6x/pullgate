@@ -1,0 +1,72 @@
+name: Install a release
+
+# Installs a published release with its own install.sh, as a user does,
+# and runs the README install and a full loop under the units of that
+# release (test/units/full-loop.sh, DESIGN.md section 14, issue #27).
+#
+# The Release workflow calls this after it publishes. A release that the
+# Release workflow publishes with GITHUB_TOKEN starts no "release" event,
+# so the call is the path that runs. "release: published" covers a release
+# published by hand. Run it by hand for any release from v0.3.0 on (older
+# tags have no test/units/full-loop.sh).
+
+on:
+  release:
+    types: [published]
+  workflow_call:
+    inputs:
+      version:
+        description: "The version to install, X.Y.Z"
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "The version to install, X.Y.Z"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: install ${{ inputs.version || github.event.release.tag_name }} and a full loop
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      # Through env, never put into the script text.
+      INPUT_VERSION: ${{ inputs.version }}
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - name: The version
+        id: version
+        run: |
+          set -eu
+          v="${INPUT_VERSION:-${RELEASE_TAG#v}}"
+          if ! printf '%s\n' "$v" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::'$v' is not a version X.Y.Z. Give the version without the v."
+            exit 1
+          fi
+          echo "version=$v" >>"$GITHUB_OUTPUT"
+      # The tag of the release: its install.sh, README and units, as a user
+      # gets them.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/v${{ steps.version.outputs.version }}
+          persist-credentials: false
+      - name: install.sh --version, as the README says
+        # install.sh checks the SHA-256 and the build attestation, and
+        # installs nothing when a check fails. It needs no GitHub login.
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -eu
+          sudo env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin sh ./install.sh --version "$VERSION"
+          /usr/local/bin/pullgate --version
+      - name: The README install and a full loop under the units
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: sudo sh test/units/full-loop.sh --installed "$VERSION"
