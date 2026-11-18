@@ -309,6 +309,11 @@ if [ -n "$update_to" ]; then
 	*) die "no release for $(uname -m)" ;;
 	esac
 	web="$out/web"
+	# install.sh refuses a bin directory that group or others can write.
+	# The runner image may have one; fix it, as an owner would.
+	stat -c '%U %a' /usr/local/bin
+	chown root:root /usr/local/bin
+	chmod go-w /usr/local/bin
 	# fake_release VERSION [BINARY]: the newest release on the fake GitHub.
 	# With BINARY, also its files, made as the release workflow makes them.
 	fake_release() {
