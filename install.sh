@@ -7,6 +7,11 @@
 #
 #   sh install.sh [--version X.Y.Z] [--bin-dir DIR] [--gh PATH] [--reinstall]
 #
+# "pullgate update" runs a copy of this script that is built into the
+# binary, with --check-only, or with --sha256 and --forward-only (DESIGN.md
+# section 15). Lines that start with "@pullgate " on the standard output
+# are for it.
+#
 # It installs nothing unless every check passes:
 #   - only root can change the bin directory, the old file, the temporary
 #     directory and the gh of --gh (when the script does not run as root,
@@ -79,6 +84,13 @@ the host itself.
                    $gh_version and check its SHA-256)
   --reinstall      install also when this version is installed already,
                    or when the installed pullgate has an unknown version
+  --check-only     check the SHA-256 and the attestation of the newest
+                   release (or of --version), but run and install nothing;
+                   for pullgate update
+  --sha256 HEX     install only a tarball with this SHA-256; needs
+                   --version; for pullgate update
+  --forward-only   never install the same or an older version; for
+                   pullgate update
   --help           print this help
 
 Before it installs anything, it checks the SHA-256 and the build
@@ -92,6 +104,13 @@ EOF
 # say prints a line for the person.
 say() {
 	printf '%s\n' "$*"
+}
+
+# tell prints a line for pullgate update: "@pullgate WORD VALUES". The
+# values come from checks of this script (a version, a SHA-256), never
+# text from the network as it came.
+tell() {
+	printf '@pullgate %s\n' "$*"
 }
 
 # die prints the last line of a failed run and exits with 1. The old file
@@ -321,6 +340,27 @@ parse_args() {
 			reinstall=1
 			shift
 			;;
+		--check-only)
+			check_only=1
+			shift
+			;;
+		--forward-only)
+			forward_only=1
+			shift
+			;;
+		--sha256)
+			if [ "$#" -lt 2 ]; then
+				usage_error "--sha256 needs the SHA-256 of the tarball, 64 hex digits"
+			fi
+			case $2 in
+			*[!0-9a-f]*) usage_error "--sha256 must be 64 hex digits in lower case" ;;
+			esac
+			if [ "${#2}" -ne 64 ]; then
+				usage_error "--sha256 must be 64 hex digits in lower case"
+			fi
+			pin_sha256=$2
+			shift 2
+			;;
 		--help | -h)
 			usage
 			exit 0
@@ -338,6 +378,15 @@ parse_args() {
 	'' | /*) ;;
 	*) usage_error "--gh must be an absolute path" ;;
 	esac
+	if [ -n "$pin_sha256" ] && [ -z "$want_version" ]; then
+		usage_error "--sha256 needs --version: a SHA-256 belongs to one version"
+	fi
+	if [ -n "$check_only" ] && [ -n "$pin_sha256" ]; then
+		usage_error "--check-only and --sha256 do not go together"
+	fi
+	if [ -n "$forward_only" ] && [ -n "$reinstall" ]; then
+		usage_error "--forward-only and --reinstall do not go together"
+	fi
 }
 
 # check_platform checks that this is Linux on amd64 or arm64.
@@ -483,6 +532,14 @@ choose_version() {
 	if [ -n "$want_version" ] && [ "$version" != "$want_version" ]; then
 		die "GitHub names the release v$want_version as $tag; check the version at https://github.com/$repo/releases"
 	fi
+	# A release that fixes a security problem has a section "### Security"
+	# in its notes (release-please-config.json). In the JSON text of the
+	# answer, the new line before it is the two characters \n.
+	security=normal
+	if grep -q -F '\n### Security' "$tmp/release.json"; then
+		security=security
+	fi
+	tell version "$version" "$security"
 }
 
 # check_installed reads the version of the installed pullgate, and stops
@@ -511,9 +568,13 @@ check_installed() {
 		return 0
 	fi
 	compare_versions "$version" "$installed"
+	if [ -n "$forward_only" ] && [ "$cmp" != 1 ]; then
+		die "$target says that it is pullgate $installed, and $version is not newer; --forward-only installs only a newer version"
+	fi
 	case $cmp in
 	0)
 		if [ -z "$reinstall" ]; then
+			tell up-to-date "$installed"
 			say "$target says that it is pullgate $version already. Nothing to do."
 			say "This did not check the installed file. To replace it with a checked copy, run this again with --reinstall."
 			exit 0
@@ -525,6 +586,7 @@ check_installed() {
 		;;
 	*)
 		if [ -z "$want_version" ]; then
+			tell up-to-date "$installed"
 			say "$target says that it is pullgate $installed, which is newer than $version, the newest release. Nothing to do."
 			say "This did not check the installed file. To install $version anyway, run this again with --version $version."
 			exit 0
@@ -567,6 +629,10 @@ check_sha256() {
 	sha256_of "$tmp/$tarball"
 	if [ "$file_sha256" != "$want" ]; then
 		die "the SHA-256 of $tarball is not the one in SHA256SUMS; the download is broken or changed, try again later"
+	fi
+	tarball_sha256=$file_sha256
+	if [ -n "$pin_sha256" ] && [ "$tarball_sha256" != "$pin_sha256" ]; then
+		die "the SHA-256 of $tarball is not the one that was approved; the release was changed after the question, so send /update to ask again"
 	fi
 }
 
@@ -647,6 +713,11 @@ unpack() {
 		die "$tarball holds no file pullgate; do not use this release, and report it at https://github.com/$repo/issues"
 	fi
 	chmod 0700 "$tmp/new/pullgate" || die "cannot make the new pullgate a program; check that chmod works in $tmp_parent"
+	# --check-only runs before the owner's tap (pullgate update): no code
+	# of the new release runs then. The version is checked on Apply.
+	if [ -n "$check_only" ]; then
+		return 0
+	fi
 	check_new_version "$tmp/new/pullgate" " (if programs cannot run in $tmp_parent, $tmp_fix)"
 }
 
@@ -671,6 +742,7 @@ install_new() {
 	tmp_target=
 	renamed=1
 	sync -- "$bin_dir" 2>/dev/null || sync || :
+	tell installed "$version" "$tarball_sha256"
 }
 
 # print_restart prints what the new file says, and what to restart. It
@@ -694,6 +766,11 @@ main() {
 	want_version=
 	gh=
 	reinstall=
+	check_only=
+	forward_only=
+	pin_sha256=
+	security=normal
+	tarball_sha256=
 	tmp=
 	tmp_target=
 	renaming=
@@ -711,10 +788,18 @@ main() {
 	choose_version
 	check_installed
 	download_release
-	check_sha256
 	get_gh
+	# From here on, a failure is a check of this release that failed (or
+	# the trusted root of Sigstore could not be fetched).
+	tell fetched "$version"
+	check_sha256
 	verify_attestation
 	unpack
+	if [ -n "$check_only" ]; then
+		tell checked "$version" "$tarball_sha256" "$security"
+		say "Every check of pullgate $version passed. --check-only installs nothing."
+		exit 0
+	fi
 	install_new
 	print_restart
 }

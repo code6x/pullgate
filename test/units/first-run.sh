@@ -198,7 +198,7 @@ systemctl disable pullgate-listen.service || err "systemctl disable pullgate-lis
 # Enable the units as the README says (no --now here). Each must then be
 # "enabled", not "static": a unit with no [Install] section does not start
 # after a reboot (issue #20).
-for u in pullgate-listen.service "pullgate-apply@$name.path" "pullgate-run@$name.timer" "pullgate-check@$name.path"; do
+for u in pullgate-listen.service "pullgate-apply@$name.path" "pullgate-run@$name.timer" "pullgate-check@$name.path" pullgate-update.timer pullgate-update.path; do
 	systemctl enable "$u" || err "systemctl enable $u failed"
 	state="$(systemctl is-enabled "$u" 2>/dev/null || true)"
 	if [ "$state" != enabled ]; then

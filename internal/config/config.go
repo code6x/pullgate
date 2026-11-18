@@ -30,6 +30,10 @@ const (
 
 var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 
+// userRE is a user name: what useradd accepts, and nothing a shell or an
+// option could read.
+var userRE = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
+
 // ValidName reports whether s is a valid instance name.
 func ValidName(s string) bool { return nameRE.MatchString(s) }
 
@@ -335,11 +339,40 @@ type Listener struct {
 	SpoolDir  string   `toml:"spool_dir"`
 	StateFile string   `toml:"state_file"`
 	APIURL    string   `toml:"api_url"`
+	Updates   Updates  `toml:"updates"`
+}
+
+// Updates is the [updates] table of the listener config: the updates of
+// pullgate itself (DESIGN.md section 15). Root reads it; the listener
+// only checks it.
+type Updates struct {
+	// Check: a notice for each new release, once a day. Default true.
+	Check *bool `toml:"check"`
+	// ListenerUser is the user of the listener, who owns the inbox of the
+	// updates. Default "pullgate".
+	ListenerUser string `toml:"listener_user"`
+	// GH is the gh that checks the build attestation, as install.sh --gh.
+	// Default: install.sh downloads gh and checks its SHA-256.
+	GH string `toml:"gh"`
+}
+
+// Notices reports whether the daily notice of new releases is on.
+func (u Updates) Notices() bool { return u.Check == nil || *u.Check }
+
+// LoadListenerForUpdate reads the listener config for pullgate update,
+// which runs as root. The file must be owned by root (uid) and not
+// writable by others. It needs no token: root never reads the token.
+func LoadListenerForUpdate(path string, uid uint32) (*Listener, error) {
+	return loadListener(path, uid, false)
 }
 
 // LoadListener reads the listener config. The file must be owned by
 // configUID (root) and not writable by others.
 func LoadListener(path string, configUID uint32) (*Listener, error) {
+	return loadListener(path, configUID, true)
+}
+
+func loadListener(path string, configUID uint32, needToken bool) (*Listener, error) {
 	if err := checkFile(path, configUID, false); err != nil {
 		return nil, err
 	}
@@ -361,8 +394,11 @@ func LoadListener(path string, configUID uint32) (*Listener, error) {
 			c.TokenFile = filepath.Join(d, "bot-token")
 		}
 	}
+	if c.Updates.ListenerUser == "" {
+		c.Updates.ListenerUser = "pullgate"
+	}
 	switch {
-	case c.TokenFile == "":
+	case c.TokenFile == "" && needToken:
 		return nil, fmt.Errorf("%s: token_file: it is missing. Fix: set token_file, or give a systemd credential named bot-token", path)
 	case c.OwnerID <= 0:
 		return nil, fmt.Errorf("%s: owner_id: it is missing. Fix: set the Telegram user ID of the owner", path)
@@ -377,6 +413,12 @@ func LoadListener(path string, configUID uint32) (*Listener, error) {
 		if !ValidName(n) {
 			return nil, fmt.Errorf("%s: instances: %q is not an instance name", path, n)
 		}
+	}
+	if !userRE.MatchString(c.Updates.ListenerUser) {
+		return nil, fmt.Errorf("%s: updates.listener_user: %q is not a user name. Fix: give the user of the listener, such as \"pullgate\"", path, c.Updates.ListenerUser)
+	}
+	if g := c.Updates.GH; g != "" && (!filepath.IsAbs(g) || filepath.Clean(g) != g || strings.HasPrefix(g, "-")) {
+		return nil, fmt.Errorf("%s: updates.gh: %q is not a clean absolute path. Fix: give the path of the gh program, such as \"/usr/bin/gh\", or remove the key", path, g)
 	}
 	return c, nil
 }

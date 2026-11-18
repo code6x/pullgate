@@ -12,7 +12,9 @@ With --tap TEXTS (full-loop.sh) it also:
 - appends the text of each sendMessage to TEXTS, as one JSON string per
   line, so a test can wait for "Applied" or "Rolled back";
 - taps the Apply button of each question it gets, two seconds later, as
-  the owner (user 4242) in the chat 4242, through getUpdates.
+  the owner (user 4242) in the chat 4242, through getUpdates;
+- on POST /test/say with {"text": "..."}, sends that text as a message of
+  the owner in the chat, through getUpdates (full-loop.sh sends /update).
 
 Usage: python3 -I faketg.py PORT LOG [--tap TEXTS]
 """
@@ -59,6 +61,24 @@ class Handler(BaseHTTPRequestHandler):
             req = json.loads(raw or b"{}")
         except ValueError:
             req = {}
+        if self.path == "/test/say":
+            with lock:
+                state["updates"].append({
+                    "at": time.monotonic(),
+                    "update": {
+                        "update_id": state["next_update"],
+                        "message": {
+                            "message_id": 100000 + state["next_update"],
+                            "from": {"id": OWNER},
+                            "chat": {"id": CHAT},
+                            "text": str(req.get("text", "")),
+                        },
+                    },
+                })
+                state["next_update"] += 1
+            self.send_response(204)
+            self.end_headers()
+            return
         method = self.path.rsplit("/", 1)[-1]
         with lock:
             with open(LOG, "a", encoding="utf-8") as f:

@@ -26,6 +26,11 @@ change code. They are the rules the code must follow.
     list, the cut to one message (DESIGN.md section 12).
   - `internal/gate/` - `run`, `apply` and `status` (DESIGN.md sections 7,
     9, 10, 13).
+  - `internal/selfupdate/` - `pullgate update`: the notice of a new release,
+    `/update`, and the install with its units (DESIGN.md section 15).
+- `embed.go` - the files that the binary carries: `install.sh` and the
+  units of `contrib/systemd/`. The tests of `install.sh` are in the same
+  package.
 - `contrib/` - example systemd units and example configs.
 - `install.sh` - installs or updates a release on a host, after its checks
   (DESIGN.md section 16). Its tests are `install_linux_test.go`, at the

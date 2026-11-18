@@ -190,7 +190,7 @@ func (l *Listener) Outbox(ctx context.Context) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 instances:
-	for _, inst := range l.Cfg.Instances {
+	for _, inst := range append(slices.Clone(l.Cfg.Instances), spool.SelfName) {
 		d := l.dirs(inst)
 		files, err := d.ReadOutbox()
 		if err != nil {
@@ -246,6 +246,13 @@ instances:
 // only logged: the file is gone either way.
 func (l *Listener) badOutboxNotice(ctx context.Context, inst string) {
 	name := html.EscapeString(inst)
+	if inst == spool.SelfName {
+		text := "pullgate: a message about an update of pullgate could not be read and was removed. It may have been a question. To ask again, send <code>/update</code>."
+		if _, err := l.TG.SendMessage(ctx, l.Cfg.ChatID, text, nil, 0); err != nil {
+			l.Log.Warn("send the notice about a bad outbox file", "instance", inst, "err", err)
+		}
+		return
+	}
 	text := "pullgate: an outbox message of instance <b>" + name + "</b> could not be read and was removed. It may have been a question. To ask again, run as root: <code>pullgate status " + name + " --ask-again</code>"
 	if _, err := l.TG.SendMessage(ctx, l.Cfg.ChatID, text, nil, 0); err != nil {
 		l.Log.Warn("send the notice about a bad outbox file", "instance", inst, "err", err)
@@ -259,6 +266,10 @@ func (l *Listener) send(ctx context.Context, inst string, m spool.Message) error
 		if len(m.Code) != 22 || !l.now().Before(m.Expires) {
 			// Expired or broken: never show buttons for it.
 			l.Log.Warn("a question expired before it could be sent, dropped", "instance", inst, "question", m.Question)
+			if inst == spool.SelfName {
+				_, err := l.TG.SendMessage(ctx, chat, "pullgate: a question about an update of pullgate expired before it could be sent. Send <code>/update</code> to ask again.", nil, 0)
+				return err
+			}
 			_, err := l.TG.SendMessage(ctx, chat, "pullgate: a question of instance <b>"+html.EscapeString(inst)+"</b> expired before it could be sent. The next commit, or <code>pullgate status "+html.EscapeString(inst)+" --ask-again</code>, asks again.", nil, 0)
 			return err
 		}
@@ -413,6 +424,10 @@ const checkCommand = "/check"
 // helpCommand lists what the bot can do.
 const helpCommand = "/help"
 
+// updateCommand asks root to look for a new release of pullgate (DESIGN.md
+// section 15).
+const updateCommand = "/update"
+
 // HintGap is the least time between two "Not a command" replies, so that a
 // stuck client or a long paste cannot make the bot fill the chat.
 const HintGap = time.Minute
@@ -428,6 +443,7 @@ func (l *Listener) helpText() string {
 		"<b>pullgate</b> commands:",
 		"<code>/check</code>: look for a new commit now, on every instance",
 		"<code>/check NAME</code>: the same, on one instance",
+		"<code>/update</code>: look for a new release of pullgate; a question asks before it is installed",
 		"<code>/help</code>: this list",
 		"",
 		"Instances: " + strings.Join(names, ", "),
@@ -454,6 +470,10 @@ func (l *Listener) command(ctx context.Context, m *telegram.Message) {
 		l.lastHelp = now
 		l.Log.Info("help sent", "from", fromID(m))
 		l.sendReply(ctx, m, l.helpText())
+		return
+	}
+	if why == "update" {
+		l.update(ctx, m)
 		return
 	}
 	if names == nil {
@@ -518,6 +538,8 @@ func (l *Listener) checkNames(m *telegram.Message) ([]string, string, bool) {
 		return nil, "an edited message", false
 	case m.Text == helpCommand:
 		return nil, "help", false
+	case m.Text == updateCommand:
+		return nil, "update", false
 	case !strings.HasPrefix(m.Text, checkCommand):
 		return nil, "not a command", false
 	case m.Text == checkCommand:
@@ -541,4 +563,27 @@ func (l *Listener) sendReply(ctx context.Context, m *telegram.Message, text stri
 	if _, err := l.TG.SendMessage(ctx, l.Cfg.ChatID, text, nil, m.MessageID); err != nil {
 		l.Log.Warn("send a reply", "err", err)
 	}
+}
+
+// update writes the check request of the updates (DESIGN.md section 15).
+// Like /check, the request holds nothing from the message. Root looks for
+// the release, checks it, and asks; the listener only asks root to look.
+func (l *Listener) update(ctx context.Context, m *telegram.Message) {
+	if l.lastCheck == nil {
+		l.lastCheck = map[string]time.Time{}
+	}
+	now := l.now()
+	if d := now.Sub(l.lastCheck[spool.SelfName]); d < CheckGap && d > -CheckGap {
+		l.Log.Info("message ignored", "reason", "a second /update within a few seconds", "from", fromID(m))
+		l.sendReply(ctx, m, "A look for a new release was asked a few seconds ago. Wait for its answer.")
+		return
+	}
+	if err := l.dirs(spool.SelfName).WriteCheck(); err != nil {
+		l.Log.Error("write the update request", "err", err)
+		l.sendReply(ctx, m, "Error: the /update request was not saved. pullgate-update.service makes its directory on its first run. Fix: on the host, as root, run <code>systemctl enable --now pullgate-update.timer pullgate-update.path</code> and <code>systemctl start pullgate-update.service</code>, then send /update again.")
+		return
+	}
+	l.lastCheck[spool.SelfName] = now
+	l.Log.Info("update request taken")
+	l.sendReply(ctx, m, "Looking for a new release of pullgate…")
 }

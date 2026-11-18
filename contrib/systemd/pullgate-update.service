@@ -1,0 +1,29 @@
+# pullgate update: look for a new release of pullgate, and install one
+# after the owner taps Apply (DESIGN.md section 15). The timer starts it
+# once a day; pullgate-update.path starts it for /update and for a tap.
+# It installs the binary in /usr/local/bin, the units in
+# /etc/systemd/system, and restarts them, so the sandbox here is light.
+[Unit]
+Description=pullgate update: new releases of pullgate
+Wants=network-online.target
+After=network-online.target
+# A stuck inbox must not start this in a loop.
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/pullgate update
+SyslogIdentifier=pullgate
+UMask=0022
+# gh attestation verify may take 5 minutes, twice for one update.
+TimeoutStartSec=30min
+KillMode=control-group
+PrivateTmp=yes
+ProtectHome=read-only
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
