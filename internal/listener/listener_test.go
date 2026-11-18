@@ -524,3 +524,99 @@ func TestListenerAsksForMessages(t *testing.T) {
 		t.Fatal("the message must arrive")
 	}
 }
+
+// TestUpdateCommand: /update of the owner writes the check request of the
+// updates, and only that one (DESIGN.md section 15).
+func TestUpdateCommand(t *testing.T) {
+	f := newL(t)
+	self := spool.Dirs{Base: f.d.Base, Name: spool.SelfName}
+	if err := self.Ensure(uint32(os.Geteuid()), spool.Owners{ListenerUID: os.Geteuid(), ListenerGID: os.Getegid()}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		from, chat int64
+		text       string
+		edited     bool
+	}{
+		{owner + 1, chat, "/update", false},
+		{owner, chat + 1, "/update", false},
+		{owner, chat, "/update", true},
+		{owner, chat, "/update now", false},
+		{owner, chat, "/update@otherbot", false},
+		{owner, chat, "/check " + spool.SelfName, false},
+	} {
+		f.say(tt.from, tt.chat, tt.text, tt.edited)
+		if self.HasCheck() || f.d.HasCheck() {
+			t.Fatalf("%+v must write no request", tt)
+		}
+	}
+	n := len(f.tg.Messages())
+	f.say(owner, chat, "/update", false)
+	if !self.HasCheck() || f.d.HasCheck() {
+		t.Fatal("/update must write the request of the updates only")
+	}
+	ms := f.tg.Messages()
+	if len(ms) != n+1 || !strings.Contains(ms[n].Text, "Looking for a new release") || ms[n].ReplyTo == 0 {
+		t.Fatalf("the reply must say it looks: %+v", ms[n:])
+	}
+	if c, bad, err := self.TakeChecks(os.Geteuid()); c != 1 || len(bad) != 0 || err != nil {
+		t.Fatalf("the request must be valid for root: %d %v %v", c, bad, err)
+	}
+	// A second /update within CheckGap writes nothing.
+	f.say(owner, chat, "/update", false)
+	if self.HasCheck() {
+		t.Fatal("a second /update within CheckGap must write nothing")
+	}
+}
+
+// TestUpdateCommandWithoutDirectory: before root made the spool of the
+// updates, /update says how to fix it.
+func TestUpdateCommandWithoutDirectory(t *testing.T) {
+	f := newL(t)
+	f.say(owner, chat, "/update", false)
+	ms := f.tg.Messages()
+	if len(ms) != 1 || !strings.Contains(ms[0].Text, "was not saved") || !strings.Contains(ms[0].Text, "pullgate-update.service") {
+		t.Fatalf("want one reply that says how to fix it: %+v", ms)
+	}
+}
+
+// TestUpdateQuestionsAreTheirOwn: an instance named "pullgate" and the
+// updates use different spools, and a tap on an update question writes
+// only to the inbox of the updates.
+func TestUpdateQuestionsAreTheirOwn(t *testing.T) {
+	if config.ValidName(spool.SelfName) {
+		t.Fatalf("%q must not be a valid instance name", spool.SelfName)
+	}
+	f := newL(t)
+	owners := spool.Owners{ListenerUID: os.Geteuid(), ListenerGID: os.Getegid()}
+	pg := spool.Dirs{Base: f.d.Base, Name: "pullgate"}
+	self := spool.Dirs{Base: f.d.Base, Name: spool.SelfName}
+	for _, d := range []spool.Dirs{pg, self} {
+		if err := d.Ensure(uint32(os.Geteuid()), owners); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.l.Cfg.Instances = []string{"pullgate"}
+	f.say(owner, chat, "/check pullgate", false)
+	if !pg.HasCheck() || self.HasCheck() {
+		t.Fatal("/check pullgate must write to the instance pullgate only")
+	}
+	c := strings.Repeat("u", 22)
+	if err := self.Send(os.Getegid(), spool.Message{Kind: spool.KindAsk, Question: 1, Code: c, Expires: f.now.Add(time.Hour), Text: "update?"}); err != nil {
+		t.Fatal(err)
+	}
+	f.l.Outbox(context.Background())
+	ms := f.tg.Messages()
+	m := ms[len(ms)-1]
+	if len(m.Buttons) != 2 {
+		t.Fatalf("the update question must be sent with buttons: %+v", m)
+	}
+	f.tap(owner, chat, m.ID, "a:"+c)
+	es, err := self.TakeApprovals(os.Geteuid(), 0)
+	if err != nil || len(es) != 1 || es[0].Approval.Code != c {
+		t.Fatalf("the tap must write the approval to the updates inbox: %+v %v", es, err)
+	}
+	if es, _ := pg.TakeApprovals(os.Geteuid(), 0); len(es) != 0 {
+		t.Fatal("the tap must not write to the instance pullgate")
+	}
+}

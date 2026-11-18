@@ -4,18 +4,26 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"syscall"
+	"time"
 
+	"github.com/code6x/pullgate"
 	"github.com/code6x/pullgate/internal/config"
 	"github.com/code6x/pullgate/internal/gate"
 	"github.com/code6x/pullgate/internal/listener"
+	"github.com/code6x/pullgate/internal/selfupdate"
+	"github.com/code6x/pullgate/internal/spool"
 	"github.com/code6x/pullgate/internal/telegram"
 )
 
@@ -32,6 +40,9 @@ commands:
                  --ask-again: ask about the last tip again; it also closes
                  an open question for it, so the next run sends a new one
   listen [--config FILE]   the Telegram listener (its own user)
+  update [--config FILE]   look for a new release of pullgate, and install
+                 one after a tap (pullgate-update.service runs it, as root)
+  units          print the units this binary carries, as JSON
   version`
 
 func main() {
@@ -66,7 +77,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	rest := fs.Args()
 	if len(rest) == 0 {
-		return usageErr(stderr, "give a command: run, apply, status, listen or version")
+		return usageErr(stderr, "give a command: run, apply, status, listen, update, units or version")
 	}
 	log := slog.New(slog.NewTextHandler(stderr, nil))
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -156,6 +167,27 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		return 0
+	case "units":
+		if len(rest) > 1 {
+			return usageErr(stderr, "pullgate units takes no arguments")
+		}
+		b, err := json.Marshal(selfupdate.UnitList{Units: pullgate.Units(), Enable: pullgate.Enable})
+		if err != nil {
+			log.Error("units", "err", err)
+			return 1
+		}
+		_, _ = fmt.Fprintln(stdout, string(b))
+		return 0
+	case "update":
+		uf := flag.NewFlagSet("update", flag.ContinueOnError)
+		uf.SetOutput(io.Discard)
+		path := uf.String("config", "/etc/pullgate/listener.toml", "")
+		unitDir := uf.String("unit-dir", "/etc/systemd/system", "")
+		if err := uf.Parse(rest[1:]); err != nil || uf.NArg() > 0 {
+			return usageErr(stderr, "unknown arguments after pullgate update")
+		}
+		log = log.With("step", "update")
+		return update(ctx, log, stderr, *path, *unitDir, *stateDir, *spoolDir, euid)
 	default:
 		return usageErr(stderr, fmt.Sprintf("unknown command %q", cmd))
 	}
@@ -168,4 +200,66 @@ func done(log *slog.Logger, res string, err error) int {
 	}
 	log.Info("done", "result", res)
 	return 0
+}
+
+// update is "pullgate update" (DESIGN.md section 15).
+func update(ctx context.Context, log *slog.Logger, stderr io.Writer, path, unitDir, stateDir, spoolDir string, euid uint32) int {
+	cfg, err := config.LoadListenerForUpdate(path, euid)
+	if err != nil {
+		log.Error("config", "err", err)
+		return 78
+	}
+	owners, err := gate.ResolveOwners(cfg.Updates.ListenerUser)
+	if err != nil {
+		log.Error("setup", "err", err)
+		return 78
+	}
+	bin, err := os.Executable()
+	if err != nil || filepath.Base(bin) != "pullgate" || !filepath.IsAbs(bin) {
+		log.Error("setup: cannot tell where this binary is, or it is not named pullgate. Fix: install it as /usr/local/bin/pullgate, as the README says", "path", bin)
+		return 78
+	}
+	host, _ := os.Hostname()
+	u := &selfupdate.Updater{
+		Cfg:          cfg,
+		StateDir:     filepath.Join(stateDir, spool.SelfName),
+		Spool:        spool.Dirs{Base: cfg.SpoolDir, Name: spool.SelfName},
+		Owners:       owners,
+		UID:          euid,
+		Bin:          bin,
+		Version:      version,
+		Script:       pullgate.InstallScript,
+		UnitDir:      unitDir,
+		Host:         host,
+		Path:         selfupdate.RootPath,
+		Arch:         runtime.GOARCH,
+		Systemctl:    systemctl(log),
+		Log:          log,
+		Out:          stderr,
+		ListenerWait: 5 * time.Second,
+	}
+	if spoolDir != "/var/spool/pullgate" {
+		u.Spool.Base = spoolDir
+	}
+	res, err := u.Run(ctx)
+	return done(log, string(res), err)
+}
+
+// systemctl runs systemctl, at most 2 minutes.
+func systemctl(log *slog.Logger) selfupdate.Systemctl {
+	return func(parent context.Context, args ...string) error {
+		ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
+		defer cancel()
+		prog := "/usr/bin/systemctl"
+		if _, err := os.Stat(prog); err != nil {
+			prog = "/bin/systemctl"
+		}
+		cmd := exec.CommandContext(ctx, prog, args...) //nolint:gosec // systemctl of the system, with fixed arguments from pullgate
+		cmd.Env = []string{"PATH=" + selfupdate.RootPath, "LC_ALL=C"}
+		out, err := cmd.CombinedOutput()
+		if err != nil && len(args) > 0 && args[0] != "is-enabled" && args[0] != "is-active" {
+			log.Warn("systemctl failed", "args", args, "err", err, "output", string(out))
+		}
+		return err
+	}
 }

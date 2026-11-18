@@ -61,7 +61,8 @@ the release (with `gh attestation verify`), and the version that the new
 binary prints. It needs `curl`, `tar`, `gzip`, `sed` and GNU coreutils. Without
 `--gh`, it downloads a pinned gh and checks its SHA-256. It replaces the old
 binary only in the last step, and restarts nothing: it prints what to
-restart. Run it again to update. `--reinstall` installs the same version
+restart. Run it again to update, or update from Telegram with `/update`
+(below). `--reinstall` installs the same version
 again, or replaces a build of unknown version. Exit codes: 0 done or nothing
 to do, 1 failure (nothing was installed), 64 wrong usage. To get the
 script of one release, put its tag (`vX.Y.Z`) in the URL instead of `main`.
@@ -118,6 +119,7 @@ systemctl daemon-reload
 systemctl enable --now pullgate-listen.service
 systemctl enable --now pullgate-apply@NAME.path pullgate-run@NAME.timer
 systemctl enable --now pullgate-check@NAME.path   # optional: /check
+systemctl enable --now pullgate-update.timer pullgate-update.path   # optional: release notices, /update
 ```
 
 Every step logs to the journal: `journalctl -t pullgate`.
@@ -158,6 +160,59 @@ usual Apply question, or "No new commit (the applied commit is …)", or
   `systemctl start pullgate-check@NAME.path`.
 - Without `pullgate-check@NAME.path`, the request waits for the next timer
   run.
+
+## Update pullgate: `/update`
+
+Once a day `pullgate-update.timer` looks for a new release of pullgate. For
+each new release that passes the checks of `install.sh` (the SHA-256 and
+the build attestation), the bot sends one notice: the version, the link to
+the release notes, and "send /update to install it". A release that fixes
+a security problem says so first, and its notice comes again each day
+until it is installed. A notice never installs anything.
+
+The first look runs within an hour after the timer starts, and makes the
+directories that `/update` needs. To have it at once, run
+`systemctl start pullgate-update.service`.
+
+To install it, send the bot `/update`:
+
+1. The listener answers "Looking for a new release of pullgate…".
+2. Root checks the newest release again and sends a question with the
+   version, the link to the release notes, the tarball for this CPU, and
+   its SHA-256, with **Apply** and **Skip**.
+3. On **Apply**, root installs only that tarball, with every check of
+   `install.sh` done again. Then it installs the units of
+   `contrib/systemd/` of the new version where they differ from yours,
+   runs `systemctl daemon-reload`, re-enables and restarts the units, and
+   restarts the listener last.
+4. The new listener sends the report: the old and the new version, the
+   units it installed, and your drop-ins (`/etc/systemd/system/pullgate-*.d/`).
+   Check that you still need each drop-in.
+
+If the new listener does not stay active, root puts the old binary and the
+old units back, and reports why. pullgate never installs an older version
+from Telegram; to install one, run `install.sh --version X.Y.Z` by hand. A
+build from the source (`pullgate dev`) does not update itself.
+
+Keep your changes to a unit in a drop-in (`systemctl edit UNIT`): an
+update replaces the unit files. A unit that you disabled stays disabled,
+and a masked unit is left alone.
+
+The settings, in `/etc/pullgate/listener.toml` (all optional):
+
+```toml
+[updates]
+check = false               # no daily look and no notices; /update still works
+listener_user = "pullgate"  # the user of the listener (default "pullgate")
+gh = "/usr/bin/gh"          # the gh that checks the attestation, as install.sh --gh
+```
+
+To use `/update` on a host that runs an older version: install this
+version with `install.sh`, copy the units of `contrib/systemd/` again, run
+`systemctl daemon-reload`, and enable the two new units:
+`systemctl enable --now pullgate-update.timer pullgate-update.path`.
+How it works: [DESIGN.md](DESIGN.md) section 15; what it trusts:
+[THREAT-MODEL.md](THREAT-MODEL.md) T20.
 
 ## Config
 
@@ -256,6 +311,7 @@ better):
 |---|---|---|
 | `pullgate-listen.service` | 1.2 OK | own user, no capabilities, read-only system |
 | `pullgate-run@.service` | 2.4 OK | root, but only the capabilities it needs to run `check` as `check_user`, to stop it on a timeout, and to fix the spool; read-only system |
+| `pullgate-update.service` | not measured | it installs pullgate and its units as root, and restarts them, so its sandbox is light |
 | `pullgate-apply@.service` | 7.9 EXPOSED | it runs your `apply` command as root, which must change the system. Add a drop-in for what your `apply` needs (`systemctl edit pullgate-apply@NAME.service`) |
 
 The run unit sets `MemoryDenyWriteExecute=yes`, which also holds for

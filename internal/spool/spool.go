@@ -76,6 +76,11 @@ func (d Dirs) Inbox() string { return filepath.Join(d.inst(), "inbox") }
 // CheckDir is the path of the directory of check requests.
 func (d Dirs) CheckDir() string { return filepath.Join(d.inst(), "check") }
 
+// SelfName is the spool name of the updates of pullgate itself (DESIGN.md
+// section 15): Base/_update/{outbox,inbox,check}. An instance name matches
+// [a-z0-9][a-z0-9-]{0,31}, so no instance can have this name.
+const SelfName = "_update"
+
 // CheckFile is the one name a check request has in the check directory.
 const CheckFile = "request"
 

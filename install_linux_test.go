@@ -1,5 +1,3 @@
-// Package pullgate holds the tests of install.sh, the script at the root
-// of the repository. The package has no other code.
 package pullgate
 
 import (
@@ -1078,6 +1076,12 @@ func TestInstallUsage(t *testing.T) {
 		{[]string{"--bin-dir", "bin"}, "--bin-dir must be an absolute path"},
 		{[]string{"--gh"}, "--gh needs the path of gh"},
 		{[]string{"--gh", "gh"}, "--gh must be an absolute path"},
+		{[]string{"--sha256"}, "--sha256 needs the SHA-256"},
+		{[]string{"--version", "0.2.0", "--sha256", strings.Repeat("A", 64)}, "--sha256 must be 64 hex digits in lower case"},
+		{[]string{"--version", "0.2.0", "--sha256", strings.Repeat("a", 63)}, "--sha256 must be 64 hex digits in lower case"},
+		{[]string{"--sha256", strings.Repeat("a", 64)}, "--sha256 needs --version"},
+		{[]string{"--check-only", "--version", "0.2.0", "--sha256", strings.Repeat("a", 64)}, "--check-only and --sha256 do not go together"},
+		{[]string{"--forward-only", "--reinstall"}, "--forward-only and --reinstall do not go together"},
 	} {
 		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
 			in := newInstaller(t)

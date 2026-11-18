@@ -223,9 +223,10 @@ file that `apply` should not touch.
 rollback runs the **old** apply on the old tree, with the commands of the
 current process (the old gate). So a rollback puts the old gate files back
 when `apply` installs them. If the new gate did break pullgate itself (for
-example a bad binary), the next run fails to start and the owner sees the
-failed unit; pullgate does not try to repair itself (self-update is not in
-0.1).
+example a bad binary that `apply` installed), the next run fails to start
+and the owner sees the failed unit; the gate does not repair what `apply`
+installed. Let `apply` not install pullgate: `/update` does that, with
+every check of `install.sh` and a way back (T20).
 
 *Left.* An approved commit can change everything. This is the price of
 having the host manage itself.
@@ -292,6 +293,18 @@ file, marks the SHA failed, and reports. It does not guess. The state is
 written to a temporary file, synced, and renamed, so it is never half
 written.
 
+*The update of pullgate itself* (T20) has the same rule. Root syncs
+`in_progress` before it touches the binary. The old binary gets a second
+name (`.pullgate.prev`, a hard link in the same directory). `install.sh`
+writes the new file under a temporary name, syncs it, and renames it over
+`pullgate`; a rollback renames `.pullgate.prev` back. A rename in one
+directory replaces the name in one step, so after a crash or a power loss
+the host has the old binary or the new one, never none and never a part of
+one. The next start of `pullgate update` sees `in_progress`, reports "the
+update was cut off" with what `pullgate version` says, and does not guess.
+A test stops the update at each step and checks this
+(`TestCrashInTheSwap`).
+
 ### T11. A wrong clock
 
 *Accident or attack.* The host clock jumps forward or back.
@@ -334,6 +347,18 @@ file.
 *Defense.* SSH with `StrictHostKeyChecking=yes` and a pinned known hosts file
 from the host config; a read-only deploy key; no other protocols. git has
 a timeout and an output cap. The tree export has caps.
+
+*Downloads of releases* (T17, T20). For `/update`, root also downloads
+from GitHub, with the built-in `install.sh`: HTTPS only, also after a
+redirect (`--proto '=https' --proto-redir '=https'`), TLS 1.2 or newer, a
+size limit for each file (1 MiB, 64 MiB for a tarball), a time limit for
+each download and 20 minutes for the whole script. A redirect may go to
+another HTTPS host (GitHub serves its files from other hosts); the
+SHA-256 and the attestation, not the host name, prove the file. The
+script takes only the member `pullgate` out of the tarball, and only
+after the attestation passed. GNU tar refuses members with `..` and
+removes a leading `/`; a `pullgate` that is a link, a device or not a
+regular file is refused. Root never runs anything else from the tarball.
 
 ### T14. Weak gate files
 
@@ -462,6 +487,73 @@ once per minute.
 
 *Left.* Someone with the bot token can read the help, as they can read
 every question.
+
+### T20. The update of pullgate itself (`/update`)
+
+The update replaces the program that is the gate. A wrong or bad binary
+removes the gate on that host. So it has the same rules as a commit, and
+more checks.
+
+*Attack: a bad binary.* An attacker serves a tarball that the release
+workflow did not build, or an older build under a newer name.
+*Defense.* Root runs the copy of `install.sh` that is built into the
+running binary, so the code that checks is the code that was checked and
+installed before. **Before the question is sent** it checks the SHA-256
+from `SHA256SUMS` and runs `gh attestation verify` with the release bundle
+and the release workflow identity. No code of the release runs before the
+tap: `--check-only` does not run the new binary. On Apply it downloads the
+files again and does every check of T17 again, and also runs the new
+binary's `pullgate version`. On Apply, the tarball must also have the SHA-256 that the
+question showed (`--sha256`), so Apply installs only that file (rule 2). The
+attestation check is required. There is no setting that skips it.
+`[updates] gh` names the gh that checks, as `install.sh --gh` does; it must
+be gh 2.93.0 or newer and only root may change it. A release that fails a
+check gets a warning notice, never a question and never the "/update" hint.
+
+*Attack: a stolen bot token.* The thief can send `/update` as a message,
+but only the owner's user ID in the owner's chat counts (rule 4), and a
+message holds nothing: the listener writes the six bytes `check\n`. A
+forged request only makes root look for a release and ask. The thief
+cannot tap as the owner (T1). Root takes the version and the SHA-256 from
+its own state, never from the approval.
+
+*Attack: a compromised listener.* It can write requests and approvals in
+`/var/spool/pullgate/_update/`, as for an instance (T2, T12). An approval
+counts only with the code of the open question, within 12 hours, once. It
+cannot name a version or a file.
+
+*Attack: a published release that is bad* (T16 failed). Forward only:
+root never installs the same or an older version from Telegram (its own
+check, and `install.sh --forward-only`). The owner taps Apply after reading
+the release notes. A release is never installed without a tap: the daily
+notice only says "send /update". The owner can install a pinned version by
+hand with `install.sh --version X.Y.Z`.
+
+*Accident: the new binary does not start.* Root keeps the old binary as
+`.pullgate.prev` until the new one works: it runs `pullgate version`, gets
+the units of the new binary (`pullgate units`), installs the ones that
+changed, reloads systemd, restarts the units, restarts the listener last,
+and checks that the listener is still active 5 seconds later. When a step
+fails, it puts the old binary and the old unit files back, reloads,
+restarts the listener, and reports. The new listener sends the report of
+a good update, so the report also shows that it runs.
+
+*The units.* Root writes only files named `pullgate-*.service`, `.timer`
+or `.path` in `/etc/systemd/system`, at most 32 of 64 KiB, that the new
+(attested) binary carries. A unit that is a link (for example masked) is
+left alone. Drop-ins are never changed: they are listed in the report, so
+the owner sees a workaround that a release made unneeded. A unit that the
+owner disabled stays disabled; only a unit that is new in this version is
+enabled.
+
+*Name space.* The updates use `/var/lib/pullgate/_update/` and
+`/var/spool/pullgate/_update/`. An instance name matches
+`[a-z0-9][a-z0-9-]{0,31}`, so no instance can be named `_update`, and an
+instance named `pullgate` has its own directories (`TestUpdateQuestionsAreTheirOwn`).
+
+*Left.* Whoever controls the release workflow on `main`, or GitHub, can
+ship a binary that passes (T16); the owner's tap is the last check. A
+build from the source (`pullgate dev`) does not update itself.
 
 ## 6. Out of scope
 

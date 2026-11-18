@@ -1,0 +1,17 @@
+# Starts pullgate-update.service when the listener writes a request for
+# /update, or an approval for an update question (DESIGN.md section 15).
+# "_update" is not a valid instance name, so no instance can use these
+# directories.
+[Unit]
+Description=pullgate update: /update and taps
+
+[Path]
+PathExists=/var/spool/pullgate/_update/check/request
+DirectoryNotEmpty=/var/spool/pullgate/_update/inbox
+Unit=pullgate-update.service
+# At most 10 starts a minute, as pullgate-check@.path.
+TriggerLimitIntervalSec=60s
+TriggerLimitBurst=10
+
+[Install]
+WantedBy=paths.target

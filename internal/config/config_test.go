@@ -193,3 +193,42 @@ func TestExamples(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestListenerUpdates: the [updates] table (DESIGN.md section 15). Root
+// reads the file without a token; bad values are refused.
+func TestListenerUpdates(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "listener.toml")
+	body := "owner_id = 1\nchat_id = 1\ninstances = [\"a\"]\n"
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CREDENTIALS_DIRECTORY", "")
+	if _, err := LoadListener(p, uid()); err == nil {
+		t.Fatal("the listener needs a token")
+	}
+	c, err := LoadListenerForUpdate(p, uid())
+	if err != nil {
+		t.Fatalf("root needs no token: %v", err)
+	}
+	if !c.Updates.Notices() || c.Updates.ListenerUser != "pullgate" || c.Updates.GH != "" {
+		t.Fatalf("the defaults: %+v", c.Updates)
+	}
+	if err := os.WriteFile(p, []byte(body+"[updates]\ncheck = false\nlistener_user = \"pg-listen\"\ngh = \"/usr/bin/gh\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c, err = LoadListenerForUpdate(p, uid()); err != nil || c.Updates.Notices() || c.Updates.ListenerUser != "pg-listen" || c.Updates.GH != "/usr/bin/gh" {
+		t.Fatalf("got %+v, %v", c, err)
+	}
+	for _, bad := range []string{
+		"listener_user = \"root;x\"", "listener_user = \"-x\"", "gh = \"gh\"", "gh = \"/usr/bin/../bin/gh\"",
+		"skip_attestation = true", "check = \"no\"",
+	} {
+		if err := os.WriteFile(p, []byte(body+"[updates]\n"+bad+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadListenerForUpdate(p, uid()); err == nil {
+			t.Errorf("%s must be refused", bad)
+		}
+	}
+}

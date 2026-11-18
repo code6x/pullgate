@@ -32,6 +32,8 @@ protects, and where it stops.
   starts a normal run now, instead of at the next timer (sections 8 and 9).
 - **pause file**: `/var/lib/pullgate/NAME/paused`. While it exists, the
   instance does nothing: no run, no apply.
+- **update question**: a question that names one release of pullgate
+  itself: its version and the SHA-256 of its tarball (section 15).
 
 ## 2. The rules
 
@@ -78,6 +80,7 @@ These rules come from issue #1. Each one has tests (section 14).
 | `check`, `summary` | `check_user` (default `pullgate-check`) | `pullgate run` | nothing |
 | `apply`, `health` | root | `pullgate apply` | what the owner's command needs |
 | `pullgate status NAME` | root | the owner | nothing |
+| `pullgate update` | root | a timer (`pullgate-update.timer`, daily), or a path unit (`pullgate-update.path`) for `/update` and a tap | the binary, the units, its own state (section 15) |
 
 Root and the listener never talk directly. They use a spool directory
 (section 8). Both units start the same `pullgate-run@NAME.service`, so a
@@ -110,6 +113,9 @@ can be less strict; each example sets what its `apply` needs.
 | `/var/spool/pullgate/NAME/inbox` | listener, 0700 | approvals from the listener to root |
 | `/var/spool/pullgate/NAME/check` | listener, 0700 | check requests from the listener to root |
 | `/var/lib/pullgate-listener/state.json` | listener, 0600 | the listener's open questions |
+| `/var/lib/pullgate/_update/` and `.../tmp/` | root, 0700 | the state, the lock and the downloads of `pullgate update` (section 15) |
+| `/var/spool/pullgate/_update/` | as `NAME/` above | the outbox, inbox and check request of the updates |
+| `/usr/local/bin/.pullgate.prev` | root | the old binary during an update (a hard link) |
 
 The paths can be changed with `--config-dir`, `--state-dir` and
 `--spool-dir`, for tests.
@@ -490,7 +496,7 @@ usage text, which lists the instances and never repeats the message.
 
 **`/help`.** When the text is exactly `/help`, from `owner_id`, in
 `chat_id`, not edited, the listener replies with a fixed list: the
-commands (`/check`, `/check NAME`, `/help`), the instance names from
+commands (`/check`, `/check NAME`, `/update`, `/help`), the instance names from
 `instances`, what Apply and Skip do, and the root commands for the host
 (`pullgate status NAME`, `--pause`, `--resume`, `--ask-again`), at most
 once per minute. The
@@ -752,6 +758,17 @@ that cannot be enabled, fails CI. Without root, CI also runs
 checks that each unit the README tells you to enable has an `[Install]`
 section with `WantedBy=`.
 
+`internal/selfupdate` tests `pullgate update` with the real built-in
+`install.sh` against a fake release (a fake `curl`, `gh` and `uname`, and
+fake binaries): the question, the install, a wrong SHA-256, a failed
+attestation, a wrong version (each before the question and on Apply), a
+tarball that changed after the question, an older version, a newer release
+while a question is open, Skip, an expired question, a listener that does
+not start (rollback), a crash at each step, the daily notice (once, again
+each day for a security release, off with `check = false`), and the unit
+update (a changed unit, a new unit, a masked unit, a disabled unit, a
+drop-in).
+
 `test/units/full-loop.sh` (CI job `install-loop`, on each pull request
 and on `main`) is the path a user takes, as root on the throwaway runner:
 
@@ -775,7 +792,14 @@ and on `main`) is the path a user takes, as root on the throwaway runner:
 4. It restarts the listener and checks that it polls again.
 5. A commit whose apply fails: the rollback runs, and its notice reaches
    the fake Telegram.
-6. Each unit of the README `start` block is `enabled` and `active`.
+6. With `--update-to` (the CI job builds this commit twice, as 900.0.0
+   and 900.0.1): a fake GitHub (a fake `/usr/bin/curl` that serves local
+   files, and a fake gh in `[updates] gh`, because the build under test has
+   no attestation), a changed unit and a drop-in, then `/update` on the
+   fake Telegram. The fake taps Apply; root installs 900.0.1 with the
+   built-in `install.sh`, puts back the shipped unit, lists the drop-in,
+   restarts the listener, and the new listener sends the report.
+7. Each unit of the README `start` block is `enabled` and `active`.
 
 After each loop, the outbox must be empty and the listener must have
 logged no error and no warning. So a message that root writes and the
@@ -788,12 +812,143 @@ tag's own `install.sh --version X.Y.Z`, then runs
 The Release workflow calls it after it publishes; it also runs on
 `release: published` and by hand.
 
-## 15. Not in version 0.1
+## 15. Updates of pullgate itself (`/update`)
 
-- Self-update of pullgate. `install.sh` updates it only when root runs
-  the script (section 16).
-- Signed commits (`git verify-commit`).
-- A web UI.
+The owner updates pullgate from Telegram. It is the same gate as for a
+commit: one question that names one exact release, and a tap. What it
+trusts: THREAT-MODEL.md, T20.
+
+**The parts.** `pullgate update` runs as root, from
+`pullgate-update.service`. Two units start it: `pullgate-update.timer`
+(once a day) and `pullgate-update.path` (the check request or an approval
+of the updates). It reads `/etc/pullgate/listener.toml` (it needs no
+token), and uses its own state and spool, named `_update`
+(`/var/lib/pullgate/_update/`, `/var/spool/pullgate/_update/`). An instance
+name cannot start with `_`, so no instance can use them. The binary carries
+two things of its own version: a copy of `install.sh` (section 16), and the
+units of `contrib/systemd/` (`pullgate units` prints them as JSON, with the
+list of units that the README enables).
+
+**The listener** handles `/update` as `/check`: only exactly `/update`,
+from `owner_id`, in `chat_id`, not edited. It writes the check request
+`_update/check/request` (the six bytes `check\n`, nothing from the
+message), at most one in 10 seconds, and replies "Looking for a new release
+of pullgate…". A tap on an update question writes an approval to
+`_update/inbox`, as for an instance (section 9). It sends what root puts
+in `_update/outbox`.
+
+**Looking for a release.** Root runs the built-in `install.sh
+--check-only` with `TMPDIR=/var/lib/pullgate/_update/tmp`. The script does
+the checks of section 16 on the newest release (the SHA-256 and the
+attestation; it does not run the new binary before the tap), installs
+nothing, and
+prints lines that start with `@pullgate ` for root: `version X.Y.Z
+security|normal`, `up-to-date X.Y.Z`, `fetched X.Y.Z`, `checked X.Y.Z
+SHA256 security|normal`. A release is a security release when its notes
+have the section `### Security` (release-please makes it from `security:`
+pull requests, docs/releasing.md). Root itself checks again that the
+version is newer than its own. Then:
+
+- **Up to date**: nothing. For `/update`, a notice says so.
+- **A newer release that passed every check**: for `/update`, root asks.
+  From the timer, it sends one notice per release: the version, the link
+  to the release notes and "send /update to install it". A security
+  release says so on the first line, and its notice comes again each day
+  (23 hours) until it is installed. A notice has no buttons and needs no
+  tap. `[updates] check = false` in `listener.toml` stops the daily look
+  and its notices; `/update` still works.
+- **A release that failed a check** (after its files were downloaded):
+  one warning notice per release ("failed a check, so it is not
+  offered"), with the reason from `install.sh`. It never gets a question
+  or the "/update" hint. For `/update`, the warning comes each time.
+- **No answer from GitHub** (before the download): a log line; for
+  `/update`, a notice. A build from the source (`pullgate dev`) does
+  nothing and says so: it cannot know which release is newer.
+
+At most one `/update` per minute is acted on (`check_at` in root's state).
+
+**The question.** Root makes a new code, writes the question to its state
+(synced), then to the outbox, as in section 7:
+
+```
+pullgate on <b>HOST</b>, update of pullgate
+⚠ Security release. It fixes a security problem.   (only for one)
+Update pullgate to <code>X.Y.Z</code>?
+Installed now: <code>OLD</code>
+Release notes: https://github.com/code6x/pullgate/releases/tag/vX.Y.Z
+File: <code>pullgate_X.Y.Z_linux_ARCH.tar.gz</code>
+SHA-256: <code>…64 hex digits…</code>
+```
+
+It can be answered for 12 hours. At most one update question is open.
+When the timer or `/update` finds a newer checked release while a question
+is open, root closes the old one ("a newer question replaced this one")
+and asks again. When the installed version is the newest again (installed
+by hand), it closes the question.
+
+**Root's state**, `/var/lib/pullgate/_update/state.json` (root, 0600):
+`question` (id, code, version, sha256, asked, expires), `notified` and
+`warned` (release → time of its last notice), `check_at`, `check_note`,
+and `in_progress` (version, from, started) while an update runs.
+
+**Apply.** `pullgate update` takes the lock (`_update/lock`), reads the
+approvals as in section 9 (code with a constant-time compare, time, once),
+and takes the version and the SHA-256 **from its own state**. Skip: a reply,
+nothing else. Apply, forward only (the version must be newer than its
+own; never an older one from Telegram):
+
+1. Write `in_progress` (synced). Give the old binary a second name,
+   `DIR/.pullgate.prev` (a hard link), and sync the directory.
+2. Run the built-in `install.sh --version X.Y.Z --sha256 SHA256
+   --forward-only --bin-dir DIR` (and `--gh` from `[updates] gh`). It
+   downloads the files again and does every check again; the tarball must
+   also have the SHA-256 of the question. It renames the new file over
+   `DIR/pullgate` as its last step. A failure here installs nothing: root
+   removes `.pullgate.prev`, clears `in_progress` and reports why.
+3. Run `DIR/pullgate version`: it must print `pullgate X.Y.Z`.
+4. Run `DIR/pullgate units` (the new binary). Check the list: only names
+   `pullgate-*.service`, `.timer`, `.path`, at most 32 files of 64 KiB.
+   Write each unit that differs from `/etc/systemd/system/NAME` (a
+   temporary file, sync, rename), and keep the old content. A unit there
+   that is a link (masked) is left alone. Drop-ins
+   (`/etc/systemd/system/pullgate-*.d/*`) are never changed; they are
+   listed in the report.
+5. `systemctl daemon-reload`. For each unit that the README enables (for
+   each instance in `instances`): when it is enabled, or new in this
+   version, `systemctl reenable` and `systemctl restart` it. A unit that
+   the owner disabled stays disabled. The listener is re-enabled here,
+   but restarted last.
+6. `systemctl restart pullgate-listen.service`, wait 5 seconds, and check
+   `systemctl is-active pullgate-listen.service`.
+7. Remove `.pullgate.prev`, clear `in_progress`, and write the report:
+   "pullgate is updated: OLD → NEW", the units it installed, the links it
+   left alone, and every drop-in. The new listener sends it.
+
+When step 3, 4, 5 or 6 fails: rename `.pullgate.prev` back over
+`DIR/pullgate`, write back the old unit files (and remove the new ones),
+`daemon-reload`, restart the units and the listener, clear `in_progress`,
+and report "the update failed: REASON. pullgate OLD is back". If the
+rollback has problems too, the report says which, and how to fix it by
+hand with `install.sh`.
+
+**A crash** leaves `in_progress`. The binary is the old file or the new
+one: each change of the name `pullgate` is a rename in one directory, after
+a sync (THREAT-MODEL.md, T10). The next start reports "the update was cut
+off" with what `pullgate version` says, and how to check the host. It does
+not guess, and leaves `.pullgate.prev` for the owner.
+
+**The config** (in `listener.toml`, every key optional):
+
+```toml
+[updates]
+check = true                # false: no daily look, no notices; /update works
+listener_user = "pullgate"  # the listener user: owns the inbox of the updates
+gh = "/usr/bin/gh"          # the gh that checks the attestation, as install.sh --gh
+```
+
+There is no key to skip a check.
+
+**Not yet**: signed commits (`git verify-commit`), a web UI.
 
 ## 16. The install script
 
@@ -803,6 +958,13 @@ It is a POSIX `sh` script. Root runs it on the host itself:
 ```sh
 sh install.sh [--version X.Y.Z] [--bin-dir DIR] [--gh PATH] [--reinstall]
 ```
+
+`pullgate update` runs the copy of this script that is built into the
+binary, with three more flags (section 15): `--check-only` (every check,
+install nothing), `--sha256 HEX` (with `--version`: install only a tarball
+with this SHA-256) and `--forward-only` (never the same or an older
+version). It reads the lines that start with `@pullgate ` on the standard
+output.
 
 All the work is in functions. Only the last line starts `main`, so a
 download that stops in the middle runs nothing. The steps:

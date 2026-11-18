@@ -13,13 +13,18 @@ workflow checks it.
 
 | type | release | changelog section |
 |---|---|---|
-| `security` | patch | Security |
+| `security` | patch | Security (see below) |
 | `feat` | minor (patch before 1.0) | Features |
 | `fix` | patch | Bug Fixes |
 | `perf` | patch | Performance Improvements |
 | `revert` | patch | Reverts |
 | `docs` | patch | Documentation |
 | `chore`, `ci`, `test`, `refactor`, `build`, `style` | none | hidden |
+
+A `security:` pull request makes a section `### Security` in the release
+notes. `pullgate update` reads it (DESIGN.md section 15): the notice of such
+a release says so first, and comes again each day until the release is
+installed. Use `security:` only for the fix of a security problem.
 
 ## What happens
 

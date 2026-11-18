@@ -15,7 +15,11 @@
 # 6. It restarts the listener and checks that it comes back.
 # 7. A commit whose apply fails: the rollback, and its notice reaches the
 #    fake Telegram.
-# 8. Every unit the README enables is enabled and active.
+# 8. With --update-to: /update from the installed build to a newer one,
+#    through a fake GitHub (a fake curl and a fake gh): the question, the
+#    tap, the install with the checks of install.sh, a changed unit put
+#    back, a drop-in listed, and the report from the new listener.
+# 9. Every unit the README enables is enabled and active.
 # After each loop, every message root wrote must have been read and sent
 # by the listener: the outbox is empty, and the listener logged no error
 # and no warning.
@@ -24,8 +28,12 @@
 # and writes to /etc, /usr/local/lib, /srv and /var. Run it only as root,
 # on a machine you throw away, such as a CI runner.
 #
-# Usage: sudo sh test/units/full-loop.sh PATH-TO-PULLGATE-BINARY
+# Usage: sudo sh test/units/full-loop.sh PATH-TO-PULLGATE-BINARY [--update-to PATH-TO-NEWER-BINARY]
 #        sudo sh test/units/full-loop.sh --installed X.Y.Z
+#
+# With --update-to, both binaries must have a release version (built with
+# -ldflags "-X main.version=X.Y.Z"), the second one newer. Then the script
+# moves /usr/bin/curl aside for a fake one, and puts it back at the end.
 set -eu
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -33,11 +41,17 @@ if [ "$(id -u)" -ne 0 ]; then
 	exit 1
 fi
 usage() {
-	echo "usage: full-loop.sh PATH-TO-PULLGATE-BINARY | full-loop.sh --installed X.Y.Z" >&2
+	echo "usage: full-loop.sh PATH-TO-PULLGATE-BINARY [--update-to PATH-TO-NEWER-BINARY] | full-loop.sh --installed X.Y.Z" >&2
 	exit 64
 }
 installed=""
 binary=""
+update_to=""
+if [ $# -eq 3 ] && [ "$2" = --update-to ]; then
+	[ -f "$3" ] || usage
+	update_to="$(cd "$(dirname "$3")" && pwd)/$(basename "$3")"
+	set -- "$1"
+fi
 case "${1:-}" in
 --installed)
 	[ $# -eq 2 ] || usage
@@ -270,13 +284,95 @@ tglog="$(mktemp)"
 texts="$(mktemp)"
 python3 -I "$here/faketg.py" "$port" "$tglog" --tap "$texts" &
 tgpid=$!
-trap 'kill "$tgpid" 2>/dev/null || true; rm -rf "$work"' EXIT
+cleanup() {
+	kill "$tgpid" 2>/dev/null || true
+	rm -rf "$work"
+	if [ -f /usr/bin/curl.full-loop ]; then
+		mv -f /usr/bin/curl.full-loop /usr/bin/curl
+	fi
+}
+trap cleanup EXIT
 i=0
 until python3 -I -c 'import socket, sys; socket.create_connection(("127.0.0.1", int(sys.argv[1])), 1)' "$port" 2>/dev/null; do
 	i=$((i + 1))
 	[ "$i" -lt 20 ] || die "the fake Telegram did not start on 127.0.0.1:$port"
 	sleep 0.5
 done
+
+if [ -n "$update_to" ]; then
+	step "3b. A fake GitHub for /update"
+	old_v="$(pullgate --version | sed 's/^pullgate //')"
+	new_v="$("$update_to" --version | sed 's/^pullgate //')"
+	case "$(uname -m)" in
+	x86_64) arch=amd64 ;;
+	aarch64) arch=arm64 ;;
+	*) die "no release for $(uname -m)" ;;
+	esac
+	web="$out/web"
+	# install.sh refuses a bin directory that group or others can write.
+	# The runner image may have one; fix it, as an owner would.
+	stat -c '%U %a' /usr/local/bin
+	chown root:root /usr/local/bin
+	chmod go-w /usr/local/bin
+	# fake_release VERSION [BINARY]: the newest release on the fake GitHub.
+	# With BINARY, also its files, made as the release workflow makes them.
+	fake_release() {
+		api="$web/api.github.com/repos/code6x/pullgate/releases"
+		install -d -m 0755 "$api"
+		install -d -m 0755 "$api/tags"
+		printf '{"tag_name": "v%s", "body": "## v%s\\n\\n### Bug Fixes\\n\\n* a fix\\n"}\n' "$1" "$1" >"$api/latest"
+		cp "$api/latest" "$api/tags/v$1"
+		[ $# -eq 2 ] || return 0
+		dl="$web/github.com/code6x/pullgate/releases/download/v$1"
+		stage="$(mktemp -d)"
+		install -d -m 0755 "$dl"
+		install -m 0755 "$2" "$stage/pullgate"
+		cp "$top/LICENSE" "$top/README.md" "$stage/"
+		tar --owner=0 --group=0 --numeric-owner --mode=go-w -C "$stage" -cf - pullgate LICENSE README.md |
+			gzip -9n >"$dl/pullgate_$1_linux_$arch.tar.gz"
+		rm -rf "$stage"
+		(cd "$dl" && sha256sum -- *.tar.gz >SHA256SUMS)
+		echo '{}' >"$dl/pullgate_$1.sigstore.json"
+	}
+	fake_release "$old_v"
+	# The fake curl serves https://HOST/PATH from $web/HOST/PATH. install.sh
+	# runs as root with PATH=/usr/sbin:/usr/bin:/sbin:/bin, so it must be
+	# /usr/bin/curl. The trap puts the real one back.
+	mv /usr/bin/curl /usr/bin/curl.full-loop
+	cat >/usr/bin/curl <<FAKE
+#!/bin/sh
+out=
+url=
+while [ "\$#" -gt 0 ]; do
+	case "\$1" in
+	--output) out="\$2"; shift ;;
+	esac
+	url="\$1"
+	shift
+done
+case "\$url" in
+https://*) ;;
+*) echo "fake curl: not HTTPS: \$url" >&2; exit 1 ;;
+esac
+file="$web/\${url#https://}"
+[ -f "\$file" ] || { echo "curl: (22) The requested URL returned error: 404" >&2; exit 22; }
+cp "\$file" "\$out"
+FAKE
+	chmod 0755 /usr/bin/curl
+	# The fake gh: the build under test has no attestation. It writes down
+	# each call. [updates] gh names it, as install.sh --gh does.
+	cat >"$lib/gh" <<FAKE
+#!/bin/sh
+echo "\$*" >>"$out/gh-calls"
+if [ "\$1" = --version ]; then
+	echo "gh version 2.102.0 (2026-09-30)"
+fi
+exit 0
+FAKE
+	chown root:root "$lib/gh"
+	chmod 0755 "$lib/gh"
+	printf '\n[updates]\ngh = "%s"\n' "$lib/gh" >>/etc/pullgate/listener.toml
+fi
 
 step "4. The README start: enable --now"
 readme start
@@ -328,7 +424,51 @@ pullgate status "$name"
 listener_read_all "after the rollback"
 unit_quiet "pullgate-run@$name.service"
 
-step "8. Every unit the README enables"
+if [ -n "$update_to" ]; then
+	step "8. /update from $old_v to $new_v, with its units"
+	# The timer has a random delay of up to an hour. One run now makes the
+	# directories of the updates, so the listener can write /update.
+	systemctl start pullgate-update.service || err "pullgate-update.service failed before the new release"
+	fake_release "$new_v" "$update_to"
+	sum="$(cut -d ' ' -f 1 "$web/github.com/code6x/pullgate/releases/download/v$new_v/SHA256SUMS")"
+	# A unit that differs from the shipped one, and a drop-in.
+	printf '# changed by full-loop.sh\n' >>/etc/systemd/system/pullgate-run@.timer
+	install -d -m 0755 /etc/systemd/system/pullgate-listen.service.d
+	printf '[Service]\nEnvironment=PULLGATE_LOOP=1\n' >/etc/systemd/system/pullgate-listen.service.d/loop.conf
+	systemctl daemon-reload
+	python3 -I -c 'import json, sys, urllib.request
+urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:%s/test/say" % sys.argv[1], data=json.dumps({"text": sys.argv[2]}).encode(), method="POST"), timeout=5)' "$port" /update
+	if ! wait_text "pullgate is updated" 300; then
+		journalctl --no-pager -o cat -u pullgate-update.service -u pullgate-listen.service || true
+		die "no 'pullgate is updated' report reached the fake Telegram"
+	fi
+	grep -F "Update pullgate to" "$texts" | grep -q -F "$sum" || err "the update question does not show the SHA-256 $sum"
+	got="$(/usr/local/bin/pullgate --version || true)"
+	[ "$got" = "pullgate $new_v" ] || err "after /update, pullgate --version says '$got', want 'pullgate $new_v'"
+	cmp -s "$top/contrib/systemd/pullgate-run@.timer" /etc/systemd/system/pullgate-run@.timer ||
+		err "/update did not put back the shipped pullgate-run@.timer"
+	grep -q -F 'pullgate-run@.timer' "$texts" || err "the report does not list the unit it installed"
+	grep -q -F 'pullgate-listen.service.d/loop.conf' "$texts" || err "the report does not list the drop-in"
+	[ -f /etc/systemd/system/pullgate-listen.service.d/loop.conf ] || err "/update removed a drop-in"
+	[ "$(grep -c '^attestation verify' "$out/gh-calls" || true)" -ge 2 ] ||
+		err "gh attestation verify must run before the question and again on Apply"
+	[ ! -e /usr/local/bin/.pullgate.prev ] || err "the old binary is still kept after a good update"
+	i=0
+	while [ "$i" -lt 30 ] && [ -n "$(ls -A /var/spool/pullgate/_update/outbox)" ]; do
+		i=$((i + 1))
+		sleep 1
+	done
+	[ -z "$(ls -A /var/spool/pullgate/_update/outbox)" ] || err "the listener did not take every update message from the outbox"
+	journalctl --sync || true
+	if journalctl --no-pager -o cat -u pullgate-update.service | grep -E 'level=ERROR'; then
+		err "pullgate-update.service logged an error (above)"
+	fi
+	journalctl --no-pager -o cat -u pullgate-update.service | grep -q 'msg=updated ' || err "pullgate-update.service did not log 'updated'"
+	systemctl is-active --quiet pullgate-listen.service || err "the listener is not active after /update"
+	listener_read_all "after /update"
+fi
+
+step "9. Every unit the README enables"
 units="$(sh "$here/readme-block.sh" start "$top/README.md" | sed -e 's/#.*//' -e "s/NAME/$name/g" |
 	tr -s ' \t' '\n' | grep -E '^pullgate-[A-Za-z0-9@._-]+\.(service|path|timer)$' | sort -u)"
 n=0

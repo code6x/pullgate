@@ -99,9 +99,9 @@ jobs:
           echo "$out"
           # The "not executable" line of each service shows that systemd
           # really loaded our units.
-          n="$(echo "$out" | grep -c -E '^pullgate-(apply@[^ ]*|listen|run@[^ ]*)\.service: Command /usr/local/bin/pullgate is not executable' || true)"
-          if [ "$n" -ne 3 ]; then
-            echo "expected 3 'not executable' lines (apply, listen, run), got $n" >&2
+          n="$(echo "$out" | grep -c -E '^pullgate-(apply@[^ ]*|listen|run@[^ ]*|update)\.service: Command /usr/local/bin/pullgate is not executable' || true)"
+          if [ "$n" -ne 4 ]; then
+            echo "expected 4 'not executable' lines (apply, listen, run, update), got $n" >&2
             exit 1
           fi
           if echo "$out" \
@@ -144,13 +144,21 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Build
-        run: CGO_ENABLED=0 go build -trimpath -o "${RUNNER_TEMP}/pullgate" ./cmd/pullgate
-      - name: The README install, then a good commit and a failed one
+        # Two builds of this commit with release versions: the first is
+        # installed, /update moves it to the second. The versions are far
+        # above every real release, so the daily look at the real GitHub
+        # (before the fake one is in place) finds nothing newer.
+        run: |
+          CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=900.0.0" -o "${RUNNER_TEMP}/pullgate" ./cmd/pullgate
+          mkdir -p "${RUNNER_TEMP}/new"
+          CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=900.0.1" -o "${RUNNER_TEMP}/new/pullgate" ./cmd/pullgate
+      - name: The README install, a good commit, a failed one, and /update
         # The install commands come from README.md itself. Root and the
         # listener are different users, under the real units. A tap on a
         # fake Telegram applies a commit; a failing commit rolls back
-        # (DESIGN.md section 14, issue #27).
-        run: sudo sh test/units/full-loop.sh "${RUNNER_TEMP}/pullgate"
+        # (DESIGN.md section 14, issue #27). Then /update installs the
+        # second build from a fake GitHub, with its units (issue #9).
+        run: sudo sh test/units/full-loop.sh "${RUNNER_TEMP}/pullgate" --update-to "${RUNNER_TEMP}/new/pullgate"
 
   lint:
     runs-on: ubuntu-latest
