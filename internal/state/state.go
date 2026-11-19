@@ -275,6 +275,38 @@ func (d Dir) PauseReason() string {
 // telegramPauseRE is the whole first line of a pause from /pause.
 var telegramPauseRE = regexp.MustCompile(`^` + regexp.QuoteMeta(TelegramPause) + `[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} UTC$`)
 
+// ResumeTelegram removes the pause file only if it is a /pause one
+// (TelegramPaused). It moves the file aside first and checks that the file
+// it moved is the one it checked; if not (root wrote a new pause in
+// between), it puts that one back without replacing anything, and keeps
+// the pause. It reports whether the pause was lifted.
+func (d Dir) ResumeTelegram(uid uint32) (bool, error) {
+	f, err := os.OpenFile(d.PauseFile(), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return false, nil
+	}
+	defer func() { _ = f.Close() }()
+	checked, err := f.Stat()
+	if err != nil || !telegramPauseFile(f, checked, uid) {
+		return false, nil
+	}
+	tmp := d.file(".resume-tmp")
+	_ = os.Remove(tmp)
+	if err := os.Rename(d.PauseFile(), tmp); err != nil {
+		return false, err
+	}
+	moved, err := os.Lstat(tmp)
+	if err != nil || !os.SameFile(checked, moved) {
+		// Not the file that was checked: put it back, never over a new one.
+		if lerr := os.Link(tmp, d.PauseFile()); lerr != nil && !errors.Is(lerr, fs.ErrExist) {
+			return false, lerr
+		}
+		_ = os.Remove(tmp)
+		return false, nil
+	}
+	return true, os.Remove(tmp)
+}
+
 // TelegramPaused reports whether the pause file is one that /pause wrote:
 // a regular file of uid, not linked twice, of one line that is exactly the
 // reason of /pause. Any other pause (by pullgate itself or by root) is not.
@@ -288,6 +320,10 @@ func (d Dir) TelegramPaused(uid uint32) bool {
 	if err != nil {
 		return false
 	}
+	return telegramPauseFile(f, fi, uid)
+}
+
+func telegramPauseFile(f *os.File, fi os.FileInfo, uid uint32) bool {
 	st, ok := fi.Sys().(*syscall.Stat_t)
 	if !ok || !fi.Mode().IsRegular() || st.Uid != uid || st.Nlink != 1 || fi.Size() > 100 {
 		return false

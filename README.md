@@ -197,11 +197,12 @@ usual Apply question, or "No new commit (the applied commit is …)", or
   commit, the last tip, the open question, paused or not and why, broken
   or not. It changes nothing. At most one answer per instance a minute.
 - `/pause NAME`: pauses the instance. Nothing is fetched, asked or applied
-  you send `/resume NAME` (or root runs `pullgate status NAME --resume`). If it is
+  until you send `/resume NAME` (or root runs `pullgate status NAME --resume`). If it is
   paused already, the old pause stays as it is. A reason after NAME is not
   sent to the host.
 
-- `/resume NAME`: lifts a pause that `/pause` set. Any other pause (one
+- `/resume NAME`: lifts a pause that `/pause` set. Whoever holds the bot
+  token can do that too: if you suspect the token, pause as root. Any other pause (one
   that pullgate set itself after a cut-off apply, or one that root set)
   stays: run `pullgate status NAME --resume` as root.
 - `/ask-again NAME`: asks again about the newest commit, but only when its

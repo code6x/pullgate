@@ -220,3 +220,73 @@ func TestAskAgainOnlyExpiredOrLost(t *testing.T) {
 		})
 	}
 }
+
+func TestTelegramPauseFileForm(t *testing.T) {
+	good := state.TelegramPause + "2026-11-11 12:00 UTC"
+	for name, setup := range map[string]func(f *fixture){
+		"hard link": func(f *fixture) {
+			_ = f.env.Dir.Pause(good)
+			_ = os.Link(f.env.Dir.PauseFile(), f.env.Dir.PauseFile()+"2")
+		},
+		"symlink": func(f *fixture) {
+			other := filepath.Join(f.base, "other")
+			_ = os.WriteFile(other, []byte(good+"\n"), 0o644)
+			_ = os.Symlink(other, f.env.Dir.PauseFile())
+		},
+		"trailing space": func(f *fixture) { _ = f.env.Dir.Pause(good + " ") },
+		"not UTC":        func(f *fixture) { _ = f.env.Dir.Pause(state.TelegramPause + "2026-11-11 12:00 CET") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, ``, "")
+			if err := f.env.Dir.Ensure(); err != nil {
+				t.Fatal(err)
+			}
+			setup(f)
+			if f.env.Dir.TelegramPaused(f.env.UID) {
+				t.Fatal("must not count as a /pause")
+			}
+			if ok, _ := f.env.Dir.ResumeTelegram(f.env.UID); ok || !f.env.Dir.Paused() {
+				t.Fatal("must not be lifted")
+			}
+		})
+	}
+}
+
+func TestPauseWinsOverResumeInOneRun(t *testing.T) {
+	f := newFixture(t, ``, "")
+	f.applyNew("one")
+	f.requestKind(spool.RequestPause)
+	f.run()
+	f.now = f.now.Add(2 * time.Minute)
+	f.requestKind(spool.RequestResume)
+	f.requestKind(spool.RequestPause)
+	f.run()
+	if !f.env.Dir.Paused() {
+		t.Fatal("with /resume and /pause in one run, the pause wins")
+	}
+}
+
+func TestAskAgainRefusedWhilePausedOrBroken(t *testing.T) {
+	f := newFixture(t, `on_failure = "rollback"`, "")
+	breakIt(t, f)
+	f.outbox()
+	f.requestKind(spool.RequestAskAgain)
+	f.run()
+	if !contains(f.outbox(), "failed commit of the broken state") {
+		t.Fatal("/ask-again must refuse the broken failed commit")
+	}
+	g := newFixture(t, ``, "")
+	g.applyNew("one")
+	g.commit("second", "two", nil)
+	g.run()
+	q := g.ask()
+	_ = g.env.Dir.Pause("paused by the owner")
+	g.requestKind(spool.RequestAskAgain)
+	g.run()
+	if !contains(g.outbox(), "is paused or off") {
+		t.Fatal("/ask-again while paused must be refused")
+	}
+	if g.state().FindCode(q.Code) < 0 {
+		t.Fatal("the question must stay while paused")
+	}
+}

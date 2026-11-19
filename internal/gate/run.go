@@ -157,12 +157,13 @@ func (e *Env) Run(ctx context.Context) (Result, error) {
 	if err != nil {
 		return "", err
 	}
-	if requests.Pause > 0 {
-		e.pauseRequest(st)
-		paused = e.Dir.Paused()
-	}
+	// Resume before pause: when both came, the pause wins (fail closed).
 	if requests.Resume > 0 {
 		e.resumeRequest(st)
+		paused = e.Dir.Paused()
+	}
+	if requests.Pause > 0 {
+		e.pauseRequest(st)
 		paused = e.Dir.Paused()
 	}
 	if requests.AskAgain > 0 {
@@ -186,7 +187,7 @@ func (e *Env) Run(ctx context.Context) (Result, error) {
 		why := e.Cfg.Name + " is off (mode = \"off\"), so nothing was fetched."
 		res := Off
 		if paused {
-			why = e.Cfg.Name + " is paused, so nothing was fetched. Run as root: <code>pullgate status " + e.Cfg.Name + " --resume</code>"
+			why = e.Cfg.Name + " is paused, so nothing was fetched. " + e.resumeHint()
 			res = Paused
 		}
 		e.Log.Info(string(res))

@@ -124,7 +124,7 @@ func (e *Env) ignoreAll(st *state.State, paused bool) (Result, error) {
 	why := "the instance is off (mode = \"off\")."
 	res := Off
 	if paused {
-		why = "the instance is paused. Run as root: <code>pullgate status " + e.Cfg.Name + " --resume</code>"
+		why = "the instance is paused. " + e.resumeHint()
 		res = Paused
 	}
 	for {

@@ -503,7 +503,11 @@ reads its own state and acts. So the most they can do:
 *`/resume` and `/ask-again`* (code6x/pullgate#33) can undo a stop, so
 they are limited. `/resume` lifts only a pause whose file is exactly what
 `/pause` writes (root's regular file, one link, one line in that form):
-the only pause a thief could set anyway. A pause that pullgate set after a
+the only pause a thief could set anyway. So if the owner suspects the
+token or the listener, the owner pauses as root (`pullgate status NAME
+--pause`): a token holder can lift a `/pause`. `/resume` moves the file
+aside and checks that it is the file it checked, so a pause that root
+writes at the same moment is put back and stays. A pause that pullgate set after a
 cut-off apply, or that root set, stays, and so does the broken state
 (T6). `/ask-again` clears only an expired mark or an open question; it
 never re-asks a commit that the owner skipped or that failed, was held or

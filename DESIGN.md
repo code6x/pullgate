@@ -511,8 +511,11 @@ that they cannot undo a safety stop:
   --resume` as root. `/resume` never ends the broken state (section 10).
 - `ask-again`: root clears only an open question for the last tip (its
   message may be lost; the next question has a new code) or an `expired`
-  mark. It refuses a tip that is skipped, failed, held, refused, failed its
-  check, or the failed commit of the broken state. Root's `pullgate status
+  mark, and saves the state before the listener closes the message. It
+  refuses every other case: a tip that is skipped, failed, held, refused,
+  failed its check, the failed commit of the broken state, or an instance
+  that is paused or off. When `resume` and `pause` come in one run, the
+  pause wins. Root's `pullgate status
   NAME --ask-again` still clears every mark.
 
 **`/check`.** The listener writes a check request (section 8) only when all

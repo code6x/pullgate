@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/code6x/pullgate/internal/config"
 	"github.com/code6x/pullgate/internal/message"
 	"github.com/code6x/pullgate/internal/spool"
 
@@ -27,9 +28,18 @@ func (e *Env) takeChecks() spool.Requests {
 		e.Log.Error("read the check requests", "err", err)
 	}
 	if r.Any() {
-		e.Log.Info("requests taken", "check", r.Check, "status", r.Status, "pause", r.Pause)
+		e.Log.Info("requests taken", "check", r.Check, "status", r.Status, "pause", r.Pause, "resume", r.Resume, "ask-again", r.AskAgain)
 	}
 	return r
+}
+
+// resumeHint says how to go on after a pause: /resume for a /pause, else
+// root.
+func (e *Env) resumeHint() string {
+	if e.Dir.TelegramPaused(e.UID) {
+		return "Send <code>/resume " + e.Cfg.Name + "</code>"
+	}
+	return "Run as root: <code>pullgate status " + e.Cfg.Name + " --resume</code>"
 }
 
 // pauseRequest acts on /pause: it writes the pause file, unless there is
@@ -64,12 +74,15 @@ func (e *Env) resumeRequest(st *state.State) {
 	switch {
 	case !e.Dir.Paused():
 		text = e.Cfg.Name + " is not paused."
-	case !e.Dir.TelegramPaused(e.UID):
-		text = "⏸ " + e.Cfg.Name + " stays paused: this pause was not set from Telegram (" + message.Code(e.Dir.PauseReason()) + "), so /resume does not lift it. Check the host, then run as root: <code>pullgate status " + e.Cfg.Name + " --resume</code>"
 	default:
-		if err := e.Dir.Resume(); err != nil {
+		lifted, err := e.Dir.ResumeTelegram(e.UID)
+		if err != nil {
 			e.Log.Error("remove the pause file", "err", err)
 			text = "Error: " + e.Cfg.Name + " could not be resumed. See the journal of the host."
+			break
+		}
+		if !lifted {
+			text = "⏸ " + e.Cfg.Name + " stays paused: this pause was not set from Telegram (" + message.Code(e.Dir.PauseReason()) + "), so /resume does not lift it. Check the host, then run as root: <code>pullgate status " + e.Cfg.Name + " --resume</code>"
 			break
 		}
 		e.Log.Info("resumed from Telegram")
@@ -88,6 +101,8 @@ func (e *Env) askAgainRequest(st *state.State) {
 	tip := st.LastTip
 	m := st.Marks[tip]
 	switch {
+	case e.Dir.Paused() || e.Cfg.Mode == config.ModeOff:
+		e.notice("Not asked again: " + e.Cfg.Name + " is paused or off. Resume it first.")
 	case tip == "" || tip == st.Applied:
 		e.notice("Nothing to ask again: there is no new commit.")
 	case st.Broken != nil && (tip == st.Broken.SHA || tip == st.Broken.OldSHA):
@@ -95,10 +110,17 @@ func (e *Env) askAgainRequest(st *state.State) {
 	case tip == st.Held:
 		e.notice("Not asked again: the apply of " + code(tip) + " failed and it is held. To try it again, run as root: <code>pullgate status " + e.Cfg.Name + " --ask-again</code>")
 	case m != nil && m.Mark == state.MarkAsked:
-		if q := forgetOpen(st, tip); q != nil && !q.Auto {
+		q := forgetOpen(st, tip)
+		delete(st.Marks, tip)
+		// Save first: the listener forgets the code only when root has.
+		if err := e.Dir.Save(st); err != nil {
+			e.Log.Error("save the state", "err", err)
+			e.notice("Error: the question could not be closed. See the journal of the host.")
+			return
+		}
+		if q != nil && !q.Auto {
 			e.edit(q.ID, "This question for "+code(q.SHA)+" is closed: the owner sent /ask-again. The next question has a new code.")
 		}
-		delete(st.Marks, tip)
 		e.Log.Info("ask again from Telegram: open question", "sha", tip)
 		e.notice("Asking again about " + code(tip) + ".")
 	case m != nil && m.Mark == state.MarkExpired:
