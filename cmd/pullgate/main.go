@@ -141,6 +141,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return usageErr(stderr, err.Error())
 		}
 		o.EtcDir, o.Out, o.Err = *configDir, stdout, stderr
+		if euid != 0 {
+			log.Error("bootstrap", "err", "it must run as root. Fix: run it with sudo, or as root")
+			return 1
+		}
 		if err := bootstrap.Run(ctx, o); err != nil {
 			log.Error("bootstrap", "err", err)
 			return 1

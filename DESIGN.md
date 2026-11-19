@@ -1074,6 +1074,13 @@ pullgate bootstrap [--token-stdin] [--api-url URL]
     [--instance NAME2 ...]
 ```
 
+It must run as root, and `/etc/pullgate` and its parents must be safe
+(rule 6). `--api-url` takes only `https://api.telegram.org` or a test
+server on `http://127.0.0.1:PORT` (no user info): another server would see
+the token and could plant the IDs. A test server gets a loud warning.
+`listener.toml` lists only the instances of this run: give every instance
+of the host in each run.
+
 1. **Checks first.** Every instance name, URL and branch is checked, and
    an ssh URL to a host other than `github.com` needs `--known-hosts`. A
    new instance (no `NAME.toml`) needs `--apply`. Nothing is asked or
@@ -1093,14 +1100,15 @@ pullgate bootstrap [--token-stdin] [--api-url URL]
    type `private`, the sender is not a bot, and the sender ID is the chat
    ID. The right code from a group or a channel stops it: the code is used
    up. Then it writes `bot-token` (root, 0600) and `listener.toml` (root,
-   group of the listener, 0640) with `owner_id` and `chat_id` from that
+   group of the listener, 0640; written first) with `owner_id` and `chat_id` from that
    message, replacing any file that was there. A wrong code, a group, a
    timeout or an error writes nothing; an old `listener.toml` stays, and
    bootstrap says that it did not write it. It confirms the updates, so
    the listener does not see the code, and sends "paired" to the chat.
    There is no flag, config key or variable that sets these IDs.
 4. **Each instance.** For an ssh URL: it makes `NAME.key` with `ssh-keygen
-   -t ed25519` (an existing key is kept), sets it to 0600, and prints the
+   -t ed25519` (an existing key is kept only if it is a regular file of
+   root; a `.pub` without a key is refused), sets it to 0600, and prints the
    public key with "add it as a read-only deploy key". It writes
    `NAME.known_hosts` from the `github.com` ed25519 key that the binary
    carries, or from `--known-hosts FILE`, and prints the SHA256 fingerprint
@@ -1108,7 +1116,8 @@ pullgate bootstrap [--token-stdin] [--api-url URL]
    needs neither. If `NAME.toml` does not exist, it writes a minimal one:
    `mode = "ask"`, `on_failure = "pause"`, the repo, the key, the known
    hosts, `apply` and `check_user = "pullgate-check-NAME"`. An existing
-   one is kept. Then it runs `git ls-remote` (section 6: the same git
+   `NAME.toml` is kept, with its own repo, key and known hosts: then no
+   key or known hosts file is made, and the probe uses the config. Then it runs `git ls-remote` (section 6: the same git
    flags and ssh options) every 10 seconds, for at most 30 minutes, until
    the branch can be read.
 5. It does not run `pullgate doctor` or enable the units yet (code6x/pullgate#28).

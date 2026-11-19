@@ -26,12 +26,14 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/BurntSushi/toml"
 
 	"github.com/code6x/pullgate/internal/config"
 	"github.com/code6x/pullgate/internal/gitx"
+	"github.com/code6x/pullgate/internal/safedir"
 	"github.com/code6x/pullgate/internal/state"
 	"github.com/code6x/pullgate/internal/telegram"
 )
@@ -63,6 +65,9 @@ type Options struct {
 	Now           func() time.Time
 }
 
+// DefaultAPI is the Bot API of Telegram.
+const DefaultAPI = "https://api.telegram.org"
+
 // Usage is the help text of the command.
 const Usage = `pullgate bootstrap [--token-stdin] [--api-url URL]
         --instance NAME --repo URL [--branch B] [--apply PROGRAM] [--known-hosts FILE]
@@ -72,7 +77,7 @@ const Usage = `pullgate bootstrap [--token-stdin] [--api-url URL]
 // owner or the chat ID, on purpose.
 func Parse(args []string) (*Options, error) {
 	o := &Options{
-		EtcDir: "/etc/pullgate", APIURL: "https://api.telegram.org",
+		EtcDir: "/etc/pullgate", APIURL: DefaultAPI,
 		AskPassword:   []string{"systemd-ask-password", "--timeout=0", "Telegram bot token (from BotFather):"},
 		SSHKeygen:     "ssh-keygen",
 		ListenerGroup: "pullgate",
@@ -132,8 +137,16 @@ func (o *Options) check() error {
 	if len(o.Instances) == 0 {
 		return errors.New("no instance. Fix: give --instance NAME --repo URL")
 	}
-	if !strings.HasPrefix(o.APIURL, "https://") && !strings.HasPrefix(o.APIURL, "http://127.0.0.1:") {
-		return fmt.Errorf("--api-url %q: it must be an https:// url", o.APIURL)
+	// Another server would see the token and every message, and could
+	// plant the IDs. Only the real one, or a local fake for tests.
+	if err := config.CheckAPIURL(o.APIURL); err != nil {
+		return fmt.Errorf("--api-url: %w", err)
+	}
+	if o.APIURL != DefaultAPI && !strings.HasPrefix(o.APIURL, "http://127.0.0.1:") {
+		return fmt.Errorf("--api-url %q: bootstrap talks only to %s, or to a test server on http://127.0.0.1:PORT. Another server would see the token and could plant the owner ID", o.APIURL, DefaultAPI)
+	}
+	if err := safedir.CheckParents(o.EtcDir, uint32(os.Geteuid())); err != nil { //nolint:gosec // a uid fits in uint32
+		return fmt.Errorf("%s is not safe: %w", o.EtcDir, err)
 	}
 	seen := map[string]bool{}
 	for _, in := range o.Instances {
@@ -188,6 +201,9 @@ func Run(ctx context.Context, o *Options) error {
 	if err != nil {
 		return fmt.Errorf("check the token with getMe: %w. Fix: copy the token from BotFather again", err)
 	}
+	if o.APIURL != DefaultAPI {
+		o.say("WARNING: the Bot API is %s, not %s. That server sees the token and every tap. Use it only for tests.", o.APIURL, DefaultAPI)
+	}
 	o.say("The token works: the bot is @%s.", me.Username)
 	owner, chat, err := o.pair(ctx, tg, me.Username)
 	if err != nil {
@@ -234,7 +250,6 @@ func (o *Options) readToken(ctx context.Context) (string, error) {
 	} else {
 		cmd := exec.CommandContext(ctx, o.AskPassword[0], o.AskPassword[1:]...) //nolint:gosec // fixed program
 		cmd.Env = childEnv()
-		cmd.Stdin = os.Stdin
 		cmd.Stderr = o.Err
 		var out bytes.Buffer
 		cmd.Stdout = &out
@@ -274,12 +289,17 @@ func (o *Options) pair(ctx context.Context, tg *telegram.Client, bot string) (in
 	}
 	// Messages from before the code cannot carry it: skip them.
 	offset := int64(0)
-	old, err := tg.GetUpdates(ctx, 0, 0)
-	if err != nil {
-		return 0, 0, fmt.Errorf("read the updates: %w. Fix: stop pullgate-listen.service while bootstrap runs", err)
-	}
-	for _, u := range old {
-		offset = u.UpdateID + 1
+	for range 1000 { // a batch has at most 100 updates
+		old, err := tg.GetUpdates(ctx, offset, 0)
+		if err != nil {
+			return 0, 0, fmt.Errorf("read the updates: %w. Fix: stop pullgate-listen.service while bootstrap runs", err)
+		}
+		if len(old) == 0 {
+			break
+		}
+		for _, u := range old {
+			offset = u.UpdateID + 1
+		}
 	}
 	deadline := o.Now().Add(o.PairTTL)
 	o.say("Pairing: in Telegram, open a private chat with @%s and send this code:\n\n    %s %s\n\nIt works once, until %s. Nobody needs to type an ID.",
@@ -338,14 +358,11 @@ type listenerFile struct {
 const header = "# Written by pullgate bootstrap on %s. pullgate owns this file:\n# no other config tool may write it (DESIGN.md section 17).\n"
 
 func (o *Options) writeListener(token string, owner, chat int64, gid int) error {
-	if err := state.WriteFileAtomic(filepath.Join(o.EtcDir, "bot-token"), []byte(token+"\n"), 0o600); err != nil {
-		return err
-	}
 	lf := listenerFile{OwnerID: owner, ChatID: chat}
 	for _, in := range o.Instances {
 		lf.Instances = append(lf.Instances, in.Name)
 	}
-	if o.APIURL != "https://api.telegram.org" {
+	if o.APIURL != DefaultAPI {
 		lf.APIURL = o.APIURL
 	}
 	var b bytes.Buffer
@@ -353,7 +370,12 @@ func (o *Options) writeListener(token string, owner, chat int64, gid int) error 
 	if err := toml.NewEncoder(&b).Encode(lf); err != nil {
 		return err
 	}
-	return writeOwned(filepath.Join(o.EtcDir, "listener.toml"), b.Bytes(), 0o640, gid)
+	// listener.toml first: if the token write fails, the listener does not
+	// start with an old token and the new IDs mixed.
+	if err := writeOwned(filepath.Join(o.EtcDir, "listener.toml"), b.Bytes(), 0o640, gid); err != nil {
+		return err
+	}
+	return state.WriteFileAtomic(filepath.Join(o.EtcDir, "bot-token"), []byte(token+"\n"), 0o600)
 }
 
 // writeOwned writes a file atomically with its group set before the rename.
@@ -380,7 +402,15 @@ func writeOwned(path string, data []byte, mode os.FileMode, gid int) error {
 	if werr != nil {
 		return fmt.Errorf("write %s: %w", path, werr)
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	d, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = d.Close() }()
+	return d.Sync()
 }
 
 // GitHubKnownHosts is the ed25519 host key of github.com, as GitHub
@@ -442,6 +472,15 @@ func Fingerprints(text string) ([]string, error) {
 // instance makes the deploy key and the known hosts file, writes a
 // minimal config if there is none, and waits until git can read the repo.
 func (o *Options) instance(ctx context.Context, in Instance) error {
+	if _, err := os.Lstat(o.instanceConfig(in.Name)); err == nil {
+		// A kept config: probe with its own repo, key and known hosts.
+		c, err := config.Load(o.EtcDir, in.Name, uint32(os.Geteuid())) //nolint:gosec // a uid fits in uint32
+		if err != nil {
+			return err
+		}
+		o.say("Instance %s: %s exists; it is kept, with its repo, deploy key and known hosts.", in.Name, c.Path)
+		return o.waitRemote(ctx, Instance{Name: in.Name, URL: c.Repo.URL, Branch: c.Repo.Branch}, c.Repo.DeployKey, c.Repo.KnownHosts)
+	}
 	local, _ := gitx.LocalPath(in.URL)
 	key, kh := filepath.Join(o.EtcDir, in.Name+".key"), filepath.Join(o.EtcDir, in.Name+".known_hosts")
 	if local == "" {
@@ -461,7 +500,11 @@ func (o *Options) instance(ctx context.Context, in Instance) error {
 }
 
 func (o *Options) deployKey(ctx context.Context, name, key string) error {
-	if _, err := os.Lstat(key); errors.Is(err, os.ErrNotExist) {
+	fi, err := os.Lstat(key)
+	if errors.Is(err, os.ErrNotExist) {
+		if _, perr := os.Lstat(key + ".pub"); perr == nil {
+			return fmt.Errorf("%s.pub exists without %s. Fix: remove %s.pub, then run bootstrap again", key, key, key)
+		}
 		cmd := exec.CommandContext(ctx, o.SSHKeygen, "-q", "-t", "ed25519", "-N", "", "-C", "pullgate-"+name, "-f", key) //nolint:gosec // fixed program, checked name
 		cmd.Env = childEnv()
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -469,6 +512,10 @@ func (o *Options) deployKey(ctx context.Context, name, key string) error {
 		}
 	} else if err != nil {
 		return err
+	} else if st, ok := fi.Sys().(*syscall.Stat_t); !fi.Mode().IsRegular() || !ok || st.Uid != uint32(os.Geteuid()) { //nolint:gosec // a uid fits in uint32
+		return fmt.Errorf("%s is not a regular file of root. Fix: remove it, then run bootstrap again", key)
+	} else {
+		o.say("Instance %s: the deploy key %s exists; it is kept. Remove it to make a new one.", name, key)
 	}
 	if err := os.Chmod(key, 0o600); err != nil {
 		return err

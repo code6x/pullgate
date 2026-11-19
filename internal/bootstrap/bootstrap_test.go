@@ -359,3 +359,54 @@ func TestWaitRemote(t *testing.T) {
 		t.Fatal("no waiting note")
 	}
 }
+
+func TestAPIURLOnlyTelegramOrLoopback(t *testing.T) {
+	f := newFx(t)
+	for _, u := range []string{"https://tg-mirror.example", "http://127.0.0.1:80@evil.example", "http://192.0.2.1:8080", "https://user@api.telegram.org"} {
+		f.o.APIURL = u
+		if err := f.o.check(); err == nil {
+			t.Fatalf("%s must be refused", u)
+		}
+	}
+	f.o.APIURL = DefaultAPI
+	if err := f.o.check(); err != nil {
+		t.Fatalf("the real API: %v", err)
+	}
+}
+
+func TestKeptConfigIsProbedWithItsOwnRepo(t *testing.T) {
+	f := newFx(t)
+	code, done := f.start()
+	f.tg.Say(owner, owner, code, false)
+	if err := wait(t, done); err != nil {
+		t.Fatal(err)
+	}
+	// A second run: the config is kept, the --repo of the run is not used.
+	f.out = &syncBuf{}
+	f.o.Out, f.o.Stdin = f.out, strings.NewReader(token+"\n")
+	f.o.Instances[0].URL = "/nonexistent/other.git"
+	code, done = f.start()
+	f.tg.Say(owner, owner, code, false)
+	if err := wait(t, done); err != nil {
+		t.Fatalf("second run: %v\n%s", err, f.out.String())
+	}
+	if !strings.Contains(f.out.String(), "it is kept, with its repo") {
+		t.Fatalf("not kept:\n%s", f.out.String())
+	}
+}
+
+func TestExistingKeyMustBeRootsFile(t *testing.T) {
+	f := newFx(t)
+	key := filepath.Join(f.etc, "config-repo.key")
+	if err := os.Symlink("/etc/hostname", key); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.o.deployKey(context.Background(), "config-repo", key); err == nil {
+		t.Fatal("a symlink as the key must be refused")
+	}
+	_ = os.Remove(key)
+	_ = os.WriteFile(key+".pub", []byte("ssh-ed25519 AAAA x\n"), 0o600)
+	if err := f.o.deployKey(context.Background(), "config-repo", key); err == nil || !strings.Contains(err.Error(), ".pub exists") {
+		t.Fatalf("a stray .pub: %v", err)
+	}
+}

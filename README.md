@@ -134,6 +134,9 @@ pullgate bootstrap --instance config-repo --repo git@github.com:example/config-r
    can read the branch.
 4. Bootstrap does not enable the units yet. Do it as below.
 
+Each run writes `listener.toml` with the instances of that run only: give
+every instance of the host each time.
+
 `listener.toml`, the token, the deploy key and the known hosts file are
 pullgate's own files: no other config tool (for example Ansible, run by
 an instance) may write them.

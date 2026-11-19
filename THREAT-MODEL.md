@@ -576,7 +576,11 @@ else sends the pairing code first, or guesses it.
 - The IDs come only from the Telegram message that carries the one-time
   code. No flag, config key or variable sets them; a planted
   `listener.toml` is replaced at the pairing. Bootstrap refuses unknown
-  options, such as `--owner-id`.
+  options, such as `--owner-id`. `--api-url` takes only the real Bot API
+  or a test server on `127.0.0.1`: a pasted script cannot send the
+  pairing through a server that changes the sender ID. The listener's
+  `api_url` is parsed the same way, so `http://127.0.0.1:80@host` is
+  refused.
 - The code is 8 random digits, valid for 10 minutes, printed only on the
   console of the host. 5 wrong codes stop the pairing, so a guess works
   with a chance of 5 in 100 million. The right code counts only from a
