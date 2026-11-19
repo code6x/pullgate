@@ -99,19 +99,46 @@ install -d -m 0711 /var/lib/pullgate
 cp contrib/systemd/* /etc/systemd/system/
 ```
 
-1. Make a Telegram bot with BotFather. Put its token in
-   `/etc/pullgate/bot-token` (owner root, mode 0600).
-2. Find your Telegram user ID and the chat ID of your private chat with the
-   bot. Write `/etc/pullgate/listener.toml` from
-   [contrib/examples/listener.toml](contrib/examples/listener.toml).
-3. Make a **read-only** deploy key for the repo:
-   `ssh-keygen -t ed25519 -N '' -f /etc/pullgate/NAME.key`. Add the public key
-   to the repo as a read-only deploy key.
-4. Pin the host key of the git server in `/etc/pullgate/NAME.known_hosts`.
-   Check the fingerprint against the one your git host publishes.
-5. Write `/etc/pullgate/NAME.toml` (owner root, mode 0600). Start from one of
-   the examples below.
-6. Start it:
+Then set it up with **`pullgate bootstrap`**, as root, on a console of
+the host:
+
+```sh
+pullgate bootstrap --instance config-repo --repo git@github.com:example/config-repo.git \
+    --apply /usr/local/lib/config-repo/apply.sh
+```
+
+1. Make a Telegram bot with BotFather first. Bootstrap asks for its token
+   with `systemd-ask-password`: it does not show the token, does not keep
+   it in the shell history, and does not take it as an argument. It checks
+   the token with Telegram, and stores it as `/etc/pullgate/bot-token`
+   (owner root, mode 0600). For automation, `--token-stdin` reads it from
+   the first line of stdin instead.
+2. **Pairing.** Bootstrap prints a one-time code of 8 digits, valid for 10
+   minutes. Send it to the bot, in your **private** chat with it.
+   Bootstrap takes your user ID and the chat ID from that message, and
+   writes `/etc/pullgate/listener.toml`. Nobody types or pastes an ID, so
+   a script that someone else wrote cannot plant one. A wrong code (5 of
+   them stop it), a group chat or a timeout writes nothing. Stop
+   `pullgate-listen.service` while bootstrap runs, if it is running.
+3. For each `--instance NAME --repo URL` (and `--branch`, default `main`):
+   it makes the deploy key on the host (`/etc/pullgate/NAME.key`; the
+   private key never leaves the host) and prints the public key. Add it
+   to the repo as a **read-only** deploy key. It pins the host key of the
+   git server in `/etc/pullgate/NAME.known_hosts`: for `github.com` from
+   the key that pullgate carries, with its fingerprint, to compare with the
+   one GitHub publishes; for another git host from `--known-hosts FILE`
+   (make it with `ssh-keyscan`, and compare the fingerprints). If
+   `/etc/pullgate/NAME.toml` does not exist, it writes a minimal one with
+   `--apply PROGRAM` (owner root, mode 0600); add `check`, `health` and
+   `watch` as the examples below show. Then it waits until `git ls-remote`
+   can read the branch.
+4. Bootstrap does not enable the units yet. Do it as below.
+
+`listener.toml`, the token, the deploy key and the known hosts file are
+pullgate's own files: no other config tool (for example Ansible, run by
+an instance) may write them.
+
+Start it:
 
 <!-- install-test:start -->
 ```sh

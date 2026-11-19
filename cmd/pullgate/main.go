@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/code6x/pullgate"
+	"github.com/code6x/pullgate/internal/bootstrap"
 	"github.com/code6x/pullgate/internal/config"
 	"github.com/code6x/pullgate/internal/gate"
 	"github.com/code6x/pullgate/internal/listener"
@@ -43,6 +44,11 @@ commands:
   update [--config FILE]   look for a new release of pullgate, and install
                  one after a tap (pullgate-update.service runs it, as root)
   units          print the units this binary carries, as JSON
+  bootstrap [--token-stdin] --instance NAME --repo URL [--branch B]
+                 [--apply PROGRAM] [--known-hosts FILE] [--instance ...]
+                 set up a new host, as root: the bot token (with no echo),
+                 the pairing with the owner's chat by a one-time code, the
+                 deploy key and the host key of each instance
   version`
 
 func main() {
@@ -77,7 +83,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	rest := fs.Args()
 	if len(rest) == 0 {
-		return usageErr(stderr, "give a command: run, apply, status, listen, update, units or version")
+		return usageErr(stderr, "give a command: run, apply, status, listen, update, units, bootstrap or version")
 	}
 	log := slog.New(slog.NewTextHandler(stderr, nil))
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -129,6 +135,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 			}
 			return 0
 		}
+	case "bootstrap":
+		o, err := bootstrap.Parse(rest[1:])
+		if err != nil {
+			return usageErr(stderr, err.Error())
+		}
+		o.EtcDir, o.Out, o.Err = *configDir, stdout, stderr
+		if err := bootstrap.Run(ctx, o); err != nil {
+			log.Error("bootstrap", "err", err)
+			return 1
+		}
+		return 0
 	case "listen":
 		lf := flag.NewFlagSet("listen", flag.ContinueOnError)
 		lf.SetOutput(io.Discard)

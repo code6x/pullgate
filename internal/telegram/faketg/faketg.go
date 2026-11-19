@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/code6x/pullgate/internal/telegram"
 )
@@ -59,6 +60,8 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	num := func(k string) int64 { f, _ := req[k].(float64); return int64(f) }
 	str := func(k string) string { v, _ := req[k].(string); return v }
 	switch method {
+	case "getMe":
+		writeJSON(w, map[string]any{"ok": true, "result": telegram.User{ID: 1, IsBot: true, Username: "example_bot"}})
 	case "deleteWebhook":
 		writeJSON(w, map[string]any{"ok": true, "result": true})
 	case "getUpdates":
@@ -99,6 +102,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			select {
 			case <-s.wake:
 			case <-r.Context().Done():
+			case <-time.After(time.Duration(num("timeout")) * time.Second):
 			}
 			s.mu.Lock()
 			for _, u := range s.updates {
@@ -193,7 +197,11 @@ func (s *Server) Tap(from, chat, msg int64, data string) {
 func (s *Server) Say(from, chat int64, text string, edited bool) {
 	s.mu.Lock()
 	s.nextID++
-	m := &telegram.Message{MessageID: s.nextID, From: &telegram.User{ID: from}, Chat: telegram.Chat{ID: chat}, Text: text}
+	typ := "private"
+	if chat != from {
+		typ = "supergroup"
+	}
+	m := &telegram.Message{MessageID: s.nextID, From: &telegram.User{ID: from}, Chat: telegram.Chat{ID: chat, Type: typ}, Text: text}
 	u := telegram.Update{UpdateID: s.nextUp, Message: m}
 	if edited {
 		m.EditDate = 3

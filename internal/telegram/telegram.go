@@ -33,12 +33,15 @@ func (c *Client) String() string { return "telegram.Client{token: hidden}" }
 
 // User is a Telegram user.
 type User struct {
-	ID int64 `json:"id"`
+	ID       int64  `json:"id"`
+	IsBot    bool   `json:"is_bot,omitempty"`
+	Username string `json:"username,omitempty"`
 }
 
 // Chat is a Telegram chat.
 type Chat struct {
-	ID int64 `json:"id"`
+	ID   int64  `json:"id"`
+	Type string `json:"type,omitempty"` // "private", "group", "supergroup" or "channel"
 }
 
 // Message is a Telegram message.
@@ -148,6 +151,15 @@ func Clip(s string) string {
 		return s[:200]
 	}
 	return s
+}
+
+// GetMe returns the bot itself. It checks the token.
+func (c *Client) GetMe(ctx context.Context) (*User, error) {
+	var u User
+	if err := c.call(ctx, "getMe", map[string]any{}, &u); err != nil {
+		return nil, err
+	}
+	return &u, nil
 }
 
 // DeleteWebhook removes a webhook, so getUpdates works.

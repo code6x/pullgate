@@ -70,7 +70,7 @@ class Handler(BaseHTTPRequestHandler):
                         "message": {
                             "message_id": 100000 + state["next_update"],
                             "from": {"id": OWNER},
-                            "chat": {"id": CHAT},
+                            "chat": {"id": CHAT, "type": "private"},
                             "text": str(req.get("text", "")),
                         },
                     },
@@ -83,7 +83,9 @@ class Handler(BaseHTTPRequestHandler):
         with lock:
             with open(LOG, "a", encoding="utf-8") as f:
                 f.write(method + "\n")
-        if method == "getUpdates":
+        if method == "getMe":
+            result = {"id": 1, "is_bot": True, "username": "example_bot"}
+        elif method == "getUpdates":
             result = self.updates(int(req.get("offset") or 0))
         elif method == "sendMessage":
             text = str(req.get("text", ""))

@@ -563,6 +563,39 @@ instance named `pullgate` has its own directories (`TestUpdateQuestionsAreTheirO
 ship a binary that passes (T16); the owner's tap is the last check. A
 build from the source (`pullgate dev`) does not update itself.
 
+### T21. Setup: a planted owner ID, the token entry, the pairing code
+
+*Attack.* The person who sets up a host pastes a script that someone else
+wrote. The script writes its own `owner_id` into `listener.toml`, and so
+gets the bot and every Apply. Or the token leaks: into the shell history,
+a process list, a log, or the environment of a child program. Or someone
+else sends the pairing code first, or guesses it.
+
+*Defense.* `pullgate bootstrap` (DESIGN.md section 17):
+
+- The IDs come only from the Telegram message that carries the one-time
+  code. No flag, config key or variable sets them; a planted
+  `listener.toml` is replaced at the pairing. Bootstrap refuses unknown
+  options, such as `--owner-id`.
+- The code is 8 random digits, valid for 10 minutes, printed only on the
+  console of the host. 5 wrong codes stop the pairing, so a guess works
+  with a chance of 5 in 100 million. The right code counts only from a
+  private chat with a person; from a group it stops the pairing, because
+  others saw it. A wrong code, a group or a timeout writes nothing.
+- The token is read with `systemd-ask-password` (no echo, no history, no
+  argument) or from stdin. It is checked with `getMe`, stored with mode
+  0600, and never printed. Programs that bootstrap starts get only `PATH`
+  and `LC_ALL`.
+- The deploy key is made on the host; only the public key is printed. The
+  host key of `github.com` comes from the binary, with its fingerprint
+  shown; another git host needs a file that the owner checked.
+
+*Left.* Someone who sees the console of the host during the pairing can
+send the code first. Check the chat: bootstrap sends "paired" to the chat
+that won. A pasted script can still do anything else as root; bootstrap
+only takes away the quiet way to plant the owner ID. If the failed run
+leaves an old `listener.toml`, bootstrap says that it did not write it.
+
 ## 6. Out of scope
 
 - An attacker who is root on the host.
