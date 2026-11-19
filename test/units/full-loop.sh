@@ -268,18 +268,6 @@ EOF
 chown root:root "/etc/pullgate/$name.toml"
 chmod 0600 "/etc/pullgate/$name.toml"
 
-printf '123:loop-test-token-made-by-the-script\n' >/etc/pullgate/bot-token
-chown root:root /etc/pullgate/bot-token
-chmod 0600 /etc/pullgate/bot-token
-cat >/etc/pullgate/listener.toml <<EOF
-owner_id = 4242
-chat_id = 4242
-instances = ["$name"]
-api_url = "http://127.0.0.1:$port"
-EOF
-chown root:pullgate /etc/pullgate/listener.toml
-chmod 0640 /etc/pullgate/listener.toml
-
 tglog="$(mktemp)"
 texts="$(mktemp)"
 python3 -I "$here/faketg.py" "$port" "$tglog" --tap "$texts" &
@@ -298,6 +286,41 @@ until python3 -I -c 'import socket, sys; socket.create_connection(("127.0.0.1", 
 	[ "$i" -lt 20 ] || die "the fake Telegram did not start on 127.0.0.1:$port"
 	sleep 0.5
 done
+
+step "3a. pullgate bootstrap: the token, the pairing on the fake Telegram"
+# The token comes on stdin, never as an argument. The owner and chat IDs
+# come only from the message with the code (DESIGN.md section 17).
+boot_out="$(mktemp)"
+printf '123:loop-test-token-made-by-the-script\n' |
+	pullgate bootstrap --token-stdin --api-url "http://127.0.0.1:$port" \
+		--instance "$name" --repo "$src/$name.git" >"$boot_out" 2>&1 &
+boot_pid=$!
+code=""
+i=0
+until [ -n "$code" ]; do
+	code="$(sed -n 's/^    \([0-9]\{4\}\) \([0-9]\{4\}\)$/\1\2/p' "$boot_out")"
+	[ -n "$code" ] && break
+	i=$((i + 1))
+	[ "$i" -lt 60 ] || {
+		cat "$boot_out"
+		die "pullgate bootstrap printed no pairing code"
+	}
+	sleep 0.5
+done
+python3 -I -c 'import json, sys, urllib.request
+urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:%s/test/say" % sys.argv[1], data=json.dumps({"text": sys.argv[2]}).encode(), method="POST"), timeout=5)' "$port" "$code"
+wait "$boot_pid" || {
+	cat "$boot_out"
+	die "pullgate bootstrap failed"
+}
+cat "$boot_out"
+grep -q '^owner_id = 4242$' /etc/pullgate/listener.toml || die "bootstrap did not take owner_id from the pairing"
+grep -q '^chat_id = 4242$' /etc/pullgate/listener.toml || die "bootstrap did not take chat_id from the pairing"
+want /etc/pullgate/listener.toml "root pullgate 640"
+want /etc/pullgate/bot-token "root root 600"
+if grep -q loop-test-token "$boot_out"; then
+	die "bootstrap printed the token"
+fi
 
 if [ -n "$update_to" ]; then
 	step "3b. A fake GitHub for /update"

@@ -6,6 +6,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -406,8 +407,9 @@ func loadListener(path string, configUID uint32, needToken bool) (*Listener, err
 		return nil, fmt.Errorf("%s: chat_id: it is missing. Fix: set the chat ID (the private chat with the owner)", path)
 	case len(c.Instances) == 0:
 		return nil, fmt.Errorf("%s: instances: the list is empty. Fix: list the instance names", path)
-	case !strings.HasPrefix(c.APIURL, "https://") && !strings.HasPrefix(c.APIURL, "http://127.0.0.1:"):
-		return nil, fmt.Errorf("%s: api_url: it must be an https:// url", path)
+	}
+	if err := CheckAPIURL(c.APIURL); err != nil {
+		return nil, fmt.Errorf("%s: api_url: %w", path, err)
 	}
 	for _, n := range c.Instances {
 		if !ValidName(n) {
@@ -421,6 +423,24 @@ func loadListener(path string, configUID uint32, needToken bool) (*Listener, err
 		return nil, fmt.Errorf("%s: updates.gh: %q is not a clean absolute path. Fix: give the path of the gh program, such as \"/usr/bin/gh\", or remove the key", path, g)
 	}
 	return c, nil
+}
+
+// CheckAPIURL checks the URL of the Bot API: https:// with a host, or
+// http://127.0.0.1:PORT for tests. No user info, which could hide another
+// host (http://127.0.0.1:80@host.example).
+func CheckAPIURL(s string) error {
+	u, err := url.Parse(s)
+	switch {
+	case err != nil:
+		return fmt.Errorf("%q is not a url. Fix: use https://api.telegram.org", s)
+	case u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.Fragment != "":
+		return fmt.Errorf("%q has user info, a query or a fragment. Fix: use https://api.telegram.org", s)
+	case u.Scheme == "https" && u.Hostname() != "":
+		return nil
+	case u.Scheme == "http" && u.Hostname() == "127.0.0.1" && u.Port() != "":
+		return nil
+	}
+	return fmt.Errorf("%q: it must be an https:// url. Fix: use https://api.telegram.org", s)
 }
 
 // ReadToken reads the bot token. The file must be owned by uid (the

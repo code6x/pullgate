@@ -1060,3 +1060,69 @@ download that stops in the middle runs nothing. The steps:
 A trap removes the temporary directory and a new file that was not renamed
 yet, at every exit. A failure exits with 1, and its last line says that
 nothing was installed. What the script trusts: THREAT-MODEL.md, T17.
+
+## 17. Bootstrap (`pullgate bootstrap`)
+
+`pullgate bootstrap` sets up a new host, as root, after the binary is
+installed and the users, the directories and the units are in place
+(README "Install"). Its goal: nobody types or pastes the owner ID or the
+chat ID, and the token never shows.
+
+```
+pullgate bootstrap [--token-stdin] [--api-url URL]
+    --instance NAME --repo URL [--branch B] [--apply PROGRAM] [--known-hosts FILE]
+    [--instance NAME2 ...]
+```
+
+It must run as root, and `/etc/pullgate` and its parents must be safe
+(rule 6). `--api-url` takes only `https://api.telegram.org` or a test
+server on `http://127.0.0.1:PORT` (no user info): another server would see
+the token and could plant the IDs. A test server gets a loud warning.
+`listener.toml` lists only the instances of this run: give every instance
+of the host in each run.
+
+1. **Checks first.** Every instance name, URL and branch is checked, and
+   an ssh URL to a host other than `github.com` needs `--known-hosts`. A
+   new instance (no `NAME.toml`) needs `--apply`. Nothing is asked or
+   written before these pass.
+2. **The token.** It runs `systemd-ask-password` (no echo, not in the
+   shell history, not an argument), or with `--token-stdin` reads the
+   first line of stdin. It must look like a bot token. `getMe` checks it.
+   The token is never printed, never in an error, never an argument, and
+   never in the environment of a program that bootstrap starts: each one
+   gets only `PATH` and `LC_ALL`.
+3. **Pairing.** It makes a one-time code of 8 random digits, valid for 10
+   minutes, and prints it on the console. It skips the updates that came
+   before the code. It reads messages with `getUpdates`. A message that is
+   not a number (for example `/start`) is skipped. Any other number is a
+   wrong code; at 5 wrong codes it stops. The right code (compared in
+   constant time) counts only from a **private** chat with a person: chat
+   type `private`, the sender is not a bot, and the sender ID is the chat
+   ID. The right code from a group or a channel stops it: the code is used
+   up. Then it writes `bot-token` (root, 0600) and `listener.toml` (root,
+   group of the listener, 0640; written first) with `owner_id` and `chat_id` from that
+   message, replacing any file that was there. A wrong code, a group, a
+   timeout or an error writes nothing; an old `listener.toml` stays, and
+   bootstrap says that it did not write it. It confirms the updates, so
+   the listener does not see the code, and sends "paired" to the chat.
+   There is no flag, config key or variable that sets these IDs.
+4. **Each instance.** For an ssh URL: it makes `NAME.key` with `ssh-keygen
+   -t ed25519` (an existing key is kept only if it is a regular file of
+   root; a `.pub` without a key is refused), sets it to 0600, and prints the
+   public key with "add it as a read-only deploy key". It writes
+   `NAME.known_hosts` from the `github.com` ed25519 key that the binary
+   carries, or from `--known-hosts FILE`, and prints the SHA256 fingerprint
+   of each key, to compare with what the git host publishes. A local URL
+   needs neither. If `NAME.toml` does not exist, it writes a minimal one:
+   `mode = "ask"`, `on_failure = "pause"`, the repo, the key, the known
+   hosts, `apply` and `check_user = "pullgate-check-NAME"`. An existing
+   `NAME.toml` is kept, with its own repo, key and known hosts: then no
+   key or known hosts file is made, and the probe uses the config. Then it runs `git ls-remote` (section 6: the same git
+   flags and ssh options) every 10 seconds, for at most 30 minutes, until
+   the branch can be read.
+5. It does not run `pullgate doctor` or enable the units yet (code6x/pullgate#28).
+
+**pullgate's own files.** `listener.toml`, `bot-token`, `NAME.key`,
+`NAME.known_hosts` and the instance `mode` belong to pullgate. A later
+config tool, for example Ansible run by an instance, must not write them.
+`listener.toml` says so in its first lines.
