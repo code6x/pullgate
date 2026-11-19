@@ -191,6 +191,19 @@ usual Apply question, or "No new commit (the applied commit is …)", or
 - Without `pullgate-check@NAME.path`, the request waits for the next timer
   run.
 
+## Status and pause: `/status`, `/pause`
+
+- `/status` (all instances) or `/status NAME`: the mode, the applied
+  commit, the last tip, the open question, paused or not and why, broken
+  or not. It changes nothing. At most one answer per instance a minute.
+- `/pause NAME`: pauses the instance. Nothing is fetched, asked or applied
+  until root runs `pullgate status NAME --resume` on the host. If it is
+  paused already, the old pause stays as it is. A reason after NAME is not
+  sent to the host.
+
+As with `/check`, only your user ID in your chat counts, and the listener
+only writes a small request file; root does the work.
+
 ## Update pullgate: `/update`
 
 Once a day `pullgate-update.timer` looks for a new release of pullgate. For

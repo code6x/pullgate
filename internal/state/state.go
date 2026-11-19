@@ -11,10 +11,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -82,6 +84,8 @@ type State struct {
 	LimitNote  time.Time        `json:"limit_note,omitempty"`
 	CheckAt    time.Time        `json:"check_at,omitzero"`   // the last check request that was taken (DESIGN.md section 8)
 	CheckNote  time.Time        `json:"check_note,omitzero"` // the last "too many check requests" reply
+	StatusAt   time.Time        `json:"status_at,omitzero"`  // the last /status that was answered
+	PauseNote  time.Time        `json:"pause_note,omitzero"` // the last reply to /pause
 	NextID     int64            `json:"next_id"`
 }
 
@@ -215,6 +219,56 @@ func (d Dir) Paused() bool {
 // Pause writes the pause file with a reason.
 func (d Dir) Pause(reason string) error {
 	return WriteFileAtomic(d.PauseFile(), []byte(reason+"\n"), 0o644)
+}
+
+// PauseIfNone writes the pause file only if there is none. It never
+// replaces one, even one that appears at the same time (a hard link
+// fails when the name exists). It reports whether it wrote it.
+func (d Dir) PauseIfNone(reason string) (bool, error) {
+	f, err := os.CreateTemp(filepath.Dir(d.PauseFile()), ".tmp-")
+	if err != nil {
+		return false, err
+	}
+	tmp := f.Name()
+	defer func() { _ = os.Remove(tmp) }()
+	_, werr := f.WriteString(reason + "\n")
+	if werr == nil {
+		werr = f.Chmod(0o644)
+	}
+	if werr == nil {
+		werr = f.Sync()
+	}
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		return false, werr
+	}
+	if err := os.Link(tmp, d.PauseFile()); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// TelegramPause starts the reason of a pause that came from /pause
+// (code6x/pullgate#32). No other reason starts with it.
+const TelegramPause = "paused from Telegram at "
+
+// PauseReason is the first line of the pause file, at most 200 bytes, or
+// "" when there is none. The file is root's; it is never followed.
+func (d Dir) PauseReason() string {
+	f, err := os.OpenFile(d.PauseFile(), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+	b := make([]byte, 200)
+	n, _ := io.ReadFull(f, b)
+	line, _, _ := strings.Cut(string(b[:n]), "\n")
+	return line
 }
 
 // Resume removes the pause file.

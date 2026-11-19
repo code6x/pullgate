@@ -71,6 +71,13 @@ func (e *Env) Status(w io.Writer, f StatusFlags) error {
 		e.edit(closed.ID, "This question for "+code(closed.SHA)+" is closed: the owner ran --ask-again. The next run asks again.")
 		_, _ = fmt.Fprintf(w, "The open question %d for %s is closed. The next run asks again.\n", closed.ID, closed.SHA)
 	}
+	e.statusText(w, st)
+	return nil
+}
+
+// statusText writes the facts of the state, for "pullgate status" and
+// /status.
+func (e *Env) statusText(w io.Writer, st *state.State) {
 	show := func(k, v string) { _, _ = fmt.Fprintf(w, "%-12s %s\n", k+":", v) }
 	show("instance", e.Cfg.Name)
 	show("mode", e.Cfg.Mode)
@@ -92,14 +99,13 @@ func (e *Env) Status(w io.Writer, f StatusFlags) error {
 		show("broken", fmt.Sprintf("since %s, last error: %s", b.Since.Format("2006-01-02 15:04 MST"), b.Reason))
 	}
 	if e.Dir.Paused() {
-		show("paused", "yes: "+e.Dir.PauseFile())
+		show("paused", "yes: "+e.Dir.PauseReason()+" ("+e.Dir.PauseFile()+")")
 	} else {
 		show("paused", "no")
 	}
 	if st.InProgress != nil {
 		show("in progress", fmt.Sprintf("%s of %s since %s", st.InProgress.Phase, st.InProgress.SHA, st.InProgress.Started.Format("2006-01-02 15:04 MST")))
 	}
-	return nil
 }
 
 // forgetOpen removes the open question for sha from the state and returns

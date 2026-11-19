@@ -157,7 +157,16 @@ func (e *Env) Run(ctx context.Context) (Result, error) {
 	if err != nil {
 		return "", err
 	}
-	requested := requests > 0
+	if requests.Pause > 0 {
+		e.pauseRequest(st)
+		paused = e.Dir.Paused()
+	}
+	if requests.Status > 0 {
+		e.statusRequest(st)
+	}
+	// Then the normal run goes on: /status never skips a fetch, and after
+	// /pause the paused check below ends the run.
+	requested := requests.Check > 0
 	if requested {
 		if r := e.limitCheck(st); r != "" {
 			return r, e.Dir.Save(st)

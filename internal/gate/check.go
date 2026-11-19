@@ -1,7 +1,11 @@
 package gate
 
 import (
+	"strings"
 	"time"
+
+	"github.com/code6x/pullgate/internal/message"
+	"github.com/code6x/pullgate/internal/spool"
 
 	"github.com/code6x/pullgate/internal/state"
 )
@@ -12,20 +16,58 @@ import (
 const CheckInterval = time.Minute
 
 // takeChecks reads and removes the files in the check directory, and
-// returns how many were valid check requests. A bad file is logged and
-// removed. An error of the directory counts as no request (fail closed).
-func (e *Env) takeChecks() int {
-	n, bad, err := e.Spool.TakeChecks(e.Owners.ListenerUID)
+// returns the valid requests. A bad file is logged and removed. An error
+// of the directory counts as no request (fail closed).
+func (e *Env) takeChecks() spool.Requests {
+	r, bad, err := e.Spool.TakeRequests(e.Owners.ListenerUID)
 	for _, b := range bad {
 		e.Log.Warn("bad check request, removed", "err", b)
 	}
 	if err != nil {
 		e.Log.Error("read the check requests", "err", err)
 	}
-	if n > 0 {
-		e.Log.Info("check request taken")
+	if r.Any() {
+		e.Log.Info("requests taken", "check", r.Check, "status", r.Status, "pause", r.Pause)
 	}
-	return n
+	return r
+}
+
+// pauseRequest acts on /pause: it writes the pause file, unless there is
+// one. A pause that is there already is never changed, so that a later
+// /resume (code6x/pullgate#33) cannot lift it. The pause itself is never
+// rate-limited; its reply is, once a minute.
+func (e *Env) pauseRequest(st *state.State) {
+	now := e.now()
+	var text string
+	wrote, err := e.Dir.PauseIfNone(state.TelegramPause + now.UTC().Format("2006-01-02 15:04 MST"))
+	switch {
+	case err != nil:
+		e.Log.Error("write the pause file", "err", err)
+		text = "Error: " + e.Cfg.Name + " could not be paused. See the journal of the host."
+	case !wrote:
+		text = "⏸ " + e.Cfg.Name + " was paused already: " + message.Code(e.Dir.PauseReason())
+	default:
+		e.Log.Info("paused from Telegram")
+		text = "⏸ " + e.Cfg.Name + " is paused. Nothing is fetched, asked or applied. To go on, run as root: <code>pullgate status " + e.Cfg.Name + " --resume</code>"
+	}
+	if d := now.Sub(st.PauseNote); d >= CheckInterval || d <= -CheckInterval {
+		st.PauseNote = now
+		e.notice(text)
+	}
+}
+
+// statusRequest answers /status with the facts of "pullgate status",
+// at most once a minute.
+func (e *Env) statusRequest(st *state.State) {
+	now := e.now()
+	if d := now.Sub(st.StatusAt); d < CheckInterval && d > -CheckInterval {
+		e.Log.Warn("status request dropped: the last one was less than a minute ago")
+		return
+	}
+	st.StatusAt = now
+	var b strings.Builder
+	e.statusText(&b, st)
+	e.notice("Status:\n" + message.Output(b.String(), 30))
 }
 
 // limitCheck enforces CheckInterval. It returns CheckLimited when the

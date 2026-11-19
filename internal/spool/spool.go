@@ -257,44 +257,83 @@ func (d Dirs) HasCheck() bool {
 	return false
 }
 
-// TakeChecks reads and removes every file in the check directory (root).
-// It returns how many were valid check requests, and an error for each bad
-// file. A valid request is a regular file named CheckFile, owned by the
-// listener user, with exactly CheckContent in it.
+// Request kinds besides the check request (code6x/pullgate#32). Each has
+// one file name, and its content is the name and a newline: no data from
+// the message.
+const (
+	RequestStatus = "status"
+	RequestPause  = "pause"
+)
+
+// WriteRequest writes a status or pause request (the listener).
+func (d Dirs) WriteRequest(kind string) error {
+	if kind != RequestStatus && kind != RequestPause {
+		return fmt.Errorf("unknown request kind %q", kind)
+	}
+	return writeIn(d.CheckDir(), []byte(kind+"\n"), 0o600, -1, kind)
+}
+
+// Requests counts the valid requests that TakeRequests took.
+type Requests struct{ Check, Status, Pause int }
+
+// Any reports whether there was a valid request.
+func (r Requests) Any() bool { return r.Check+r.Status+r.Pause > 0 }
+
+// TakeChecks is TakeRequests, for callers that know only check requests.
 func (d Dirs) TakeChecks(listenerUID int) (int, []error, error) {
+	r, bad, err := d.TakeRequests(listenerUID)
+	return r.Check, bad, err
+}
+
+// TakeRequests reads and removes every file in the check directory (root).
+// It returns the valid requests, and an error for each bad file. A valid
+// request is a regular file owned by the listener user: CheckFile with
+// exactly CheckContent, or a file named RequestStatus or RequestPause with
+// exactly its name and a newline.
+func (d Dirs) TakeRequests(listenerUID int) (Requests, []error, error) {
+	var r Requests
 	root, err := os.OpenRoot(d.CheckDir())
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return 0, nil, nil
+			return r, nil, nil
 		}
-		return 0, nil, fmt.Errorf("open the check directory: %w", err)
+		return r, nil, fmt.Errorf("open the check directory: %w", err)
 	}
 	defer func() { _ = root.Close() }()
 	names, err := list(root)
 	if err != nil {
-		return 0, nil, fmt.Errorf("read the check directory: %w", err)
+		return r, nil, fmt.Errorf("read the check directory: %w", err)
 	}
-	n := 0
 	var bad []error
 	for _, name := range names {
 		b, err := readOne(root, name, MaxCheck, listenerUID)
 		if rerr := root.RemoveAll(name); rerr != nil {
-			return n, bad, fmt.Errorf("remove %s/%s: %w. Fix: remove it as root", d.CheckDir(), name, rerr)
+			return r, bad, fmt.Errorf("remove %s/%s: %w. Fix: remove it as root", d.CheckDir(), name, rerr)
+		}
+		var count *int
+		want := ""
+		switch name {
+		case CheckFile:
+			count, want = &r.Check, CheckContent
+		case RequestStatus:
+			count, want = &r.Status, RequestStatus+"\n"
+		case RequestPause:
+			count, want = &r.Pause, RequestPause+"\n"
 		}
 		switch {
 		case err != nil:
-		case name != CheckFile:
-			err = errors.New("not the name of a check request")
-		case string(b) != CheckContent:
-			err = errors.New("not the content of a check request")
+		case count == nil:
+			err = errors.New("not the name of a request")
+		case string(b) != want:
+			err = errors.New("not the content of a request")
 		}
 		if err != nil {
 			bad = append(bad, fmt.Errorf("check file %s: %w", name, err))
 			continue
 		}
-		n++
+		*count++
 	}
-	return n, bad, nil
+	return r, bad, nil
 }
 
 // list returns the names in dir, sorted, without names that start with ".".

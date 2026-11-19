@@ -479,6 +479,31 @@ until the owner resets it (DESIGN.md section 8). The run unit has no start
 limit, so the timer goes on. This denies; it never approves. A clock jump back of more than
 a minute allows one more run.
 
+### T18b. `/status` and `/pause` from a stolen token or the listener
+
+*Attack.* Someone with the bot token, or a compromised listener, sends
+`/status` or `/pause`, or writes the request files directly.
+
+*Defense and what is left.* The request files hold only their kind; root
+reads its own state and acts. So the most they can do:
+
+- **See a status**: the mode, the SHAs, the open question, the pause and
+  broken reasons. With the token they can read the questions anyway, which
+  show more. The status holds no key or token. It shows the error texts
+  that were sent in notices already (the broken reason), and nothing new.
+  Root answers at most once a minute, and a `/status` never skips the
+  normal run, so a stream of them cannot stop the fetches.
+- **Pause an instance.** This only stops work: it never applies or
+  approves anything. A thief can deny work in other ways already (not
+  deliver a tap). Root never changes a pause file that is there (it makes
+  the file with a hard link, which fails if the name exists), so a
+  `/pause` cannot replace the reason of a safety pause, and a later
+  limited `/resume` (code6x/pullgate#33) cannot use it to lift one.
+
+They cannot resume, approve, or change the state: the state directory is
+root's (0700), and any other file in the check directory is removed and
+does nothing (a test).
+
 ### T19. What the bot tells
 
 *Attack or accident.* Someone sends the bot messages to learn what it runs,
