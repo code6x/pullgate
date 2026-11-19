@@ -191,15 +191,24 @@ usual Apply question, or "No new commit (the applied commit is …)", or
 - Without `pullgate-check@NAME.path`, the request waits for the next timer
   run.
 
-## Status and pause: `/status`, `/pause`
+## Status and pause: `/status`, `/pause`, `/resume`, `/ask-again`
 
 - `/status` (all instances) or `/status NAME`: the mode, the applied
   commit, the last tip, the open question, paused or not and why, broken
   or not. It changes nothing. At most one answer per instance a minute.
 - `/pause NAME`: pauses the instance. Nothing is fetched, asked or applied
-  until root runs `pullgate status NAME --resume` on the host. If it is
+  until you send `/resume NAME` (or root runs `pullgate status NAME --resume`). If it is
   paused already, the old pause stays as it is. A reason after NAME is not
   sent to the host.
+
+- `/resume NAME`: lifts a pause that `/pause` set. Whoever holds the bot
+  token can do that too: if you suspect the token, pause as root. Any other pause (one
+  that pullgate set itself after a cut-off apply, or one that root set)
+  stays: run `pullgate status NAME --resume` as root.
+- `/ask-again NAME`: asks again about the newest commit, but only when its
+  question expired or was lost. A commit that was skipped, failed, held or
+  refused is not asked again from Telegram; root can, with
+  `pullgate status NAME --ask-again`.
 
 As with `/check`, only your user ID in your chat counts, and the listener
 only writes a small request file; root does the work.

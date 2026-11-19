@@ -431,8 +431,10 @@ const updateCommand = "/update"
 // statusCommand and pauseCommand ask root for the status, or to pause an
 // instance (code6x/pullgate#32).
 const (
-	statusCommand = "/status"
-	pauseCommand  = "/pause"
+	statusCommand   = "/status"
+	pauseCommand    = "/pause"
+	resumeCommand   = "/resume"    // code6x/pullgate#33
+	askAgainCommand = "/ask-again" // code6x/pullgate#33
 )
 
 // RequestGap is the least time between two /status or two /pause for the
@@ -459,8 +461,8 @@ func (l *Listener) request(ctx context.Context, m *telegram.Message, kind string
 	default:
 		l.Log.Info("message ignored", "reason", "bad "+kind+" arguments", "from", fromID(m))
 		use := "<code>/status</code> or <code>/status NAME</code>"
-		if kind == spool.RequestPause {
-			use = "<code>/pause NAME</code>"
+		if kind != spool.RequestStatus {
+			use = "<code>/" + kind + " NAME</code>"
 		}
 		l.sendReply(ctx, m, "Use "+use+". NAME is one of: "+html.EscapeString(strings.Join(l.Cfg.Instances, ", "))+".")
 		return
@@ -488,10 +490,8 @@ func (l *Listener) request(ctx context.Context, m *telegram.Message, kind string
 	l.Log.Info(kind+" request taken", "instances", ok)
 	var text []string
 	if len(ok) > 0 {
-		verb := "Asking for the status of"
-		if kind == spool.RequestPause {
-			verb = "Pausing"
-		}
+		verb := map[string]string{spool.RequestStatus: "Asking for the status of", spool.RequestPause: "Pausing",
+			spool.RequestResume: "Asking to resume", spool.RequestAskAgain: "Asking to ask again on"}[kind]
 		line := verb + " <b>" + html.EscapeString(strings.Join(ok, ", ")) + "</b>…"
 		if kind == spool.RequestPause && len(f) > 2 {
 			line += " (the reason is not sent to the host: a request holds no text)"
@@ -523,7 +523,9 @@ func (l *Listener) helpText() string {
 		"<code>/check</code>: look for a new commit now, on every instance",
 		"<code>/check NAME</code>: the same, on one instance",
 		"<code>/status</code> or <code>/status NAME</code>: the mode, the applied commit, the open question, paused or not",
-		"<code>/pause NAME</code>: stop the instance; to go on, root runs <code>pullgate status NAME --resume</code>",
+		"<code>/pause NAME</code>: stop the instance",
+		"<code>/resume NAME</code>: go on after a <code>/pause</code>; any other pause needs root",
+		"<code>/ask-again NAME</code>: ask again about a question that expired or was lost",
 		"<code>/update</code>: look for a new release of pullgate; a question asks before it is installed",
 		"<code>/help</code>: this list",
 		"",
@@ -557,7 +559,7 @@ func (l *Listener) command(ctx context.Context, m *telegram.Message) {
 		l.update(ctx, m)
 		return
 	}
-	if why == spool.RequestStatus || why == spool.RequestPause {
+	if why == spool.RequestStatus || why == spool.RequestPause || why == spool.RequestResume || why == spool.RequestAskAgain {
 		l.request(ctx, m, why)
 		return
 	}
@@ -629,6 +631,10 @@ func (l *Listener) checkNames(m *telegram.Message) ([]string, string, bool) {
 		return nil, spool.RequestStatus, false
 	case firstWord(m.Text) == pauseCommand:
 		return nil, spool.RequestPause, false
+	case firstWord(m.Text) == resumeCommand:
+		return nil, spool.RequestResume, false
+	case firstWord(m.Text) == askAgainCommand:
+		return nil, spool.RequestAskAgain, false
 	case !strings.HasPrefix(m.Text, checkCommand):
 		return nil, "not a command", false
 	case m.Text == checkCommand:

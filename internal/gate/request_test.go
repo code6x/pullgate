@@ -113,3 +113,180 @@ func TestListenerCannotPauseByOtherFiles(t *testing.T) {
 		})
 	}
 }
+
+func TestResumeLiftsOnlyATelegramPause(t *testing.T) {
+	cases := map[string]func(f *fixture){
+		"root --pause":   func(f *fixture) { _ = f.env.Status(new(strings.Builder), StatusFlags{Pause: true}) },
+		"cut off":        func(f *fixture) { _ = f.env.Dir.Pause("the apply of x was cut off") },
+		"planted prefix": func(f *fixture) { _ = f.env.Dir.Pause(state.TelegramPause + "2026-11-11 12:00 UTC and more") },
+		"two lines":      func(f *fixture) { _ = f.env.Dir.Pause(state.TelegramPause + "2026-11-11 12:00 UTC\nx") },
+		"telegram":       nil,
+	}
+	for name, pause := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, ``, "")
+			f.applyNew("one")
+			if pause == nil {
+				f.requestKind(spool.RequestPause)
+				f.run()
+			} else {
+				pause(f)
+			}
+			f.outbox()
+			f.requestKind(spool.RequestResume)
+			f.run()
+			out := f.outbox()
+			if pause == nil {
+				if f.env.Dir.Paused() || !contains(out, "goes on") {
+					t.Fatal("/resume must lift a /pause")
+				}
+				return
+			}
+			if !f.env.Dir.Paused() || !contains(out, "this pause was not set from Telegram") {
+				t.Fatalf("/resume must not lift this pause: %+v", out)
+			}
+		})
+	}
+}
+
+func TestResumeDoesNotEndBroken(t *testing.T) {
+	f := newFixture(t, `on_failure = "rollback"`, "")
+	breakIt(t, f)
+	f.requestKind(spool.RequestPause)
+	f.run()
+	f.requestKind(spool.RequestResume)
+	f.run()
+	if f.env.Dir.Paused() || f.state().Broken == nil || !contains(f.outbox(), "still broken") {
+		t.Fatal("/resume lifts the pause, but the broken state stays")
+	}
+}
+
+func TestAskAgainOnlyExpiredOrLost(t *testing.T) {
+	t.Run("expired", func(t *testing.T) {
+		f := newFixture(t, ``, "")
+		f.applyNew("one")
+		f.commit("second", "two", nil)
+		f.run()
+		f.ask()
+		f.now = f.now.Add(13 * time.Hour) // approval_ttl is 12h
+		if r := f.run(); r != Nothing {
+			t.Fatalf("after expiry: %s", r)
+		}
+		f.outbox()
+		f.requestKind(spool.RequestAskAgain)
+		if r := f.run(); r != Asked {
+			t.Fatalf("/ask-again on an expired question: %s", r)
+		}
+	})
+	t.Run("lost", func(t *testing.T) {
+		f := newFixture(t, ``, "")
+		f.applyNew("one")
+		f.commit("second", "two", nil)
+		f.run()
+		old := f.ask() // as if it never reached the chat
+		f.requestKind(spool.RequestAskAgain)
+		if r := f.run(); r != Asked {
+			t.Fatalf("/ask-again on an open question: %s", r)
+		}
+		if f.ask().Code == old.Code {
+			t.Fatal("the new question needs a new code")
+		}
+	})
+	for _, mark := range []string{"skipped", "failed", "held", "refused", "check-failed"} {
+		t.Run(mark, func(t *testing.T) {
+			f := newFixture(t, ``, "")
+			f.applyNew("one")
+			sha := f.commit("second", "two", nil)
+			f.run()
+			f.outbox()
+			st := f.state()
+			st.Questions = nil
+			if mark == "held" {
+				st.Held = sha
+				st.SetMark(sha, state.MarkFailed, f.now)
+			} else {
+				st.SetMark(sha, mark, f.now)
+			}
+			if err := f.env.Dir.Save(st); err != nil {
+				t.Fatal(err)
+			}
+			f.requestKind(spool.RequestAskAgain)
+			if r := f.run(); r != Nothing {
+				t.Fatalf("/ask-again on %s: %s", mark, r)
+			}
+			if !contains(f.outbox(), "Not asked again") {
+				t.Fatal("no reply")
+			}
+		})
+	}
+}
+
+func TestTelegramPauseFileForm(t *testing.T) {
+	good := state.TelegramPause + "2026-11-11 12:00 UTC"
+	for name, setup := range map[string]func(f *fixture){
+		"hard link": func(f *fixture) {
+			_ = f.env.Dir.Pause(good)
+			_ = os.Link(f.env.Dir.PauseFile(), f.env.Dir.PauseFile()+"2")
+		},
+		"symlink": func(f *fixture) {
+			other := filepath.Join(f.base, "other")
+			_ = os.WriteFile(other, []byte(good+"\n"), 0o644)
+			_ = os.Symlink(other, f.env.Dir.PauseFile())
+		},
+		"trailing space": func(f *fixture) { _ = f.env.Dir.Pause(good + " ") },
+		"not UTC":        func(f *fixture) { _ = f.env.Dir.Pause(state.TelegramPause + "2026-11-11 12:00 CET") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, ``, "")
+			if err := f.env.Dir.Ensure(); err != nil {
+				t.Fatal(err)
+			}
+			setup(f)
+			if f.env.Dir.TelegramPaused(f.env.UID) {
+				t.Fatal("must not count as a /pause")
+			}
+			if ok, _ := f.env.Dir.ResumeTelegram(f.env.UID); ok || !f.env.Dir.Paused() {
+				t.Fatal("must not be lifted")
+			}
+		})
+	}
+}
+
+func TestPauseWinsOverResumeInOneRun(t *testing.T) {
+	f := newFixture(t, ``, "")
+	f.applyNew("one")
+	f.requestKind(spool.RequestPause)
+	f.run()
+	f.now = f.now.Add(2 * time.Minute)
+	f.requestKind(spool.RequestResume)
+	f.requestKind(spool.RequestPause)
+	f.run()
+	if !f.env.Dir.Paused() {
+		t.Fatal("with /resume and /pause in one run, the pause wins")
+	}
+}
+
+func TestAskAgainRefusedWhilePausedOrBroken(t *testing.T) {
+	f := newFixture(t, `on_failure = "rollback"`, "")
+	breakIt(t, f)
+	f.outbox()
+	f.requestKind(spool.RequestAskAgain)
+	f.run()
+	if !contains(f.outbox(), "failed commit of the broken state") {
+		t.Fatal("/ask-again must refuse the broken failed commit")
+	}
+	g := newFixture(t, ``, "")
+	g.applyNew("one")
+	g.commit("second", "two", nil)
+	g.run()
+	q := g.ask()
+	_ = g.env.Dir.Pause("paused by the owner")
+	g.requestKind(spool.RequestAskAgain)
+	g.run()
+	if !contains(g.outbox(), "is paused or off") {
+		t.Fatal("/ask-again while paused must be refused")
+	}
+	if g.state().FindCode(q.Code) < 0 {
+		t.Fatal("the question must stay while paused")
+	}
+}
