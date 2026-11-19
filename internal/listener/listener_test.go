@@ -393,7 +393,7 @@ func TestHelp(t *testing.T) {
 	if len(ms) != 1 || ms[0].Chat != chat || ms[0].ReplyTo == 0 {
 		t.Fatalf("want one reply: %+v", ms)
 	}
-	for _, want := range []string{"<code>/check</code>", "<code>/check NAME</code>", "<code>/help</code>", "<b>" + inst + "</b>", "<b>" + inst2 + "</b>", "Apply", "Skip", "--pause", "--resume", "--ask-again"} {
+	for _, want := range []string{"<code>/check</code>", "<code>/check NAME</code>", "<code>/help</code>", "<b>" + inst + "</b>", "<b>" + inst2 + "</b>", "Apply", "Skip", "--pause", "--resume", "--ask-again", "<code>/status</code>", "<code>/pause NAME</code>"} {
 		if !strings.Contains(ms[0].Text, want) {
 			t.Errorf("the help must hold %q:\n%s", want, ms[0].Text)
 		}
@@ -618,5 +618,49 @@ func TestUpdateQuestionsAreTheirOwn(t *testing.T) {
 	}
 	if es, _ := pg.TakeApprovals(os.Geteuid(), 0); len(es) != 0 {
 		t.Fatal("the tap must not write to the instance pullgate")
+	}
+}
+
+func TestStatusAndPauseCommands(t *testing.T) {
+	f, d2 := newL2(t)
+	f.say(owner, chat, "/status", false)
+	f.say(owner, chat, "/pause "+inst2+" for the night", false)
+	r1, _, _ := f.d.TakeRequests(os.Geteuid())
+	r2, bad, err := d2.TakeRequests(os.Geteuid())
+	if r1 != (spool.Requests{Status: 1}) || r2 != (spool.Requests{Status: 1, Pause: 1}) || len(bad) != 0 || err != nil {
+		t.Fatalf("requests: %+v %+v %v %v", r1, r2, bad, err)
+	}
+	ms := f.tg.Messages()
+	if len(ms) != 2 || !strings.Contains(ms[0].Text, "Asking for the status of") || !strings.Contains(ms[1].Text, "Pausing <b>"+inst2+"</b>") ||
+		!strings.Contains(ms[1].Text, "the reason is not sent") {
+		t.Fatalf("replies: %+v", ms)
+	}
+	// /pause needs a known name; /status takes no more words.
+	for _, bad := range []string{"/pause", "/pause nope", "/status " + inst + " x"} {
+		f.say(owner, chat, bad, false)
+	}
+	if f.d.HasCheck() || d2.HasCheck() {
+		t.Fatal("a bad command writes no request")
+	}
+	// The same command within CheckGap is not written again.
+	f.say(owner, chat, "/status "+inst, false)
+	f.say(owner, chat, "/status "+inst, false)
+	if r, _, _ := f.d.TakeRequests(os.Geteuid()); r.Status != 0 {
+		t.Fatal("a second /status within CheckGap must not write")
+	}
+}
+
+func TestStatusAndPauseNotForOthers(t *testing.T) {
+	f := newL(t)
+	for _, m := range []struct {
+		from, chat int64
+		edited     bool
+	}{{999, chat, false}, {owner, 999, false}, {owner, chat, true}} {
+		for _, text := range []string{"/status", "/pause " + inst} {
+			f.say(m.from, m.chat, text, m.edited)
+		}
+	}
+	if f.d.HasCheck() || len(f.tg.Messages()) != 0 {
+		t.Fatal("others get no reply and write no request")
 	}
 }

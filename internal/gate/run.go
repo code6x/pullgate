@@ -157,7 +157,18 @@ func (e *Env) Run(ctx context.Context) (Result, error) {
 	if err != nil {
 		return "", err
 	}
-	requested := requests > 0
+	if requests.Pause > 0 {
+		e.pauseRequest(st)
+		paused = e.Dir.Paused()
+	}
+	if requests.Status > 0 {
+		e.statusRequest(st)
+	}
+	if (requests.Pause > 0 || requests.Status > 0) && requests.Check == 0 {
+		// Only /status or /pause: they do not fetch.
+		return Nothing, e.Dir.Save(st)
+	}
+	requested := requests.Check > 0
 	if requested {
 		if r := e.limitCheck(st); r != "" {
 			return r, e.Dir.Save(st)

@@ -111,7 +111,7 @@ can be less strict; each example sets what its `apply` needs.
 | `/var/spool/pullgate/NAME/outbox` | root, group listener, 0770 (no setgid) | messages from root to the listener |
 | `/var/spool/pullgate/NAME/outbox/*.json` | root, group listener, 0640 | one message |
 | `/var/spool/pullgate/NAME/inbox` | listener, 0700 | approvals from the listener to root |
-| `/var/spool/pullgate/NAME/check` | listener, 0700 | check requests from the listener to root |
+| `/var/spool/pullgate/NAME/check` | listener, 0700 | check, status and pause requests from the listener to root |
 | `/var/lib/pullgate-listener/state.json` | listener, 0600 | the listener's open questions |
 | `/var/lib/pullgate/_update/` and `.../tmp/` | root, 0700 | the state, the lock and the downloads of `pullgate update` (section 15) |
 | `/var/spool/pullgate/_update/` | as `NAME/` above | the outbox, inbox and check request of the updates |
@@ -472,6 +472,29 @@ these hold, else it answers "This question is closed." and writes nothing:
 
 Then it writes the approval, edits the question ("Apply tapped. Waiting for
 the host." or "Skipped."), and answers the tap.
+
+**`/status` and `/pause`** (code6x/pullgate#32). The same checks of the
+sender, the chat and the edit hold, as for `/check`. The text is `/status`
+(every instance), `/status NAME`, or `/pause NAME` (more words after NAME
+are allowed and dropped: the reason never reaches root). The listener
+writes a request file in the check directory: `status` or `pause`, with
+exactly its name and a newline in it, and nothing from the message. The
+same command for the same instance within 10 seconds writes nothing. Root
+takes the requests in its run, as check requests (owned by the listener,
+a regular file, the exact content; any other file is removed and does
+nothing):
+
+- `pause`: if there is no pause file, root writes one with the reason
+  `paused from Telegram at TIME` (the prefix `state.TelegramPause`; no
+  other reason starts with it). A pause file that is there is never
+  changed, so that a pause that pullgate or root set keeps its reason. The
+  pause is never rate-limited; its reply goes out at most once a minute.
+- `status`: root sends a notice with the facts of `pullgate status`
+  (section 13), cleaned and in `<pre>`, at most once a minute. It is
+  read-only.
+- A run that took only these requests does not fetch.
+
+To go on after `/pause`, root runs `pullgate status NAME --resume`.
 
 **`/check`.** The listener writes a check request (section 8) only when all
 of these hold, else it writes nothing:

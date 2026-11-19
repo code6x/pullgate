@@ -428,6 +428,80 @@ const helpCommand = "/help"
 // section 15).
 const updateCommand = "/update"
 
+// statusCommand and pauseCommand ask root for the status, or to pause an
+// instance (code6x/pullgate#32).
+const (
+	statusCommand = "/status"
+	pauseCommand  = "/pause"
+)
+
+func firstWord(s string) string {
+	if f := strings.Fields(s); len(f) > 0 {
+		return f[0]
+	}
+	return ""
+}
+
+// request writes a status or pause request. Like /check, the file holds
+// no data from the message: root reads its own state and acts.
+func (l *Listener) request(ctx context.Context, m *telegram.Message, kind string) {
+	f := strings.Fields(m.Text)
+	var names []string
+	switch {
+	case kind == spool.RequestStatus && len(f) == 1:
+		names = slices.Clone(l.Cfg.Instances)
+	case len(f) >= 2 && slices.Contains(l.Cfg.Instances, f[1]) && (kind == spool.RequestPause || len(f) == 2):
+		names = []string{f[1]}
+	default:
+		l.Log.Info("message ignored", "reason", "bad "+kind+" arguments", "from", fromID(m))
+		use := "<code>/status</code> or <code>/status NAME</code>"
+		if kind == spool.RequestPause {
+			use = "<code>/pause NAME</code>"
+		}
+		l.sendReply(ctx, m, "Use "+use+". NAME is one of: "+html.EscapeString(strings.Join(l.Cfg.Instances, ", "))+".")
+		return
+	}
+	if l.lastCheck == nil {
+		l.lastCheck = map[string]time.Time{}
+	}
+	now := l.now()
+	var ok, soon, failed []string
+	for _, n := range names {
+		key := kind + ":" + n
+		if d := now.Sub(l.lastCheck[key]); d < CheckGap && d > -CheckGap {
+			soon = append(soon, n)
+			continue
+		}
+		if err := l.dirs(n).WriteRequest(kind); err != nil {
+			l.Log.Error("write the "+kind+" request", "instance", n, "err", err)
+			failed = append(failed, n)
+			continue
+		}
+		l.lastCheck[key] = now
+		ok = append(ok, n)
+	}
+	l.Log.Info(kind+" request taken", "instances", ok)
+	var text []string
+	if len(ok) > 0 {
+		verb := "Asking for the status of"
+		if kind == spool.RequestPause {
+			verb = "Pausing"
+		}
+		line := verb + " <b>" + html.EscapeString(strings.Join(ok, ", ")) + "</b>…"
+		if kind == spool.RequestPause && len(f) > 2 {
+			line += " (the reason is not sent to the host: a request holds no text)"
+		}
+		text = append(text, line)
+	}
+	if len(soon) > 0 {
+		text = append(text, "<b>"+html.EscapeString(strings.Join(soon, ", "))+"</b>: this was asked a few seconds ago. Wait for its answer.")
+	}
+	if len(failed) > 0 {
+		text = append(text, "Error: the request for <b>"+html.EscapeString(strings.Join(failed, ", "))+"</b> was not saved. Check the journal of the listener, and that the host ran pullgate once for it.")
+	}
+	l.sendReply(ctx, m, strings.Join(text, "\n"))
+}
+
 // HintGap is the least time between two "Not a command" replies, so that a
 // stuck client or a long paste cannot make the bot fill the chat.
 const HintGap = time.Minute
@@ -443,6 +517,8 @@ func (l *Listener) helpText() string {
 		"<b>pullgate</b> commands:",
 		"<code>/check</code>: look for a new commit now, on every instance",
 		"<code>/check NAME</code>: the same, on one instance",
+		"<code>/status</code> or <code>/status NAME</code>: the mode, the applied commit, the open question, paused or not",
+		"<code>/pause NAME</code>: stop the instance; to go on, root runs <code>pullgate status NAME --resume</code>",
 		"<code>/update</code>: look for a new release of pullgate; a question asks before it is installed",
 		"<code>/help</code>: this list",
 		"",
@@ -474,6 +550,10 @@ func (l *Listener) command(ctx context.Context, m *telegram.Message) {
 	}
 	if why == "update" {
 		l.update(ctx, m)
+		return
+	}
+	if why == spool.RequestStatus || why == spool.RequestPause {
+		l.request(ctx, m, why)
 		return
 	}
 	if names == nil {
@@ -540,6 +620,10 @@ func (l *Listener) checkNames(m *telegram.Message) ([]string, string, bool) {
 		return nil, "help", false
 	case m.Text == updateCommand:
 		return nil, "update", false
+	case firstWord(m.Text) == statusCommand:
+		return nil, spool.RequestStatus, false
+	case firstWord(m.Text) == pauseCommand:
+		return nil, spool.RequestPause, false
 	case !strings.HasPrefix(m.Text, checkCommand):
 		return nil, "not a command", false
 	case m.Text == checkCommand:
