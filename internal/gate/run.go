@@ -161,6 +161,13 @@ func (e *Env) Run(ctx context.Context) (Result, error) {
 		e.pauseRequest(st)
 		paused = e.Dir.Paused()
 	}
+	if requests.Resume > 0 {
+		e.resumeRequest(st)
+		paused = e.Dir.Paused()
+	}
+	if requests.AskAgain > 0 {
+		e.askAgainRequest(st)
+	}
 	if requests.Status > 0 {
 		e.statusRequest(st)
 	}

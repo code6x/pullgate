@@ -393,7 +393,7 @@ func TestHelp(t *testing.T) {
 	if len(ms) != 1 || ms[0].Chat != chat || ms[0].ReplyTo == 0 {
 		t.Fatalf("want one reply: %+v", ms)
 	}
-	for _, want := range []string{"<code>/check</code>", "<code>/check NAME</code>", "<code>/help</code>", "<b>" + inst + "</b>", "<b>" + inst2 + "</b>", "Apply", "Skip", "--pause", "--resume", "--ask-again", "<code>/status</code>", "<code>/pause NAME</code>"} {
+	for _, want := range []string{"<code>/check</code>", "<code>/check NAME</code>", "<code>/help</code>", "<b>" + inst + "</b>", "<b>" + inst2 + "</b>", "Apply", "Skip", "--pause", "--resume", "--ask-again", "<code>/status</code>", "<code>/pause NAME</code>", "<code>/resume NAME</code>", "<code>/ask-again NAME</code>"} {
 		if !strings.Contains(ms[0].Text, want) {
 			t.Errorf("the help must hold %q:\n%s", want, ms[0].Text)
 		}
@@ -662,5 +662,21 @@ func TestStatusAndPauseNotForOthers(t *testing.T) {
 	}
 	if f.d.HasCheck() || len(f.tg.Messages()) != 0 {
 		t.Fatal("others get no reply and write no request")
+	}
+}
+
+func TestResumeAndAskAgainCommands(t *testing.T) {
+	f := newL(t)
+	f.say(owner, chat, "/resume "+inst, false)
+	f.say(owner, chat, "/ask-again "+inst, false)
+	f.say(owner, chat, "/resume", false)               // needs a name
+	f.say(owner, chat, "/ask-again "+inst+" x", false) // no more words
+	f.say(999, chat, "/resume "+inst, false)           // not the owner
+	r, bad, err := f.d.TakeRequests(os.Geteuid())
+	if r != (spool.Requests{Resume: 1, AskAgain: 1}) || len(bad) != 0 || err != nil {
+		t.Fatalf("requests: %+v %v %v", r, bad, err)
+	}
+	if ms := f.tg.Messages(); len(ms) != 4 {
+		t.Fatalf("want 2 answers and 2 usage replies, got %+v", ms)
 	}
 }

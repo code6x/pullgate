@@ -48,11 +48,67 @@ func (e *Env) pauseRequest(st *state.State) {
 		text = "⏸ " + e.Cfg.Name + " was paused already: " + message.Code(e.Dir.PauseReason())
 	default:
 		e.Log.Info("paused from Telegram")
-		text = "⏸ " + e.Cfg.Name + " is paused. Nothing is fetched, asked or applied. To go on, run as root: <code>pullgate status " + e.Cfg.Name + " --resume</code>"
+		text = "⏸ " + e.Cfg.Name + " is paused. Nothing is fetched, asked or applied. To go on, send <code>/resume " + e.Cfg.Name + "</code>."
 	}
 	if d := now.Sub(st.PauseNote); d >= CheckInterval || d <= -CheckInterval {
 		st.PauseNote = now
 		e.notice(text)
+	}
+}
+
+// resumeRequest acts on /resume: it lifts only a pause that /pause wrote
+// (code6x/pullgate#33). A pause by pullgate itself (a cut-off apply) or by
+// root stays: a compromised listener must not undo a safety stop.
+func (e *Env) resumeRequest(st *state.State) {
+	var text string
+	switch {
+	case !e.Dir.Paused():
+		text = e.Cfg.Name + " is not paused."
+	case !e.Dir.TelegramPaused(e.UID):
+		text = "⏸ " + e.Cfg.Name + " stays paused: this pause was not set from Telegram (" + message.Code(e.Dir.PauseReason()) + "), so /resume does not lift it. Check the host, then run as root: <code>pullgate status " + e.Cfg.Name + " --resume</code>"
+	default:
+		if err := e.Dir.Resume(); err != nil {
+			e.Log.Error("remove the pause file", "err", err)
+			text = "Error: " + e.Cfg.Name + " could not be resumed. See the journal of the host."
+			break
+		}
+		e.Log.Info("resumed from Telegram")
+		text = "▶ " + e.Cfg.Name + " goes on."
+		if st.Broken != nil {
+			text += " It is still broken: only a fix forward is asked."
+		}
+	}
+	e.notice(text)
+}
+
+// askAgainRequest acts on /ask-again: it asks again only about a question
+// that expired or was lost (an open one), never about a commit that was
+// skipped, failed, held, refused or failed its check (code6x/pullgate#33).
+func (e *Env) askAgainRequest(st *state.State) {
+	tip := st.LastTip
+	m := st.Marks[tip]
+	switch {
+	case tip == "" || tip == st.Applied:
+		e.notice("Nothing to ask again: there is no new commit.")
+	case st.Broken != nil && (tip == st.Broken.SHA || tip == st.Broken.OldSHA):
+		e.notice("Not asked again: " + code(tip) + " is the failed commit of the broken state. Push a fix forward, or check the host and run as root: <code>pullgate status " + e.Cfg.Name + " --resume</code>")
+	case tip == st.Held:
+		e.notice("Not asked again: the apply of " + code(tip) + " failed and it is held. To try it again, run as root: <code>pullgate status " + e.Cfg.Name + " --ask-again</code>")
+	case m != nil && m.Mark == state.MarkAsked:
+		if q := forgetOpen(st, tip); q != nil && !q.Auto {
+			e.edit(q.ID, "This question for "+code(q.SHA)+" is closed: the owner sent /ask-again. The next question has a new code.")
+		}
+		delete(st.Marks, tip)
+		e.Log.Info("ask again from Telegram: open question", "sha", tip)
+		e.notice("Asking again about " + code(tip) + ".")
+	case m != nil && m.Mark == state.MarkExpired:
+		delete(st.Marks, tip)
+		e.Log.Info("ask again from Telegram: expired question", "sha", tip)
+		e.notice("Asking again about " + code(tip) + ".")
+	case m == nil:
+		e.notice("Nothing to ask again: " + code(tip) + " has no question that expired or was lost.")
+	default:
+		e.notice("Not asked again: " + code(tip) + " was " + m.Mark + ". /ask-again asks only about a question that expired or was lost. To ask anyway, run as root: <code>pullgate status " + e.Cfg.Name + " --ask-again</code>")
 	}
 }
 

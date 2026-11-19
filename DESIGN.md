@@ -499,7 +499,21 @@ nothing):
 - Then the normal run goes on, so a stream of `/status` never stops the
   fetches. After a `/pause`, the run ends as paused.
 
-To go on after `/pause`, root runs `pullgate status NAME --resume`.
+**`/resume NAME` and `/ask-again NAME`** (code6x/pullgate#33) go the same
+way, with request files `resume` and `ask-again`. They are limited, so
+that they cannot undo a safety stop:
+
+- `resume`: root lifts the pause only if the pause file is one that
+  `/pause` wrote: a regular file of root, with one link, of exactly one
+  line `paused from Telegram at YYYY-MM-DD HH:MM UTC`. A pause by pullgate
+  itself (a cut-off apply), by root (`pullgate status --pause`) or with
+  any other text stays, and the reply says to run `pullgate status NAME
+  --resume` as root. `/resume` never ends the broken state (section 10).
+- `ask-again`: root clears only an open question for the last tip (its
+  message may be lost; the next question has a new code) or an `expired`
+  mark. It refuses a tip that is skipped, failed, held, refused, failed its
+  check, or the failed commit of the broken state. Root's `pullgate status
+  NAME --ask-again` still clears every mark.
 
 **`/check`.** The listener writes a check request (section 8) only when all
 of these hold, else it writes nothing:

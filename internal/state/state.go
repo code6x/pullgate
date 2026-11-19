@@ -15,6 +15,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"syscall"
@@ -269,6 +270,33 @@ func (d Dir) PauseReason() string {
 	n, _ := io.ReadFull(f, b)
 	line, _, _ := strings.Cut(string(b[:n]), "\n")
 	return line
+}
+
+// telegramPauseRE is the whole first line of a pause from /pause.
+var telegramPauseRE = regexp.MustCompile(`^` + regexp.QuoteMeta(TelegramPause) + `[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} UTC$`)
+
+// TelegramPaused reports whether the pause file is one that /pause wrote:
+// a regular file of uid, not linked twice, of one line that is exactly the
+// reason of /pause. Any other pause (by pullgate itself or by root) is not.
+func (d Dir) TelegramPaused(uid uint32) bool {
+	f, err := os.OpenFile(d.PauseFile(), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || !fi.Mode().IsRegular() || st.Uid != uid || st.Nlink != 1 || fi.Size() > 100 {
+		return false
+	}
+	b, err := io.ReadAll(io.LimitReader(f, 101))
+	if err != nil {
+		return false
+	}
+	return telegramPauseRE.MatchString(strings.TrimSuffix(string(b), "\n")) && strings.Count(string(b), "\n") == 1
 }
 
 // Resume removes the pause file.

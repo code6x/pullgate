@@ -261,23 +261,25 @@ func (d Dirs) HasCheck() bool {
 // one file name, and its content is the name and a newline: no data from
 // the message.
 const (
-	RequestStatus = "status"
-	RequestPause  = "pause"
+	RequestStatus   = "status"
+	RequestPause    = "pause"
+	RequestResume   = "resume"    // code6x/pullgate#33
+	RequestAskAgain = "ask-again" // code6x/pullgate#33
 )
 
 // WriteRequest writes a status or pause request (the listener).
 func (d Dirs) WriteRequest(kind string) error {
-	if kind != RequestStatus && kind != RequestPause {
+	if kind != RequestStatus && kind != RequestPause && kind != RequestResume && kind != RequestAskAgain {
 		return fmt.Errorf("unknown request kind %q", kind)
 	}
 	return writeIn(d.CheckDir(), []byte(kind+"\n"), 0o600, -1, kind)
 }
 
 // Requests counts the valid requests that TakeRequests took.
-type Requests struct{ Check, Status, Pause int }
+type Requests struct{ Check, Status, Pause, Resume, AskAgain int }
 
 // Any reports whether there was a valid request.
-func (r Requests) Any() bool { return r.Check+r.Status+r.Pause > 0 }
+func (r Requests) Any() bool { return r.Check+r.Status+r.Pause+r.Resume+r.AskAgain > 0 }
 
 // TakeChecks is TakeRequests, for callers that know only check requests.
 func (d Dirs) TakeChecks(listenerUID int) (int, []error, error) {
@@ -319,6 +321,10 @@ func (d Dirs) TakeRequests(listenerUID int) (Requests, []error, error) {
 			count, want = &r.Status, RequestStatus+"\n"
 		case RequestPause:
 			count, want = &r.Pause, RequestPause+"\n"
+		case RequestResume:
+			count, want = &r.Resume, RequestResume+"\n"
+		case RequestAskAgain:
+			count, want = &r.AskAgain, RequestAskAgain+"\n"
 		}
 		switch {
 		case err != nil:
