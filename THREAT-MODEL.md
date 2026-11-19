@@ -236,9 +236,17 @@ having the host manage itself.
 *Attack or accident.* `apply` fails, and running it again on the old tree
 fails too. The host may be half changed.
 
-*Defense.* With `on_failure = "rollback"`, a failed rollback writes the pause
-file and reports it. Nothing more runs until the owner looks and runs
-`pullgate status NAME --resume`. With `on_failure = "pause"` there is no
+*Defense.* With `on_failure = "rollback"`, a failed rollback makes the
+instance **broken** (DESIGN.md section 10) and reports it once, with the
+reason. Nothing is applied until the owner taps Apply on a **fix
+forward**: a newer commit on top of the failed one, asked with a strong
+warning. The failed commit and the old commit are never asked again, and
+no rollback is tried against the half state. In `auto` mode the owner is
+asked too. Only a fix forward that passes `health`, or root with
+`pullgate status NAME --resume`, ends it. It never ends by itself, and no
+message from Telegram ends it, so a stolen bot token or a compromised
+listener (T2) cannot lift it: the most they can do is not deliver a tap.
+A pause file still stops everything, also while broken. With `on_failure = "pause"` there is no
 rollback: the failed SHA is held, and the owner can fix it forward. The
 applied SHA does not change after a failure.
 

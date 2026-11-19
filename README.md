@@ -258,7 +258,12 @@ sections 5 and 11.
 
 - `on_failure = "rollback"`: pullgate runs `apply` again with the last good
   commit, then `health`. So `apply` must be safe to run again on an older
-  tree. If the rollback fails too, the instance is paused.
+  tree. If the rollback fails too, the instance is **broken**: the host
+  may be in a half state. pullgate tells you once, with the reason. Then it
+  asks only for a fix forward (a newer commit on top of the failed one),
+  with a warning, also in `auto` mode, and tries no rollback. A fix forward
+  that works ends it, or root runs `pullgate status NAME --resume` after a
+  look at the host.
 - `on_failure = "pause"`: no rollback. The failed commit is held and not
   tried again. A newer commit is still asked, with a warning at the top, so
   you can fix it forward.

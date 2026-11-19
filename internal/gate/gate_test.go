@@ -537,28 +537,6 @@ func TestMaxFailedTries(t *testing.T) {
 	}
 }
 
-func TestFailingRollbackPauses(t *testing.T) {
-	f := newFixture(t, `on_failure = "rollback"`, "")
-	f.applyNew("one")
-	f.commit("bad", "two", map[string]string{"fail-health": "1"})
-	f.run()
-	f.tap(f.ask().Code, "apply")
-	f.touch("fail-rollback")
-	if r := f.apply(); r != RollbackError {
-		t.Fatalf("apply: %s", r)
-	}
-	if !f.env.Dir.Paused() || f.state().InProgress != nil {
-		t.Fatal("a failed rollback must write the pause file")
-	}
-	if !contains(f.outbox(), "The instance is paused") {
-		t.Fatal("no report")
-	}
-	f.commit("fix", "three", nil)
-	if r := f.run(); r != Paused {
-		t.Fatalf("a paused instance does nothing: %s", r)
-	}
-}
-
 func TestOnFailurePauseHoldsAndAsksNewer(t *testing.T) {
 	f := newFixture(t, `on_failure = "pause"`, "")
 	a := f.applyNew("one")

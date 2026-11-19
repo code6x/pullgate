@@ -547,10 +547,10 @@ The steps, with the state synced to disk at each arrow:
    - `rollback`, with an applied SHA: write `in_progress = {phase:
      "rollback", sha, old_sha}` →. Run `apply` with the last good SHA, then
      `health`. If that works, clear `in_progress` → and report "failed,
-     rolled back to OLD". If it fails too, write the pause file, clear
-     `in_progress` → and report "failed, the rollback failed too, the
-     instance is paused". With no applied SHA there is nothing to roll back
-     to: hold the SHA, as with `pause`.
+     rolled back to OLD". If it fails too, the instance becomes
+     **broken** (below): write `broken = {since, sha, old_sha, reason}` and
+     clear `in_progress` in one save →, and report it. With no applied SHA
+     there is nothing to roll back to: hold the SHA, as with `pause`.
    - `pause`: do not roll back and do not write the pause file. The SHA
      becomes the held SHA. Clear `in_progress` →. It is not tried again,
      every report and `pullgate status` say that the last apply failed, and
@@ -564,6 +564,40 @@ new run). With `rollback`, a SHA with fewer than `max_failed_tries` failed
 tries is asked again on the next run; with `max_failed_tries` failed tries
 it is not asked again until a new commit (or `--ask-again`). With `pause`,
 a failed SHA is held at once and the count does not matter.
+
+**Broken.** After a failed rollback the host may be in a half state. A
+plain pause would need root on the host for every such case, and most of
+them are fixed by a new commit. So the instance becomes broken instead:
+
+- One message goes out when it starts: the reason (the errors of the apply
+  and of the rollback, each cut in the middle so that its end stays,
+  code6x/pullgate#25) and the two ways out: a fix forward, or root on the
+  host.
+- The instance keeps fetching. It asks only for a **fix forward**: a tip
+  that descends from the failed SHA, and is not the failed SHA or the old
+  applied SHA. This holds with `allow_older` too. Any other tip is refused
+  with a notice. The failed SHA is not tried again, whatever
+  `max_failed_tries` says.
+- The question has the lines "⚠ The instance is broken: an apply failed
+  and pullgate could not roll it back. The host may be in a half state.
+  This commit is a fix forward." and "Reason: …" at the top. The reason
+  is in `<code>`, after the fixed line. In `auto` mode the owner is asked too:
+  nothing is applied by itself on a half state. `questions_per_day`
+  counts these questions.
+- At the tap, root checks the fix forward rule again. A fix forward that
+  succeeds (apply and `health`) ends the broken state. One that fails is
+  **not** rolled back: the instance stays broken, the failed fix forward
+  becomes the new failed SHA and reason, and the next newer commit is
+  asked with the warning.
+- The broken state never ends by itself. It does not stop a pause: a
+  pause file still stops everything. Root ends it with `pullgate status
+  NAME --resume`. No command from Telegram can end it.
+- During a fix forward, `PULLGATE_FAILED_SHA` is the failed SHA.
+- When it starts, every question asked before is dropped (the open one
+  is closed in the chat), so no tap on a question without the warning
+  applies. The next run asks again.
+- If the save of the broken state fails, `in_progress` stays in the file,
+  and the next start pauses (a crash, below).
 
 **A crash** leaves `in_progress` in the state. The next run or apply cannot
 know what happened on the host. It writes the pause file, marks the SHA
@@ -628,6 +662,9 @@ The question is HTML (`parse_mode = HTML`), with link previews off:
 
 ```
 pullgate on <b>HOST</b>, instance <b>NAME</b>
+⚠ The instance is broken: an apply failed and pullgate could not roll it
+  back. The host may be in a half state. This commit is a fix forward.
+Reason: <code>reason</code>                (both only when broken, section 10)
 ⚠ The last apply (SHA) failed.            (only when a SHA is held)
 ⚠ This commit is not a descendant of …     (only with allow_older)
 Apply this commit?
@@ -693,7 +730,8 @@ closed after a cut.
 - `off`: `pullgate run` and `pullgate apply` do nothing.
 
 `pullgate status NAME` prints the mode, the applied SHA, the open question,
-the held SHA, the pause file and an apply in progress. Flags:
+the held SHA, the broken state ("broken since …, last error …"), the pause
+file and an apply in progress. Flags:
 
 - `--ask-again`: clear the marks of the last fetched tip (expired, skipped,
   check failed, refused, failed, held), so the next run asks again. If a
@@ -703,7 +741,8 @@ the held SHA, the pause file and an apply in progress. Flags:
   approval for the old code finds no question and does nothing, even one
   that the listener wrote before the close;
 - `--pause`: write the pause file;
-- `--resume`: remove the pause file and clear an apply in progress.
+- `--resume`: remove the pause file, clear an apply in progress, and end
+  the broken state (section 10). Run it only after you checked the host.
 
 The listener (`pullgate listen --config /etc/pullgate/listener.toml`):
 

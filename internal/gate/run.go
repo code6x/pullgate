@@ -36,6 +36,7 @@ const (
 	RolledBack    Result = "rolled-back"
 	RollbackError Result = "rollback-failed"
 	Held          Result = "held"
+	StillBroken   Result = "still-broken"
 )
 
 func (e *Env) head() string { return message.Head(e.Cfg.Host, e.Cfg.Name) }
@@ -220,8 +221,13 @@ func (e *Env) decide(ctx context.Context, st *state.State, tip string) (Result, 
 		e.Log.Info("the tip is the held SHA; waiting for a new commit", "sha", tip)
 		return Nothing, nil
 	}
+	if b := st.Broken; b != nil && (tip == b.SHA || tip == b.OldSHA) {
+		e.Log.Info("broken: the tip is the failed or the old commit; waiting for a fix forward", "sha", tip)
+		return Nothing, nil
+	}
 	if m := st.Marks[tip]; m != nil {
-		retry := m.Mark == state.MarkFailed && e.Cfg.OnFailure == config.OnFailureRollback && m.Tries < e.Cfg.Limits.MaxFailedTries
+		// No retry in the broken state: a rollback is never tried there.
+		retry := st.Broken == nil && m.Mark == state.MarkFailed && e.Cfg.OnFailure == config.OnFailureRollback && m.Tries < e.Cfg.Limits.MaxFailedTries
 		if !retry {
 			e.Log.Info("the tip was handled before; waiting for a new commit", "sha", tip, "mark", m.Mark)
 			return Nothing, nil
@@ -243,6 +249,20 @@ func (e *Env) decide(ctx context.Context, st *state.State, tip string) (Result, 
 			notDesc = true
 		}
 	}
+	if b := st.Broken; b != nil {
+		ok, err := e.Git.IsAncestor(ctx, b.SHA, tip)
+		if err != nil {
+			return "", err
+		}
+		if !ok {
+			st.SetMark(tip, state.MarkRefused, now)
+			e.Log.Warn("broken: refused, the tip does not descend from the failed commit", "tip", tip, "failed", b.SHA)
+			e.notice("⚠ Refused " + code(tip) + ": the instance is broken, and only a fix forward is asked: a commit on top of the failed commit " + code(b.SHA) + ". Nothing was asked.\nPush a fix on top of it, or check the host and run as root: <code>pullgate status " + e.Cfg.Name + " --resume</code>")
+			return Refused, nil
+		}
+	}
+	// In the broken state the owner is always asked, also in auto mode.
+	ask := e.Cfg.Mode == config.ModeAsk || st.Broken != nil
 	// Questions per day.
 	var recent []time.Time
 	for _, t := range st.AskTimes {
@@ -251,7 +271,7 @@ func (e *Env) decide(ctx context.Context, st *state.State, tip string) (Result, 
 		}
 	}
 	st.AskTimes = recent
-	if e.Cfg.Mode == config.ModeAsk && len(recent) >= e.Cfg.Limits.QuestionsPerDay {
+	if ask && len(recent) >= e.Cfg.Limits.QuestionsPerDay {
 		e.Log.Warn("questions_per_day reached; not asking", "tip", tip)
 		if now.Sub(st.LimitNote) >= 24*time.Hour {
 			st.LimitNote = now
@@ -276,7 +296,7 @@ func (e *Env) decide(ctx context.Context, st *state.State, tip string) (Result, 
 		}
 		return "", fmt.Errorf("export %s: %w", tip, err)
 	}
-	p.env.Failed = st.Held
+	p.env.Failed = failedSHA(st)
 	if argv := e.Cfg.Commands.Check; len(argv) > 0 {
 		out, err := e.runSandboxed(ctx, argv, p.env)
 		if err != nil {
@@ -289,7 +309,7 @@ func (e *Env) decide(ctx context.Context, st *state.State, tip string) (Result, 
 	}
 	q := &message.Question{
 		Host: e.Cfg.Host, Instance: e.Cfg.Name, SHA: tip, Applied: st.Applied,
-		Held: st.Held, NotDescendant: notDesc, Files: p.files, Watch: e.Cfg.Watch.Paths,
+		Held: st.Held, Broken: brokenReason(st), NotDescendant: notDesc, Files: p.files, Watch: e.Cfg.Watch.Paths,
 		Submodules: p.tree.Submodules,
 	}
 	for _, s := range p.tree.Symlinks {
@@ -317,7 +337,7 @@ func (e *Env) decide(ctx context.Context, st *state.State, tip string) (Result, 
 	nq := state.Question{
 		ID: st.NextID, Code: c, SHA: tip, Base: st.Applied, Asked: now,
 		Expires: now.Add(e.Cfg.Limits.ApprovalTTL.Duration), Open: true,
-		Auto: e.Cfg.Mode == config.ModeAuto,
+		Auto: !ask,
 	}
 	st.NextID++
 	st.Questions = append(st.Questions, nq)
@@ -360,4 +380,20 @@ func shortTrees(out, tree, oldTree string) string {
 		out = strings.ReplaceAll(out, oldTree, "OLD")
 	}
 	return out
+}
+
+// failedSHA is PULLGATE_FAILED_SHA: the last commit that failed in the
+// broken state, else the held SHA.
+func failedSHA(st *state.State) string {
+	if st.Broken != nil {
+		return st.Broken.SHA
+	}
+	return st.Held
+}
+
+func brokenReason(st *state.State) string {
+	if st.Broken == nil {
+		return ""
+	}
+	return st.Broken.Reason
 }

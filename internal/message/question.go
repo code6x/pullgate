@@ -14,6 +14,7 @@ type Question struct {
 	Host, Instance string
 	SHA, Applied   string // Applied is "" on the first apply
 	Held           string // the held SHA, if any
+	Broken         string // why the instance is broken, if it is (DESIGN.md section 10)
 	NotDescendant  bool   // with allow_older
 	Subjects       []string
 	TotalCommits   int
@@ -41,6 +42,10 @@ func Short(sha string) string {
 // Text builds the question text, cut to fit one message.
 func (q *Question) Text() string {
 	head := []string{Head(q.Host, q.Instance)}
+	if q.Broken != "" {
+		head = append(head, "⚠ The instance is broken: an apply failed and pullgate could not roll it back. The host may be in a half state. This commit is a fix forward.",
+			"Reason: "+BrokenReason(q.Broken))
+	}
 	if q.Held != "" {
 		head = append(head, "⚠ The last apply ("+SHA(q.Held)+") failed.")
 	}

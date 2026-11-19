@@ -35,8 +35,11 @@ have the bot token.
 - The state moves forward only after `apply` and `health` succeed.
   `in_progress` is synced before `apply` runs; found at start, it pauses.
 - `on_failure`: `rollback` runs the old apply and health, and a failed
-  rollback writes the pause file; `pause` holds the SHA and does not write
-  the pause file. The code default is `pause`.
+  rollback makes the instance broken: only a fix forward (a descendant of
+  the failed SHA) is asked, always with a tap (also in `auto` mode), no
+  rollback is tried, and only a good fix forward or root's `--resume` ends
+  it; `pause` holds the SHA and does not write the pause file. The code
+  default is `pause`.
 
 **No code before the tap (rule 3)**
 - Before Apply, nothing from the commit runs. git only reads objects.
