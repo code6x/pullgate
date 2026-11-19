@@ -39,12 +39,14 @@ func (e *Env) takeChecks() spool.Requests {
 func (e *Env) pauseRequest(st *state.State) {
 	now := e.now()
 	var text string
-	if e.Dir.Paused() {
-		text = "⏸ " + e.Cfg.Name + " was paused already: " + message.Code(e.Dir.PauseReason())
-	} else if err := e.Dir.Pause(state.TelegramPause + now.UTC().Format("2006-01-02 15:04 MST")); err != nil {
+	wrote, err := e.Dir.PauseIfNone(state.TelegramPause + now.UTC().Format("2006-01-02 15:04 MST"))
+	switch {
+	case err != nil:
 		e.Log.Error("write the pause file", "err", err)
 		text = "Error: " + e.Cfg.Name + " could not be paused. See the journal of the host."
-	} else {
+	case !wrote:
+		text = "⏸ " + e.Cfg.Name + " was paused already: " + message.Code(e.Dir.PauseReason())
+	default:
 		e.Log.Info("paused from Telegram")
 		text = "⏸ " + e.Cfg.Name + " is paused. Nothing is fetched, asked or applied. To go on, run as root: <code>pullgate status " + e.Cfg.Name + " --resume</code>"
 	}

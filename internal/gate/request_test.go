@@ -24,18 +24,17 @@ func (f *fixture) requestKind(kind string) {
 func TestStatusRequest(t *testing.T) {
 	f := newFixture(t, ``, "")
 	a := f.applyNew("one")
-	f.commit("second", "two", nil) // not fetched: /status does not fetch
+	f.commit("second", "two", nil)
 	f.requestKind(spool.RequestStatus)
-	if r := f.run(); r != Nothing {
+	// /status never skips the normal run: a stream of them cannot stop
+	// fetches.
+	if r := f.run(); r != Asked {
 		t.Fatalf("run: %s", r)
 	}
 	ms := f.outbox()
-	if len(ms) != 1 || ms[0].Kind != spool.KindNotice || !strings.Contains(ms[0].Text, "applied:") ||
-		!strings.Contains(ms[0].Text, a) || !strings.Contains(ms[0].Text, "paused:      no") {
-		t.Fatalf("status notice: %+v", ms)
-	}
-	if f.state().LastTip != a {
-		t.Fatal("/status must not fetch")
+	if len(ms) != 2 || ms[0].Kind != spool.KindNotice || !strings.Contains(ms[0].Text, "applied:") ||
+		!strings.Contains(ms[0].Text, a) || !strings.Contains(ms[0].Text, "paused:      no") || ms[1].Kind != spool.KindAsk {
+		t.Fatalf("status notice, then the question: %+v", ms)
 	}
 	// A second one within a minute is dropped.
 	f.requestKind(spool.RequestStatus)

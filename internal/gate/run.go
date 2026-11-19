@@ -164,10 +164,8 @@ func (e *Env) Run(ctx context.Context) (Result, error) {
 	if requests.Status > 0 {
 		e.statusRequest(st)
 	}
-	if (requests.Pause > 0 || requests.Status > 0) && requests.Check == 0 {
-		// Only /status or /pause: they do not fetch.
-		return Nothing, e.Dir.Save(st)
-	}
+	// Then the normal run goes on: /status never skips a fetch, and after
+	// /pause the paused check below ends the run.
 	requested := requests.Check > 0
 	if requested {
 		if r := e.limitCheck(st); r != "" {

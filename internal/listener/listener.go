@@ -435,6 +435,10 @@ const (
 	pauseCommand  = "/pause"
 )
 
+// RequestGap is the least time between two /status or two /pause for the
+// same instance: root answers each at most once a minute.
+const RequestGap = time.Minute
+
 func firstWord(s string) string {
 	if f := strings.Fields(s); len(f) > 0 {
 		return f[0]
@@ -468,7 +472,8 @@ func (l *Listener) request(ctx context.Context, m *telegram.Message, kind string
 	var ok, soon, failed []string
 	for _, n := range names {
 		key := kind + ":" + n
-		if d := now.Sub(l.lastCheck[key]); d < CheckGap && d > -CheckGap {
+		// Root answers each at most once a minute; so does the listener.
+		if d := now.Sub(l.lastCheck[key]); d < RequestGap && d > -RequestGap {
 			soon = append(soon, n)
 			continue
 		}

@@ -195,8 +195,7 @@ usual Apply question, or "No new commit (the applied commit is …)", or
 
 - `/status` (all instances) or `/status NAME`: the mode, the applied
   commit, the last tip, the open question, paused or not and why, broken
-  or not. It changes nothing and fetches nothing. At most one answer per
-  instance a minute.
+  or not. It changes nothing. At most one answer per instance a minute.
 - `/pause NAME`: pauses the instance. Nothing is fetched, asked or applied
   until root runs `pullgate status NAME --resume` on the host. If it is
   paused already, the old pause stays as it is. A reason after NAME is not

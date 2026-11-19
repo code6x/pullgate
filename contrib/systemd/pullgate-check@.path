@@ -1,14 +1,16 @@
 # Starts pullgate-run@NAME.service when the listener writes a check request
-# for /check on Telegram (DESIGN.md section 8). The run is the normal run:
+# for /check, /status or /pause on Telegram (DESIGN.md sections 8 and 9). The run is the normal run:
 # the same unit, sandbox and lock. Root removes the request and allows at
 # most one requested run per minute.
 [Unit]
 Description=pullgate check requests for %i
 
 [Path]
-# Only the request file counts, so another file in the directory does not
+# Only the request files count, so another file in the directory does not
 # start runs again and again.
 PathExists=/var/spool/pullgate/%i/check/request
+PathExists=/var/spool/pullgate/%i/check/status
+PathExists=/var/spool/pullgate/%i/check/pause
 Unit=pullgate-run@%i.service
 # At most 10 starts a minute. This stops a loop when a run fails before it
 # removes the request. The listener writes at most one request per instance

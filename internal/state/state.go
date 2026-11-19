@@ -221,6 +221,38 @@ func (d Dir) Pause(reason string) error {
 	return WriteFileAtomic(d.PauseFile(), []byte(reason+"\n"), 0o644)
 }
 
+// PauseIfNone writes the pause file only if there is none. It never
+// replaces one, even one that appears at the same time (a hard link
+// fails when the name exists). It reports whether it wrote it.
+func (d Dir) PauseIfNone(reason string) (bool, error) {
+	f, err := os.CreateTemp(filepath.Dir(d.PauseFile()), ".tmp-")
+	if err != nil {
+		return false, err
+	}
+	tmp := f.Name()
+	defer func() { _ = os.Remove(tmp) }()
+	_, werr := f.WriteString(reason + "\n")
+	if werr == nil {
+		werr = f.Chmod(0o644)
+	}
+	if werr == nil {
+		werr = f.Sync()
+	}
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		return false, werr
+	}
+	if err := os.Link(tmp, d.PauseFile()); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 // TelegramPause starts the reason of a pause that came from /pause
 // (code6x/pullgate#32). No other reason starts with it.
 const TelegramPause = "paused from Telegram at "

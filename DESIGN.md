@@ -390,8 +390,9 @@ six bytes `check\n`. It holds nothing from the message: not the text, not
 a SHA, not a code. A check request can only start a normal run. It is not
 an approval, and `pullgate apply` never reads this directory.
 
-`pullgate-check@NAME.path` watches the file `check/request`
-(`PathExists=`; another file there starts nothing) and starts `pullgate-run@NAME.service`, the unit of the timer. `pullgate run`,
+`pullgate-check@NAME.path` watches the files `check/request`,
+`check/status` and `check/pause` (`PathExists=`; another file there starts
+nothing) and starts `pullgate-run@NAME.service`, the unit of the timer. `pullgate run`,
 with the lock held (a run that had to wait for the lock, and then finds
 no request, stops: another run took the request):
 
@@ -479,7 +480,8 @@ sender, the chat and the edit hold, as for `/check`. The text is `/status`
 are allowed and dropped: the reason never reaches root). The listener
 writes a request file in the check directory: `status` or `pause`, with
 exactly its name and a newline in it, and nothing from the message. The
-same command for the same instance within 10 seconds writes nothing. Root
+same command for the same instance within a minute writes nothing, and
+gets "asked less than a minute ago". Root
 takes the requests in its run, as check requests (owned by the listener,
 a regular file, the exact content; any other file is removed and does
 nothing):
@@ -489,10 +491,13 @@ nothing):
   other reason starts with it). A pause file that is there is never
   changed, so that a pause that pullgate or root set keeps its reason. The
   pause is never rate-limited; its reply goes out at most once a minute.
+  The file is made with a hard link, which fails when the name exists, so
+  a pause that root writes at the same moment is never replaced.
 - `status`: root sends a notice with the facts of `pullgate status`
   (section 13), cleaned and in `<pre>`, at most once a minute. It is
   read-only.
-- A run that took only these requests does not fetch.
+- Then the normal run goes on, so a stream of `/status` never stops the
+  fetches. After a `/pause`, the run ends as paused.
 
 To go on after `/pause`, root runs `pullgate status NAME --resume`.
 
