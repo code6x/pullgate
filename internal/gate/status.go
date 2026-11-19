@@ -45,6 +45,12 @@ func (e *Env) Status(w io.Writer, f StatusFlags) error {
 			st.InProgress = nil
 			changed = true
 		}
+		if st.Broken != nil {
+			// Root checked the host: the broken state ends here.
+			st.Broken = nil
+			changed = true
+			_, _ = fmt.Fprintln(w, "The broken state is ended. A new commit, or --ask-again, asks again.")
+		}
 	}
 	if f.AskAgain && st.LastTip != "" {
 		delete(st.Marks, st.LastTip)
@@ -81,6 +87,9 @@ func (e *Env) Status(w io.Writer, f StatusFlags) error {
 	}
 	if m := st.Marks[st.LastTip]; m != nil && st.LastTip != "" {
 		show("tip mark", fmt.Sprintf("%s (tries %d)", m.Mark, m.Tries))
+	}
+	if b := st.Broken; b != nil {
+		show("broken", fmt.Sprintf("since %s, last error: %s", b.Since.Format("2006-01-02 15:04 MST"), b.Reason))
 	}
 	if e.Dir.Paused() {
 		show("paused", "yes: "+e.Dir.PauseFile())

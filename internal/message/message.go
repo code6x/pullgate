@@ -103,6 +103,24 @@ func Output(out string, n int) string {
 	return "<pre>" + s + "</pre>"
 }
 
+// Reason is an error in a message: one line, cut in the middle so its
+// start and its end (where most tools print the reason) stay, in <code>
+// (code6x/pullgate#25).
+func Reason(s string) string { return Code(CutLine(s)) }
+
+// CutLine is s as one line of at most OutputLine characters, cut in the
+// middle.
+func CutLine(s string) string {
+	return cutMiddle(strings.Join(strings.Fields(s), " "), OutputLine)
+}
+
+// BrokenReason is the reason of the broken state in a message. It holds
+// two errors, each cut with CutLine already, so it gets more room than
+// Reason.
+func BrokenReason(s string) string {
+	return Code(cutMiddle(strings.Join(strings.Fields(s), " "), 2*OutputLine+200))
+}
+
 // cutMiddle cleans one line like clean, but a line longer than max keeps
 // its first max/4 and its last characters, with "…" between.
 func cutMiddle(s string, max int) string {

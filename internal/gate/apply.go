@@ -189,6 +189,23 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 		e.reply(q.ID, code(sha)+" is applied already.")
 		return Ignored, nil
 	}
+	if b := st.Broken; b != nil {
+		// Only a fix forward: a commit on top of the last failed one.
+		// An auto question is never applied here: the owner must tap.
+		ok := sha != b.SHA && sha != b.OldSHA && !q.Auto
+		if ok {
+			var err error
+			if ok, err = e.Git.IsAncestor(ctx, b.SHA, sha); err != nil {
+				return "", err
+			}
+		}
+		if !ok {
+			st.SetMark(sha, state.MarkRefused, now)
+			e.Log.Warn("broken: refused, not a fix forward", "sha", sha, "failed", b.SHA)
+			e.reply(q.ID, "Refused "+code(sha)+": the instance is broken, and only a commit on top of the failed commit "+code(b.SHA)+" is applied.")
+			return Refused, nil
+		}
+	}
 	if st.Applied != "" && !e.Cfg.Limits.AllowOlder {
 		ok, err := e.Git.IsAncestor(ctx, st.Applied, sha)
 		if err != nil {
@@ -212,13 +229,14 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 	}
 	defer t.remove()
 
-	err = e.tryApply(ctx, t, "apply", sha, old, st.Held, false)
+	wasBroken := st.Broken
+	err = e.tryApply(ctx, t, "apply", sha, old, failedSHA(st), false)
 	if stopped(ctx, err) {
 		return "", err // in_progress stays: the next start pauses
 	}
 	if err == nil {
 		st.Applied, st.AppliedAt = sha, e.now()
-		st.InProgress, st.Held = nil, ""
+		st.InProgress, st.Held, st.Broken = nil, "", nil
 		st.Marks = map[string]*state.Mark{}
 		if gerr := e.Git.SetApplied(ctx, sha); gerr != nil {
 			e.Log.Warn("keep the applied ref", "err", gerr)
@@ -228,6 +246,10 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 			return "", err
 		}
 		e.Log.Info("applied", "sha", sha)
+		if wasBroken != nil {
+			e.reply(q.ID, "✅ Applied "+code(sha)+". The fix forward worked: the instance is no longer broken.")
+			return Applied, nil
+		}
 		e.reply(q.ID, "✅ Applied "+code(sha)+".")
 		return Applied, nil
 	}
@@ -237,7 +259,18 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 	if err := e.Dir.Save(st); err != nil {
 		return "", err
 	}
-	failure := esc(err)
+	failure := message.Reason(err.Error())
+	if b := st.Broken; b != nil {
+		// A failed fix forward: no rollback against a half state.
+		b.SHA, b.Reason = sha, "the fix forward "+message.Short(sha)+" failed: "+message.CutLine(err.Error())
+		st.InProgress = nil
+		if err := e.Dir.Save(st); err != nil {
+			return "", err
+		}
+		e.Log.Error("the fix forward failed; the instance stays broken", "sha", sha)
+		e.reply(q.ID, "❌ The fix forward "+code(sha)+" failed ("+failure+"). No rollback was tried. The instance stays broken.\n"+e.waysOut())
+		return StillBroken, nil
+	}
 	if e.Cfg.OnFailure == config.OnFailureRollback && old != "" {
 		st.InProgress = &state.InProgress{Phase: "rollback", SHA: sha, OldSHA: old, Started: e.now()}
 		if err := e.Dir.Save(st); err != nil {
@@ -255,17 +288,25 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 			e.reply(q.ID, "❌ The apply of "+code(sha)+" failed ("+failure+"). Rolled back to "+code(old)+".")
 			return RolledBack, nil
 		}
-		if perr := e.Dir.Pause("the rollback to " + old + " failed after the apply of " + sha + " failed"); perr != nil {
-			// in_progress stays, so the next start pauses (cutOff).
-			e.Log.Error("write the pause file", "err", perr)
-			e.reply(q.ID, "❌ The apply of "+code(sha)+" failed, the rollback failed too, and the pause file could not be written. Check the host now.")
-			return RollbackError, perr
-		}
+		// The broken state (DESIGN.md section 10). If this save fails,
+		// in_progress stays in the file, and the next start pauses.
 		st.InProgress = nil
-		if err := e.Dir.Save(st); err != nil {
-			return "", err
+		st.Broken = &state.Broken{
+			Since: e.now(), SHA: sha, OldSHA: old,
+			Reason: "the apply of " + message.Short(sha) + " failed: " + message.CutLine(err.Error()) +
+				"; the rollback to " + message.Short(old) + " failed: " + message.CutLine(rerr.Error()),
 		}
-		e.reply(q.ID, "❌ The apply of "+code(sha)+" failed ("+failure+"), and the rollback to "+code(old)+" failed too ("+esc(rerr)+"). The instance is paused. Check the host, then run as root: <code>pullgate status "+e.Cfg.Name+" --resume</code>")
+		// Questions asked before have no warning (or are auto ones): drop
+		// them all, so no old tap applies. The next run asks again.
+		e.dropQuestions(st, "the instance is broken. A fix forward is asked again, with a warning.")
+		if err := e.Dir.Save(st); err != nil {
+			// Keep in_progress, so the next start pauses (a crash).
+			st.Broken = nil
+			st.InProgress = &state.InProgress{Phase: "rollback", SHA: sha, OldSHA: old, Started: e.now()}
+			return RollbackError, err
+		}
+		e.Log.Error("the apply and its rollback failed; the instance is broken", "sha", sha, "old", old)
+		e.reply(q.ID, "❌ The apply of "+code(sha)+" failed ("+failure+"), and the rollback to "+code(old)+" failed too ("+message.Reason(rerr.Error())+"). The host may be in a half state. The instance is now broken.\n"+e.waysOut())
 		return RollbackError, nil
 	}
 	// on_failure = "pause", or nothing to roll back to: hold the SHA.
@@ -276,6 +317,25 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 	}
 	e.reply(q.ID, "❌ The apply of "+code(sha)+" failed ("+failure+"). It is held and not tried again. A newer commit will be asked, so you can fix it forward.")
 	return Held, nil
+}
+
+// dropQuestions removes every question from the state, and closes the
+// open one in the chat.
+func (e *Env) dropQuestions(st *state.State, why string) {
+	for _, q := range st.Questions {
+		if m := st.Marks[q.SHA]; m != nil && m.Mark == state.MarkAsked {
+			delete(st.Marks, q.SHA)
+		}
+		if q.Open && !q.Auto {
+			e.edit(q.ID, "This question for "+code(q.SHA)+" is closed: "+why)
+		}
+	}
+	st.Questions = nil
+}
+
+// waysOut says how the broken state ends.
+func (e *Env) waysOut() string {
+	return "Two ways out: push a fix forward (a commit on top of the failed one; it is asked with a warning), or check the host and run as root: <code>pullgate status " + e.Cfg.Name + " --resume</code>"
 }
 
 // stopped reports whether err comes from a stop of pullgate itself.
@@ -317,7 +377,3 @@ func (e *Env) afterApply(st *state.State) {
 	}
 	st.Questions = keep
 }
-
-// esc shows an error in a message, in <code>: it may hold text from the
-// repo (DESIGN.md section 12).
-func esc(err error) string { return message.Code(err.Error()) }

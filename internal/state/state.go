@@ -58,6 +58,15 @@ type InProgress struct {
 	Started time.Time `json:"started"`
 }
 
+// Broken is the state after an apply failed and its rollback failed too
+// (DESIGN.md section 10). Only a successful fix forward, or root, ends it.
+type Broken struct {
+	Since  time.Time `json:"since"`
+	SHA    string    `json:"sha"`     // the last commit that failed; a fix forward descends from it
+	OldSHA string    `json:"old_sha"` // the applied commit that the failed rollback tried to restore
+	Reason string    `json:"reason"`  // the last error, as plain text
+}
+
 // State is the content of state.json.
 type State struct {
 	Version    int              `json:"version"`
@@ -68,6 +77,7 @@ type State struct {
 	Questions  []Question       `json:"questions"`
 	Marks      map[string]*Mark `json:"marks"`
 	InProgress *InProgress      `json:"in_progress,omitempty"`
+	Broken     *Broken          `json:"broken,omitempty"`
 	AskTimes   []time.Time      `json:"ask_times,omitempty"`
 	LimitNote  time.Time        `json:"limit_note,omitempty"`
 	CheckAt    time.Time        `json:"check_at,omitzero"`   // the last check request that was taken (DESIGN.md section 8)
