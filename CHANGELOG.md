@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0](https://github.com/code6x/pullgate/compare/v0.2.0...v0.3.0) (2026-11-20)
+
+
+### Features
+
+* /resume and /ask-again from Telegram, limited so they cannot undo a safety stop ([#52](https://github.com/code6x/pullgate/issues/52)) ([b91914c](https://github.com/code6x/pullgate/commit/b91914c0f38b087742098850441c4ae9f259056d)), closes [#33](https://github.com/code6x/pullgate/issues/33)
+* /status and /pause from Telegram ([#51](https://github.com/code6x/pullgate/issues/51)) ([9fa707e](https://github.com/code6x/pullgate/commit/9fa707e9156c36b1dcae1200c6c210eab74e7b70)), closes [#32](https://github.com/code6x/pullgate/issues/32)
+* ask less often: settle time, a "nothing to apply" check exit, and one more question after a wait ([#53](https://github.com/code6x/pullgate/issues/53)) ([533f7c9](https://github.com/code6x/pullgate/commit/533f7c9c821fbc23674bd4547a6a25d9144c77a0))
+* fix forward after a failed rollback instead of a pause that needs root ([#47](https://github.com/code6x/pullgate/issues/47)) ([91404b8](https://github.com/code6x/pullgate/commit/91404b8e121f5919fe419ece9303351b7749bd04)), closes [#34](https://github.com/code6x/pullgate/issues/34)
+* pullgate bootstrap with pairing, so nobody types or pastes the owner ID ([#48](https://github.com/code6x/pullgate/issues/48)) ([4ab136a](https://github.com/code6x/pullgate/commit/4ab136ac4feb80ba3bd2bfb8443169ff3d150d25)), closes [#31](https://github.com/code6x/pullgate/issues/31)
+* update pullgate from Telegram: a notice for each new release, /update installs it with its units ([#43](https://github.com/code6x/pullgate/issues/43)) ([8823788](https://github.com/code6x/pullgate/commit/8823788f4ce4d47413af387a2ce3bc6f08f857af)), closes [#9](https://github.com/code6x/pullgate/issues/9)
+* WARN: lines of the summary stay in the head of the question, and apply can add short lines to its report ([#54](https://github.com/code6x/pullgate/issues/54)) ([47bf7cc](https://github.com/code6x/pullgate/commit/47bf7cc9db9f119c228cdf3655eb209320fe7a0c))
+
 ## [0.2.0](https://github.com/code6x/pullgate/compare/v0.1.1...v0.2.0) (2026-11-17)
 
 
