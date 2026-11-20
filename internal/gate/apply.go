@@ -174,7 +174,7 @@ func (e *Env) handle(ctx context.Context, st *state.State, a spool.Approval) (Re
 	if a.Action == "skip" {
 		st.SetMark(q.SHA, state.MarkSkipped, now)
 		e.Log.Info("skipped", "sha", q.SHA)
-		e.reply(q.ID, "Skipped "+code(q.SHA)+". A new commit asks again.")
+		e.reply(q.ID, "Skipped "+code(q.SHA)+". "+e.skipHint())
 		return Skipped, false, e.Dir.Save(st)
 	}
 	r, err := e.applySHA(ctx, st, q)

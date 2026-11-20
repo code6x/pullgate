@@ -32,6 +32,9 @@ const (
 	MarkCheckFailed = "check-failed"
 	MarkRefused     = "refused"
 	MarkFailed      = "failed"
+	// MarkNothing: the check exited 3, "nothing to apply on this host"
+	// (DESIGN.md section 7). The applied SHA stays as it is.
+	MarkNothing = "nothing"
 )
 
 // Question is one question that root asked.
@@ -77,6 +80,7 @@ type State struct {
 	AppliedAt  time.Time        `json:"applied_at"`
 	Held       string           `json:"held,omitempty"`
 	LastTip    string           `json:"last_tip,omitempty"`
+	TipSince   time.Time        `json:"tip_since,omitzero"` // when root first saw LastTip as the tip ([limits] settle)
 	Questions  []Question       `json:"questions"`
 	Marks      map[string]*Mark `json:"marks"`
 	InProgress *InProgress      `json:"in_progress,omitempty"`

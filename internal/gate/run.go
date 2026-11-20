@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -24,6 +25,8 @@ const (
 	Off           Result = "off"
 	CutOff        Result = "cut-off"
 	Nothing       Result = "nothing"
+	Settling      Result = "settling"
+	NothingToDo   Result = "nothing-to-apply"
 	Refused       Result = "refused"
 	LimitReached  Result = "limit"
 	CheckLimited  Result = "check-limited"
@@ -92,7 +95,7 @@ func (e *Env) expire(st *state.State) {
 			st.SetMark(q.SHA, state.MarkExpired, now)
 		}
 		if q.Open && !q.Auto {
-			e.edit(q.ID, "This question for "+code(q.SHA)+" expired. A new commit, or <code>pullgate status "+e.Cfg.Name+" --ask-again</code>, asks again.")
+			e.edit(q.ID, "This question for "+code(q.SHA)+" expired. "+e.againHint())
 		}
 		e.Log.Info("question expired", "question", q.ID, "sha", q.SHA)
 	}
@@ -220,6 +223,11 @@ func (e *Env) fetchAndDecide(ctx context.Context, st *state.State) (Result, erro
 		return "", fmt.Errorf("fetch: %w", err)
 	}
 	e.Log.Info("fetched", "tip", tip, "applied", st.Applied)
+	if now := e.now(); tip != st.LastTip || st.TipSince.IsZero() || st.TipSince.After(now) {
+		// A new tip, or a clock that went back: the settle time starts
+		// now (fail closed: never sooner).
+		st.TipSince = now
+	}
 	st.LastTip = tip
 	e.expire(st)
 	return e.decide(ctx, st, tip)
@@ -242,13 +250,23 @@ func (e *Env) decide(ctx context.Context, st *state.State, tip string) (Result, 
 		e.Log.Info("broken: the tip is the failed or the old commit; waiting for a fix forward", "sha", tip)
 		return Nothing, nil
 	}
+	// In the broken state the owner is always asked, also in auto mode.
+	ask := e.Cfg.Mode == config.ModeAsk || st.Broken != nil
 	if m := st.Marks[tip]; m != nil {
 		// No retry in the broken state: a rollback is never tried there.
 		retry := st.Broken == nil && m.Mark == state.MarkFailed && e.Cfg.OnFailure == config.OnFailureRollback && m.Tries < e.Cfg.Limits.MaxFailedTries
-		if !retry {
+		reask := e.reaskOn() && e.reaskDue(m, now)
+		if !retry && !reask {
 			e.Log.Info("the tip was handled before; waiting for a new commit", "sha", tip, "mark", m.Mark)
 			return Nothing, nil
 		}
+		if reask {
+			e.Log.Info("reask_after: asking once more", "sha", tip, "mark", m.Mark, "since", m.At)
+		}
+	}
+	if until, ok := e.settling(st, now); ok {
+		e.Log.Info("settling: the tip changed not long ago; nothing is asked yet", "sha", tip, "until", until)
+		return Settling, nil
 	}
 	notDesc := false
 	if st.Applied != "" {
@@ -278,8 +296,6 @@ func (e *Env) decide(ctx context.Context, st *state.State, tip string) (Result, 
 			return Refused, nil
 		}
 	}
-	// In the broken state the owner is always asked, also in auto mode.
-	ask := e.Cfg.Mode == config.ModeAsk || st.Broken != nil
 	// Questions per day.
 	var recent []time.Time
 	for _, t := range st.AskTimes {
@@ -316,6 +332,16 @@ func (e *Env) decide(ctx context.Context, st *state.State, tip string) (Result, 
 	p.env.Failed = failedSHA(st)
 	if argv := e.Cfg.Commands.Check; len(argv) > 0 {
 		out, err := e.runSandboxed(ctx, argv, p.env)
+		if exitCode(err) == CheckExitNothing && st.Broken == nil {
+			// The check says this commit changes nothing on this host.
+			// No message, and the applied SHA stays, so that the next
+			// question lists every commit since the last real apply. In
+			// the broken state exit 3 is a failed check with a notice:
+			// the owner must not miss that a fix forward was not asked.
+			st.SetMark(tip, state.MarkNothing, now)
+			e.Log.Info("check: nothing to apply on this host; not asking", "sha", tip)
+			return NothingToDo, nil
+		}
 		if err != nil {
 			st.SetMark(tip, state.MarkCheckFailed, now)
 			e.Log.Warn("check failed; not asking", "sha", tip, "err", err)
@@ -384,6 +410,64 @@ func (e *Env) decide(ctx context.Context, st *state.State, tip string) (Result, 
 	st.AskTimes = append(st.AskTimes, now)
 	e.Log.Info("asked", "sha", tip, "question", nq.ID)
 	return Asked, nil
+}
+
+// CheckExitNothing is the exit status of check that means "this commit
+// has nothing to apply on this host" (DESIGN.md section 11).
+const CheckExitNothing = 3
+
+// exitCode is the exit status of a command that ran to its end and
+// failed, else -1 (no error, a timeout, a signal, or no start).
+func exitCode(err error) int {
+	var ee *exec.ExitError
+	if err == nil || !errors.As(err, &ee) {
+		return -1
+	}
+	return ee.ExitCode()
+}
+
+// settling says whether the tip changed less than settle ago, and until
+// when it waits ([limits] settle).
+func (e *Env) settling(st *state.State, now time.Time) (time.Time, bool) {
+	s := e.Cfg.Limits.Settle.Duration
+	if s <= 0 {
+		return time.Time{}, false
+	}
+	until := st.TipSince.Add(s)
+	return until, st.TipSince.IsZero() || now.Before(until)
+}
+
+// reaskDue says whether a skipped or expired tip is asked once more
+// ([limits] reask_after). Each new Skip or expiry starts the wait again.
+func (e *Env) reaskDue(m *state.Mark, now time.Time) bool {
+	r := e.Cfg.Limits.ReaskAfter.Duration
+	if !e.reaskOn() || (m.Mark != state.MarkSkipped && m.Mark != state.MarkExpired) {
+		return false
+	}
+	return !m.At.After(now) && now.Sub(m.At) >= r
+}
+
+// reaskOn says whether reask_after is used: only in ask mode, where a
+// question has Skip.
+func (e *Env) reaskOn() bool {
+	return e.Cfg.Limits.ReaskAfter.Duration > 0 && e.Cfg.Mode == config.ModeAsk
+}
+
+// againHint says when a skipped or expired tip is asked again.
+func (e *Env) againHint() string {
+	h := "A new commit, or <code>pullgate status " + e.Cfg.Name + " --ask-again</code>, asks again."
+	if e.reaskOn() {
+		h += " Else it is asked once more after " + e.Cfg.Limits.ReaskAfter.String() + " (reask_after)."
+	}
+	return h
+}
+
+// skipHint says when a skipped tip is asked again.
+func (e *Env) skipHint() string {
+	if e.reaskOn() {
+		return "A new commit asks again, or this one once more after " + e.Cfg.Limits.ReaskAfter.String() + " (reask_after)."
+	}
+	return "A new commit asks again."
 }
 
 // shortTrees replaces the long tree paths in command output with NEW and

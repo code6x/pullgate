@@ -61,6 +61,7 @@ cat "$PULLGATE_TREE/value" > `+c+`/live
 	f.script("check.sh", `id -u > `+c+`/check-uid
 echo x >> `+c+`/check-count
 if [ -e "$PULLGATE_TREE/fail-check" ]; then echo "bad config <b>"; exit 1; fi
+if [ -e "$PULLGATE_TREE/nothing-here" ]; then echo "only docs"; exit 3; fi
 `)
 	f.script("summary.sh", `id -u > `+c+`/summary-uid
 echo "value $(cat "$PULLGATE_TREE/value")"

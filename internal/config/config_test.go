@@ -44,7 +44,7 @@ func TestDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.Mode != "ask" || c.OnFailure != "pause" || c.Limits.QuestionsPerDay != 10 || c.Limits.MaxFailedTries != 1 ||
-		c.Limits.ApprovalTTL.Hours() != 12 || c.Limits.AllowOlder || c.Commands.CheckUser != "pullgate-check" {
+		c.Limits.ApprovalTTL.Hours() != 12 || c.Limits.AllowOlder || c.Limits.Settle.Duration != 0 || c.Limits.ReaskAfter.Duration != 0 || c.Commands.CheckUser != "pullgate-check" {
 		t.Fatalf("defaults: %+v", c)
 	}
 }
@@ -61,6 +61,9 @@ func TestRefused(t *testing.T) {
 		"url as option":       strings.Replace(good, "ssh://git@git.example.com/owner/config-repo.git", "--upload-pack=x", 1),
 		"branch option":       good + "[repo]\n",
 		"ttl too long":        good + "[limits]\napproval_ttl = \"200h\"\n",
+		"settle too long":     good + "[limits]\nsettle = \"200h\"\n",
+		"settle below 0":      good + "[limits]\nsettle = \"-1m\"\n",
+		"reask below 0":       good + "[limits]\nreask_after = \"-1h\"\n",
 		"absolute watch path": good + "[watch]\npaths = [\"/etc/x\"]\n",
 		"host html":           `host = "<b>"` + good,
 	}
@@ -243,5 +246,15 @@ func TestCheckAPIURL(t *testing.T) {
 		if err := CheckAPIURL(u); err == nil {
 			t.Fatalf("%s must be refused", u)
 		}
+	}
+}
+
+func TestSettleAndReask(t *testing.T) {
+	c, err := Load(write(t, good+"[limits]\nsettle = \"30m\"\nreask_after = \"24h\"\n", 0o600), "x", uid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Limits.Settle.Minutes() != 30 || c.Limits.ReaskAfter.Hours() != 24 {
+		t.Fatalf("settle %s, reask_after %s", c.Limits.Settle.Duration, c.Limits.ReaskAfter.Duration)
 	}
 }

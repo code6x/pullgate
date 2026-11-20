@@ -192,6 +192,8 @@ max_files = 100000        # default 100000 files in one tree
 max_tree_bytes = 1073741824  # default 1 GiB in one tree
 allow_older = false       # default false (rule 5)
 refuse_symlinks = false   # default false; true refuses a commit with a symlink that points out of the tree
+settle = "30m"            # default 0 (ask at once); ask only when the tip has not changed for this long, at most 168h
+reask_after = "24h"       # default 0 (never); ask a skipped or expired tip once more after this time (ask mode)
 
 [listener]
 user = "pullgate"         # the user of the listener; owns the inbox
@@ -315,10 +317,30 @@ used again.
      ("the branch is back to the applied commit").
    - tip = the SHA of the open question: nothing to do.
    - tip is the held SHA, or was asked before and the question expired or
-     was skipped, or its check failed, or it was refused, or it failed
-     `max_failed_tries` times: nothing to do. `pullgate status NAME
-     --ask-again` clears this mark, and also closes an open question for
-     the tip (section 13).
+     was skipped, or its check failed, or it was refused, or its check
+     said "nothing to apply" (step 7), or it failed `max_failed_tries`
+     times: nothing to do. `pullgate status NAME --ask-again` clears this
+     mark, and also closes an open question for the tip (section 13).
+   - **`reask_after`** (default 0, off): in `ask` mode, a tip marked
+     skipped or expired is asked
+     once more when its mark is at least `reask_after` old and it is still
+     the tip. Asking sets the mark to asked; a second Skip or expiry sets
+     a new mark time, so the next ask comes only after the next wait. It
+     counts against `questions_per_day` like every question. `auto` mode
+     has no Skip, so `reask_after` does nothing there.
+   - **`settle`** (default 0, off): root keeps in its state the time it
+     first saw the tip (`tip_since`). A new tip, or a clock that went back
+     before that time, starts it again. While the tip is younger than
+     `settle`, the run logs "settling" and stops: no check, no question,
+     no notice. So three merges in ten minutes give one question, for the
+     last one, and a writer cannot keep moving the branch to make the
+     owner tap without reading. It also holds in `auto` mode. The time is
+     root's own: the commit date is written by the writer and is not
+     trusted. An open question for an older tip stays open while the new
+     tip settles: it is closed only when the new tip is asked (step 9), as
+     today while the new tip is checked. A state file from a version
+     before `settle` has no `tip_since`; the first run sets it to now, so
+     the tip it knew waits one settle time (fail closed).
    - tip is not a descendant of the applied SHA (an older commit, a force
      push, a rewritten branch) and `allow_older` is false: refuse. Send one
      notice for this SHA and mark it refused. When `allow_older` is true,
@@ -328,7 +350,15 @@ used again.
      send one notice per day, and do not ask.
 6. Export the tree of the tip, and the tree of the applied SHA
    (`PULLGATE_OLD_TREE`).
-7. Run `check` as `check_user` (section 11). If it fails, mark the SHA
+7. Run `check` as `check_user` (section 11). If it exits with status
+   **3**, the commit has nothing to apply on this host (for example only
+   docs, or files for other hosts): mark the SHA `nothing`, send no
+   message, and do not ask. The applied SHA stays as it is, so the next
+   question still lists every commit since the last real apply, and its
+   check and summary still compare with the last applied tree. In the
+   broken state (section 10) exit 3 is a failed check with its notice,
+   so the owner sees that a fix forward was not asked. Any other
+   non-zero status, a timeout or a signal is a failed check. If it fails, mark the SHA
    "check failed", send a notice with the end of its output, and do not
    ask. The same SHA is not checked again. In that output the tree paths
    (`PULLGATE_TREE`, `PULLGATE_OLD_TREE`) become `NEW` and `OLD`. The
@@ -684,7 +714,9 @@ Their working directory is `PULLGATE_TREE`. Their umask is 022. Each has a timeo
 (`check_timeout`, `apply_timeout`); on timeout the whole process group is
 killed and the command counts as failed. pullgate keeps at most 64 KiB of
 their output. The output of `apply` and `health` goes to the journal; the
-report shows only the exit status. The output of `check` (its last lines)
+report shows only the exit status. `check` exits 0 to pass, 3 for
+"nothing to apply on this host" (section 7, step 7), and anything else to
+fail. The output of `check` (its last lines)
 and of `summary` goes into Telegram messages, after the cleaning of
 section 12.
 
@@ -775,11 +807,13 @@ closed after a cut.
 - `off`: `pullgate run` and `pullgate apply` do nothing.
 
 `pullgate status NAME` prints the mode, the applied SHA, the open question,
-the held SHA, the broken state ("broken since …, last error …"), the pause
-file and an apply in progress. Flags:
+the held SHA, the mark of the last tip (`nothing` reads "nothing (the check
+found nothing to apply on this host)"), "settling until …" while the tip
+waits for `settle`, the broken state ("broken since …, last error …"), the
+pause file and an apply in progress. Flags:
 
 - `--ask-again`: clear the marks of the last fetched tip (expired, skipped,
-  check failed, refused, failed, held), so the next run asks again. If a
+  check failed, nothing, refused, failed, held), so the next run asks again. If a
   question for the tip is open (for example its message was lost), root
   removes it from its state, then asks the listener to close its message.
   The next run asks again with a new question ID and a new code. An

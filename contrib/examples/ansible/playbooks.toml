@@ -27,6 +27,8 @@ paths = ["ansible.cfg", "site.yml", "roles/pullgate/**", "**/sudoers*"]
 
 [limits]
 questions_per_day = 10
+settle = "30m"            # ask only when the branch has not changed for 30 minutes
+reask_after = "24h"       # ask a skipped or expired commit once more after a day
 approval_ttl = "24h"
 
 [listener]
