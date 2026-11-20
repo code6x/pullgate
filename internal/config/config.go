@@ -84,6 +84,12 @@ type Limits struct {
 	MaxTreeBytes    int64    `toml:"max_tree_bytes"`
 	AllowOlder      bool     `toml:"allow_older"`
 	RefuseSymlinks  bool     `toml:"refuse_symlinks"`
+	// Settle is how long the tip must stay the same before it is checked
+	// and asked (DESIGN.md section 7). 0 asks at once.
+	Settle Duration `toml:"settle"`
+	// ReaskAfter asks a skipped or expired tip once more when its mark is
+	// this old (DESIGN.md section 7). 0 never asks again.
+	ReaskAfter Duration `toml:"reask_after"`
 }
 
 // ListenerUser is the [listener] section of an instance.
@@ -195,6 +201,12 @@ func (c *Instance) validate() error {
 	}
 	if c.Limits.QuestionsPerDay < 0 || c.Limits.MaxFailedTries < 0 || c.Limits.MaxFiles < 0 || c.Limits.MaxTreeBytes < 0 {
 		return c.errf("[limits]", "a limit is below 0. Fix: use a positive number")
+	}
+	if c.Limits.Settle.Duration < 0 || c.Limits.Settle.Duration > MaxTTL {
+		return c.errf("[limits] settle", "must be at least 0 and at most 168h. Fix: use a time like \"30m\", or \"0\" to ask at once")
+	}
+	if c.Limits.ReaskAfter.Duration < 0 {
+		return c.errf("[limits] reask_after", "is below 0. Fix: use a time like \"24h\", or \"0\" to never ask again")
 	}
 	if c.Commands.CheckTimeout.Duration < 0 || c.Commands.ApplyTimeout.Duration < 0 {
 		return c.errf("[commands]", "a timeout is below 0")

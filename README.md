@@ -282,7 +282,8 @@ deploy_key = "/etc/pullgate/NAME.key"
 known_hosts = "/etc/pullgate/NAME.known_hosts"
 
 [commands]
-check = ["/path/to/check"]       # optional; runs as check_user; a failure means no question
+check = ["/path/to/check"]       # optional; runs as check_user; a failure means no question;
+                                 # exit 3 means "nothing to apply on this host": no question, no message
 summary = ["/path/to/summary"]   # optional; runs as check_user; its output is in the question
 apply = ["/path/to/apply"]       # required; runs as root after Apply
 health = ["/path/to/health"]     # optional; runs as root after apply
@@ -296,6 +297,8 @@ questions_per_day = 10
 approval_ttl = "12h"
 max_failed_tries = 1
 allow_older = false
+settle = "0"           # e.g. "30m": ask only when the branch has not changed for this long
+reask_after = "0"      # e.g. "24h": ask a skipped or expired commit once more after this time
 ```
 
 The commands get these environment variables: `PULLGATE_SHA`,

@@ -531,7 +531,7 @@ func (l *Listener) helpText() string {
 		"",
 		"Instances: " + strings.Join(names, ", "),
 		"",
-		"A question has two buttons. <b>Apply</b> applies that one commit. <b>Skip</b> skips it; a newer commit is asked again.",
+		"A question has two buttons. <b>Apply</b> applies that one commit. <b>Skip</b> skips it; a newer commit is asked again (and the same one once more after <code>reask_after</code>, if the host config sets it).",
 		"",
 		"On the host, as root:",
 		"<code>pullgate status NAME</code>: the mode, the applied commit, the open question, paused or not",

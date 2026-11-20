@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/code6x/pullgate/internal/config"
 	"github.com/code6x/pullgate/internal/state"
 )
 
@@ -92,8 +93,18 @@ func (e *Env) statusText(w io.Writer, st *state.State) {
 	if st.Held != "" {
 		show("held", st.Held+" (the last apply failed)")
 	}
-	if m := st.Marks[st.LastTip]; m != nil && st.LastTip != "" {
+	m := st.Marks[st.LastTip]
+	switch {
+	case st.LastTip == "":
+	case m != nil && m.Mark == state.MarkNothing:
+		show("tip mark", "nothing (the check found nothing to apply on this host)")
+	case m != nil:
 		show("tip mark", fmt.Sprintf("%s (tries %d)", m.Mark, m.Tries))
+	}
+	if e.settleShown(st, m) {
+		if until, ok := e.settling(st, e.now()); ok && !st.TipSince.IsZero() {
+			show("settle", "settling until "+until.Format("2006-01-02 15:04 MST"))
+		}
 	}
 	if b := st.Broken; b != nil {
 		show("broken", fmt.Sprintf("since %s, last error: %s", b.Since.Format("2006-01-02 15:04 MST"), b.Reason))
@@ -129,4 +140,19 @@ func orNone(s string) string {
 		return "none"
 	}
 	return s
+}
+
+// settleShown says whether the last tip waits for settle: a tip that a
+// run would check and ask, but for the settle time.
+func (e *Env) settleShown(st *state.State, m *state.Mark) bool {
+	tip, open := st.LastTip, st.Open()
+	switch {
+	case tip == "" || tip == st.Applied || tip == st.Held || m != nil || e.Cfg.Mode == config.ModeOff:
+		return false
+	case open != nil && open.SHA == tip:
+		return false
+	case st.Broken != nil && (tip == st.Broken.SHA || tip == st.Broken.OldSHA):
+		return false
+	}
+	return true
 }

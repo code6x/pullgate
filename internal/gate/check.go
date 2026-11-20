@@ -130,7 +130,11 @@ func (e *Env) askAgainRequest(st *state.State) {
 	case m == nil:
 		e.notice("Nothing to ask again: " + code(tip) + " has no question that expired or was lost.")
 	default:
-		e.notice("Not asked again: " + code(tip) + " was " + m.Mark + ". /ask-again asks only about a question that expired or was lost. To ask anyway, run as root: <code>pullgate status " + e.Cfg.Name + " --ask-again</code>")
+		hint := ""
+		if m.Mark == state.MarkSkipped && e.reaskOn() {
+			hint = " It is asked once more " + e.Cfg.Limits.ReaskAfter.String() + " after the Skip (reask_after)."
+		}
+		e.notice("Not asked again: " + code(tip) + " was " + m.Mark + ". /ask-again asks only about a question that expired or was lost. To ask anyway, run as root: <code>pullgate status " + e.Cfg.Name + " --ask-again</code>" + hint)
 	}
 }
 
@@ -186,6 +190,8 @@ func (e *Env) checkReply(st *state.State, res Result, err error, limitSent bool)
 			e.notice("No new commit. " + code(tip) + " is waiting for its auto apply.")
 		case tip == st.Held:
 			e.notice("No new question: the last apply of " + code(tip) + " failed and it is held. A newer commit is asked.")
+		case st.Marks[tip] != nil && st.Marks[tip].Mark == state.MarkNothing:
+			e.notice("No new question: the check said that " + code(tip) + " has nothing to apply on this host. The applied commit is still " + code(st.Applied) + ".")
 		case st.Marks[tip] != nil && st.Marks[tip].Mark == state.MarkRefused:
 			e.notice("No new question: " + code(tip) + " is not a descendant of the applied commit " + code(st.Applied) + ", so it was refused. To allow it, set <code>allow_older = true</code> in [limits] of the host config.")
 		default:
@@ -193,8 +199,17 @@ func (e *Env) checkReply(st *state.State, res Result, err error, limitSent bool)
 			if m := st.Marks[tip]; m != nil {
 				mark = " (" + m.Mark + ")"
 			}
-			e.notice("No new question: " + code(tip) + " was handled before" + mark + ". To ask again, run as root: <code>pullgate status " + e.Cfg.Name + " --ask-again</code>")
+			hint := ""
+			if m := st.Marks[tip]; m != nil && (m.Mark == state.MarkSkipped || m.Mark == state.MarkExpired) && e.reaskOn() {
+				hint = " It is asked once more " + e.Cfg.Limits.ReaskAfter.String() + " after the mark (reask_after)."
+			}
+			e.notice("No new question: " + code(tip) + " was handled before" + mark + ". To ask again, run as root: <code>pullgate status " + e.Cfg.Name + " --ask-again</code>" + hint)
 		}
+	case Settling:
+		until, _ := e.settling(st, e.now())
+		e.notice("New commit " + code(tip) + ". It is settling: it is asked when the branch has not changed until " + until.UTC().Format("2006-01-02 15:04 MST") + " ([limits] settle).")
+	case NothingToDo:
+		e.notice("New commit " + code(tip) + ". The check says it has nothing to apply on this host, so nothing is asked. The applied commit is still " + code(st.Applied) + ".")
 	case AutoQueued:
 		e.notice("New commit " + code(tip) + ". The mode is auto (mode = \"auto\"), so it is applied now, without a tap.")
 	case LimitReached:

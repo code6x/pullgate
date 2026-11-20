@@ -323,6 +323,11 @@ A clock that goes back before `asked` denies. A clock that jumps forward
 expires questions early: this denies too. The listener checks expiry with its
 own clock as well. Timeouts of commands use the monotonic clock.
 
+`settle` counts from the time root first saw the tip; a clock that goes
+back before that time starts the wait again. A clock that is wrong and then
+corrected forward can make the wait shorter, like `approval_ttl` above.
+That only asks sooner; it never applies anything.
+
 *Left.* A clock that is set far back while a question is open can keep that
 question valid longer than `approval_ttl`. The code still works only once.
 
@@ -382,7 +387,24 @@ repo URL must pass the same check as the clone, because root runs
 *Attack.* Someone pushes many commits to tire the owner into tapping Apply.
 
 *Defense.* At most one open question per instance; a newer tip replaces it.
-`questions_per_day` caps the questions. A SHA is asked once.
+`questions_per_day` caps the questions. A SHA is asked once, or once more
+per `reask_after` after a Skip or an expiry; each of these counts against
+`questions_per_day`. With `settle`, a tip is asked only when root has seen
+it unchanged for that long, by root's own clock (not the commit date, which
+the writer sets). So a writer who keeps moving the branch gets no question
+at all, and the owner always has a question that stays the same while he
+reads it.
+
+*Check exit 3.* `check` runs as `check_user` on the commit's tree, so a
+hostile commit can make it exit 3. That only marks the SHA `nothing`: no
+question, no apply, and the applied SHA stays. It cannot apply anything,
+and it is no worse than a check that fails. The next real commit is asked
+with every commit since the last real apply, so nothing is hidden from the
+owner. Root takes only the exit status; it reads nothing else from the
+check.
+
+*Left.* A writer can delay a question by pushing more often than `settle`.
+That only delays; it never applies.
 
 ### T16. A bad release binary
 
