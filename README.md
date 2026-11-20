@@ -284,8 +284,10 @@ known_hosts = "/etc/pullgate/NAME.known_hosts"
 [commands]
 check = ["/path/to/check"]       # optional; runs as check_user; a failure means no question;
                                  # exit 3 means "nothing to apply on this host": no question, no message
-summary = ["/path/to/summary"]   # optional; runs as check_user; its output is in the question
-apply = ["/path/to/apply"]       # required; runs as root after Apply
+summary = ["/path/to/summary"]   # optional; runs as check_user; its output is in the question;
+                                 # a line that starts with "WARN: " is shown at the top of the question
+apply = ["/path/to/apply"]       # required; runs as root after Apply; the first 10 lines it
+                                 # writes to $PULLGATE_REPORT_FILE are added to the applied/failed message
 health = ["/path/to/health"]     # optional; runs as root after apply
 check_user = "pullgate-check"
 

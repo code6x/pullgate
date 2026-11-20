@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -230,7 +231,7 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 	defer t.remove()
 
 	wasBroken := st.Broken
-	err = e.tryApply(ctx, t, "apply", sha, old, failedSHA(st), false)
+	report, err := e.tryApply(ctx, t, "apply", sha, old, failedSHA(st), false)
 	if stopped(ctx, err) {
 		return "", err // in_progress stays: the next start pauses
 	}
@@ -247,10 +248,10 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 		}
 		e.Log.Info("applied", "sha", sha)
 		if wasBroken != nil {
-			e.reply(q.ID, "✅ Applied "+code(sha)+". The fix forward worked: the instance is no longer broken.")
+			e.reply(q.ID, withReport("✅ Applied "+code(sha)+". The fix forward worked: the instance is no longer broken.", report))
 			return Applied, nil
 		}
-		e.reply(q.ID, "✅ Applied "+code(sha)+".")
+		e.reply(q.ID, withReport("✅ Applied "+code(sha)+".", report))
 		return Applied, nil
 	}
 
@@ -268,7 +269,7 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 			return "", err
 		}
 		e.Log.Error("the fix forward failed; the instance stays broken", "sha", sha)
-		e.reply(q.ID, "❌ The fix forward "+code(sha)+" failed ("+failure+"). No rollback was tried. The instance stays broken.\n"+e.waysOut())
+		e.reply(q.ID, withReport("❌ The fix forward "+code(sha)+" failed ("+failure+"). No rollback was tried. The instance stays broken.\n"+e.waysOut(), report))
 		return StillBroken, nil
 	}
 	if e.Cfg.OnFailure == config.OnFailureRollback && old != "" {
@@ -276,7 +277,7 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 		if err := e.Dir.Save(st); err != nil {
 			return "", err
 		}
-		rerr := e.tryApply(ctx, t, "rb", old, sha, sha, true)
+		_, rerr := e.tryApply(ctx, t, "rb", old, sha, sha, true)
 		if stopped(ctx, rerr) {
 			return "", rerr
 		}
@@ -285,7 +286,7 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 			if err := e.Dir.Save(st); err != nil {
 				return "", err
 			}
-			e.reply(q.ID, "❌ The apply of "+code(sha)+" failed ("+failure+"). Rolled back to "+code(old)+".")
+			e.reply(q.ID, withReport("❌ The apply of "+code(sha)+" failed ("+failure+"). Rolled back to "+code(old)+".", report))
 			return RolledBack, nil
 		}
 		// The broken state (DESIGN.md section 10). If this save fails,
@@ -306,7 +307,7 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 			return RollbackError, err
 		}
 		e.Log.Error("the apply and its rollback failed; the instance is broken", "sha", sha, "old", old)
-		e.reply(q.ID, "❌ The apply of "+code(sha)+" failed ("+failure+"), and the rollback to "+code(old)+" failed too ("+message.Reason(rerr.Error())+"). The host may be in a half state. The instance is now broken.\n"+e.waysOut())
+		e.reply(q.ID, withReport("❌ The apply of "+code(sha)+" failed ("+failure+"), and the rollback to "+code(old)+" failed too ("+message.Reason(rerr.Error())+"). The host may be in a half state. The instance is now broken.\n"+e.waysOut(), report))
 		return RollbackError, nil
 	}
 	// on_failure = "pause", or nothing to roll back to: hold the SHA.
@@ -315,7 +316,7 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 	if err := e.Dir.Save(st); err != nil {
 		return "", err
 	}
-	e.reply(q.ID, "❌ The apply of "+code(sha)+" failed ("+failure+"). It is held and not tried again. A newer commit will be asked, so you can fix it forward.")
+	e.reply(q.ID, withReport("❌ The apply of "+code(sha)+" failed ("+failure+"). It is held and not tried again. A newer commit will be asked, so you can fix it forward.", report))
 	return Held, nil
 }
 
@@ -343,23 +344,82 @@ func stopped(ctx context.Context, err error) bool {
 	return err != nil && (ctx.Err() != nil || errors.Is(err, ErrStopped))
 }
 
-// tryApply exports fresh trees and runs apply, then health.
-func (e *Env) tryApply(ctx context.Context, t *trees, tag, sha, old, failed string, rollback bool) error {
+// tryApply exports fresh trees and runs apply, then health. Outside a
+// rollback, apply gets a report file; report is its text for the
+// message (DESIGN.md section 11), "" when it is empty.
+func (e *Env) tryApply(ctx context.Context, t *trees, tag, sha, old, failed string, rollback bool) (report string, err error) {
 	p, err := e.prepare(ctx, t, tag, sha, old)
 	if err != nil {
-		return fmt.Errorf("prepare: %w", err)
+		return "", fmt.Errorf("prepare: %w", err)
 	}
 	p.env.Failed = failed
 	p.env.Rollback = rollback
+	if !rollback {
+		p.env.Report = filepath.Join(t.dir, tag+"-report")
+		f, err := os.OpenFile(p.env.Report, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return "", fmt.Errorf("prepare: make the report file: %w", err)
+		}
+		made, serr := f.Stat()
+		_ = f.Close()
+		if serr != nil {
+			return "", fmt.Errorf("prepare: the report file: %w", serr)
+		}
+		defer func() { report = e.readReport(p.env.Report, made) }()
+	}
 	if err := e.runRoot(ctx, "apply", e.Cfg.Commands.Apply, p.env); err != nil {
-		return err
+		return "", err
 	}
 	if argv := e.Cfg.Commands.Health; len(argv) > 0 {
-		if err := e.runRoot(ctx, "health", argv, p.env); err != nil {
-			return err
+		h := p.env
+		h.Report = "" // the report file is for apply only
+		if err := e.runRoot(ctx, "health", argv, h); err != nil {
+			return "", err
 		}
 	}
-	return nil
+	return "", nil
+}
+
+// maxReport is the most bytes of the report file that root reads.
+const maxReport = 64 << 10
+
+// readReport reads the report file of apply: the same file that root
+// made (made), not a link, at most maxReport bytes. A file that cannot be read is logged and
+// shown as a short note; it never stops the report of the apply.
+func (e *Env) readReport(path string, made os.FileInfo) string {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0) //nolint:gosec // root made this file in its own trees directory
+	if errors.Is(err, fs.ErrNotExist) {
+		return "" // apply removed it: no report
+	}
+	if err != nil {
+		e.Log.Warn("read the report file of apply", "err", err)
+		return "(The report file of apply could not be read. See the journal.)"
+	}
+	defer func() { _ = f.Close() }()
+	// Only the file that root made: not a link, not another file put in
+	// its place (a hard link to another file has another inode).
+	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() || !os.SameFile(fi, made) {
+		e.Log.Warn("the report file of apply is not the file that root made", "path", path)
+		return "(The report file of apply is not the file that pullgate made, so it is not shown.)"
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxReport+1))
+	if err != nil {
+		e.Log.Warn("read the report file of apply", "err", err)
+		return "(The report file of apply could not be read. See the journal.)"
+	}
+	truncated := len(b) > maxReport
+	if truncated {
+		b = b[:maxReport]
+	}
+	return message.Report(string(b), truncated)
+}
+
+// withReport adds the report of apply to a message.
+func withReport(text, report string) string {
+	if report == "" {
+		return text
+	}
+	return text + "\n" + report
 }
 
 // afterApply closes questions whose base is no longer the applied SHA, so

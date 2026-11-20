@@ -52,11 +52,16 @@ func newFixture(t *testing.T, top, sections string) *fixture {
 	c := f.ctrl
 	f.script("apply.sh", `echo "apply $PULLGATE_SHA old=$PULLGATE_OLD_SHA rb=$PULLGATE_ROLLBACK failed=$PULLGATE_FAILED_SHA" >> `+c+`/log
 if [ "$PULLGATE_ROLLBACK" = 1 ] && [ -e `+c+`/fail-rollback ]; then exit 3; fi
+echo "report=$PULLGATE_REPORT_FILE" >> `+c+`/env
+if [ -n "$PULLGATE_REPORT_FILE" ] && [ -e "$PULLGATE_TREE/report" ]; then cat "$PULLGATE_TREE/report" > "$PULLGATE_REPORT_FILE"; fi
+if [ -n "$PULLGATE_REPORT_FILE" ] && [ -e "$PULLGATE_TREE/report-link" ]; then rm -f "$PULLGATE_REPORT_FILE"; ln -s `+c+`/secret "$PULLGATE_REPORT_FILE"; fi
+if [ -n "$PULLGATE_REPORT_FILE" ] && [ -e "$PULLGATE_TREE/report-hardlink" ]; then rm -f "$PULLGATE_REPORT_FILE"; ln `+c+`/secret "$PULLGATE_REPORT_FILE"; fi
 if [ -e "$PULLGATE_TREE/fail-apply" ]; then exit 2; fi
 tr '\0' '\n' < "$PULLGATE_CHANGED_FILES" > `+c+`/changed
 cat "$PULLGATE_TREE/value" > `+c+`/live
 `)
-	f.script("health.sh", `if [ -e "$PULLGATE_TREE/fail-health" ]; then exit 1; fi
+	f.script("health.sh", `echo "health report=$PULLGATE_REPORT_FILE" >> `+c+`/env
+if [ -e "$PULLGATE_TREE/fail-health" ]; then exit 1; fi
 `)
 	f.script("check.sh", `id -u > `+c+`/check-uid
 echo x >> `+c+`/check-count

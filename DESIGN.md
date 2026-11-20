@@ -704,6 +704,16 @@ They run with an empty environment plus:
 - `PULLGATE_FAILED_SHA`: the held SHA, if there is one. The host may be
   part way to it, not at `PULLGATE_OLD_SHA`.
 - `PULLGATE_ROLLBACK`: `1` during a rollback, else empty.
+- `PULLGATE_REPORT_FILE`: only for `apply`, and not in a rollback. The
+  path of an empty file (root's, mode 0600, in the per-process trees
+  directory) where `apply` may write short lines for the owner, for
+  example "skipped step x on purpose". After `apply` (also when it
+  failed), root reads the file: only a regular file, never a link
+  (`O_NOFOLLOW`), at most 64 KiB. Its first 10 lines are added to the
+  `applied` or `failed` message under "Report of apply:", each cleaned and
+  shown as code (section 12), at most 1500 characters in all; a last line
+  says how many lines were left out. A missing or empty file adds
+  nothing. `health` does not get the file.
 
 **In a rollback**, `PULLGATE_SHA` and `PULLGATE_TREE` are the last good SHA
 and its tree; `PULLGATE_OLD_SHA` and `PULLGATE_OLD_TREE` are the SHA that
@@ -749,6 +759,8 @@ Apply this commit?
 First apply: there is no applied commit yet. All N files are listed.
 or: Since <code>SHORT APPLIED SHA</code>:
 ⚠ Watched path changed: <code>path</code>
+⚠ <code>text of a WARN: line of the summary</code>
+⚠ N more warnings from the summary          (only with more than 10)
 ⚠ Symlink out of the tree: <code>path</code> → <code>target</code>
 ⚠ Submodule skipped: <code>path</code>
 
@@ -783,12 +795,34 @@ cut to 200 characters, and then it is HTML-escaped. At most 50 commit
 subjects are read. Every message and every edit is sent with link previews
 off.
 
+**Warnings from the summary.** The `[watch]` list catches changed paths;
+only the owner's `summary` can find other risky changes, because it reads
+the tree. A line of the `summary` output that starts with `WARN: ` (exactly
+these 6 characters, at the start of the line) is taken out of the `<pre>`
+block and shown in the head, after the watched-path warnings, as
+`⚠ <code>text</code>`: the text after the prefix, cleaned and cut to 200
+characters like any repo text. A CRLF line end is not part of the text,
+and a `WARN: ` line with no text is dropped. At most 10 such lines are shown; more give
+one line "⚠ N more warnings from the summary". A summary with only `WARN: `
+lines has no "Summary:" block. When `summary` failed, its output is not
+used, so no warning comes from it. A summary without `WARN: ` lines gives
+the same message as before.
+
 The message must fit one Telegram message (4096 characters). pullgate cuts
 it to 3800 characters, counted on the escaped text in UTF-16 units: the head
 (host, instance, SHA, the warnings) always stays, and when lines are left
 out the last line says how many ("… 120 more lines left out"). The cut is on
 whole lines, so it never splits an HTML tag or entity. The `<pre>` block is
-closed after a cut.
+closed after a cut. The body is cut from its end: first the rest of the
+summary, then the file list, then the commits. The "Full:" line stays last.
+When the head alone is too long, the path warnings (watched paths,
+symlinks, submodules) are cut first and counted ("⚠ … and N more
+warnings"); the summary warnings stay. Each summary warning line is at most
+220 characters after the escape (200 plain characters fit), so 10 of them
+take at most about 2250 and the watched paths keep room. Only when the fixed
+head lines and the summary warnings alone do not fit (a very long broken
+reason) are the last summary warnings counted in the "more warnings from
+the summary" line, so that the message still fits.
 
 ## 13. Modes, limits, status
 
