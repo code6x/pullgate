@@ -143,6 +143,7 @@ func (c *capBuf) Write(p []byte) (int, error) {
 // cmdEnv is the environment of a command (DESIGN.md section 11).
 type cmdEnv struct {
 	SHA, OldSHA, Tree, OldTree, Changed, Failed string
+	Report                                      string // PULLGATE_REPORT_FILE; only for apply
 	Rollback                                    bool
 }
 
@@ -151,7 +152,7 @@ func (e *Env) environ(c cmdEnv) []string {
 	if c.Rollback {
 		rb = "1"
 	}
-	return []string{
+	env := []string{
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"PULLGATE_INSTANCE=" + e.Cfg.Name,
 		"PULLGATE_SHA=" + c.SHA,
@@ -162,6 +163,10 @@ func (e *Env) environ(c cmdEnv) []string {
 		"PULLGATE_FAILED_SHA=" + c.Failed,
 		"PULLGATE_ROLLBACK=" + rb,
 	}
+	if c.Report != "" {
+		env = append(env, "PULLGATE_REPORT_FILE="+c.Report)
+	}
+	return env
 }
 
 // command builds the exec.Cmd of argv. With sandbox it runs as check_user

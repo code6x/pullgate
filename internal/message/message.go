@@ -228,3 +228,42 @@ func closedBefore(body []string, open, i int) bool {
 	}
 	return false
 }
+
+// ReportLines is the most lines of the apply report in a message.
+const ReportLines = 10
+
+// Report is the report file of apply in a message (DESIGN.md section
+// 11): its first ReportLines lines, each cleaned and in <code>, at most
+// OutputMax characters in all; a last line counts the lines left out.
+// truncated says that the file was longer than root read. It is "" when
+// the report has no lines.
+func Report(text string, truncated bool) string {
+	text = strings.TrimRight(text, "\n")
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	lines := strings.Split(text, "\n")
+	out := []string{"Report of apply:"}
+	used := 0
+	shown := 0
+	for _, l := range lines {
+		if shown >= ReportLines {
+			break
+		}
+		c := Code(strings.TrimRight(l, "\r"))
+		if used+Len(c)+1 > OutputMax && shown > 0 {
+			break
+		}
+		out = append(out, c)
+		used += Len(c) + 1
+		shown++
+	}
+	if left := len(lines) - shown; left > 0 || truncated {
+		more := fmt.Sprintf("… %d more lines in the report", left)
+		if truncated {
+			more = "… more lines in the report (only its start was read)"
+		}
+		out = append(out, more)
+	}
+	return strings.Join(out, "\n")
+}

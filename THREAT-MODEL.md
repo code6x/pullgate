@@ -154,6 +154,26 @@ or during the review.
   reason is not cut away; root's tree paths in it become `NEW` and `OLD`.
   The head of the question (host, instance, SHA, the warnings) always
   comes first, before any text from the commit.
+- **`WARN: ` lines of the summary in the head.** `summary` runs as
+  `check_user` on the commit's tree, so a hostile commit may make it print
+  `WARN: ` lines. They are shown only as cleaned code after `⚠ `, at most 10
+  and a count, after the watched-path warnings. They never push out the
+  fixed head lines (host, instance, SHA, the broken and held lines). Each
+  is at most 220 characters after the escape, so all 10 take at most about
+  2250 of the 3400 that the head may use: the watched-path warnings, root's
+  own, always keep room. Path warnings that still do not fit are counted
+  ("⚠ … and N more warnings"), as before. *Left:* a hostile summary can
+  print decoy `WARN: ` lines first and push the owner's real ones into the
+  "N more warnings from the summary" count; the owner's `summary` should
+  print its own warnings first. They change nothing that root checks: the tap is bound to
+  the code and the SHA in root's state.
+- **The report file of `apply`.** `apply` runs as root and is the owner's
+  own command, but it may copy text from the tree. Root makes the file
+  itself, in its own trees directory, and reads it only when it is still
+  that same file (same device and inode, a regular file, opened with
+  `O_NOFOLLOW`), at most 64 KiB. So `apply` cannot make root show another
+  file by a symlink or a hard link. Its lines are cleaned and shown as code, at most
+  10 lines and 1500 characters. A rollback and `health` get no report file.
 - **Hostile text shown as a link in a trusted message.** A commit picks its
   own file names, subjects and command output. Telegram turns text that
   looks like a domain or a URL (`README.md`, `login.example.com`), an
