@@ -105,7 +105,7 @@ func TestSendRefusesSymlinkedOutboxAndUnsafeSpool(t *testing.T) {
 	if err := os.Symlink(target, filepath.Join(d.Outbox(), "00000000000000000001-x.json")); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.Send(os.Getegid(), Message{Kind: KindNotice, Text: "x"}); err != nil {
+	if _, err := d.Send(os.Getegid(), Message{Kind: KindNotice, Text: "x"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(target); err == nil {
@@ -286,7 +286,7 @@ func TestOwnersAndModes(t *testing.T) {
 			t.Errorf("%s: owner %d group %d mode %v, want owner %d group %d mode %v", c.path, u, g, m, uid, c.gid, c.mode)
 		}
 	}
-	if err := d.Send(lgid, Message{Kind: KindNotice, Text: "x"}); err != nil {
+	if _, err := d.Send(lgid, Message{Kind: KindNotice, Text: "x"}); err != nil {
 		t.Fatal(err)
 	}
 	fs, err := d.ReadOutbox()
@@ -301,7 +301,7 @@ func TestOwnersAndModes(t *testing.T) {
 
 func TestSendDeny(t *testing.T) {
 	d := dirs(t)
-	if err := d.Send(-1, Message{Kind: KindNotice, Text: "x"}); err == nil {
+	if _, err := d.Send(-1, Message{Kind: KindNotice, Text: "x"}); err == nil {
 		t.Error("a message with no group must be refused")
 	}
 	if os.Geteuid() != 0 {
@@ -315,7 +315,7 @@ func TestSendDeny(t *testing.T) {
 		for in[other] {
 			other++
 		}
-		if err := d.Send(other, Message{Kind: KindNotice, Text: "x"}); err == nil {
+		if _, err := d.Send(other, Message{Kind: KindNotice, Text: "x"}); err == nil {
 			t.Error("a group the chown cannot give must be an error")
 		}
 	}

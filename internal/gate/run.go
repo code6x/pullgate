@@ -32,6 +32,8 @@ const (
 	CheckLimited  Result = "check-limited"
 	CheckFailed   Result = "check-failed"
 	Asked         Result = "asked"
+	Sent          Result = "sent"          // in the outbox; no receipt from the listener yet
+	NotDelivered  Result = "not-delivered" // the receipt says the listener could not send it
 	AutoQueued    Result = "auto"
 	Applied       Result = "applied"
 	Skipped       Result = "skipped"
@@ -45,19 +47,19 @@ const (
 func (e *Env) head() string { return message.Head(e.Cfg.Host, e.Cfg.Name) }
 
 func (e *Env) notice(text string) {
-	if err := e.Spool.Send(e.Owners.ListenerGID, spool.Message{Kind: spool.KindNotice, Text: e.head() + "\n" + text}); err != nil {
+	if _, err := e.Spool.Send(e.Owners.ListenerGID, spool.Message{Kind: spool.KindNotice, Text: e.head() + "\n" + text}); err != nil {
 		e.Log.Error("write a notice to the outbox", "err", err)
 	}
 }
 
 func (e *Env) reply(q int64, text string) {
-	if err := e.Spool.Send(e.Owners.ListenerGID, spool.Message{Kind: spool.KindReply, Question: q, Text: e.head() + "\n" + text}); err != nil {
+	if _, err := e.Spool.Send(e.Owners.ListenerGID, spool.Message{Kind: spool.KindReply, Question: q, Text: e.head() + "\n" + text}); err != nil {
 		e.Log.Error("write a reply to the outbox", "err", err)
 	}
 }
 
 func (e *Env) edit(q int64, text string) {
-	if err := e.Spool.Send(e.Owners.ListenerGID, spool.Message{Kind: spool.KindEdit, Question: q, Text: e.head() + "\n" + text}); err != nil {
+	if _, err := e.Spool.Send(e.Owners.ListenerGID, spool.Message{Kind: spool.KindEdit, Question: q, Text: e.head() + "\n" + text}); err != nil {
 		e.Log.Error("write an edit to the outbox", "err", err)
 	}
 }
@@ -160,6 +162,8 @@ func (e *Env) Run(ctx context.Context) (Result, error) {
 	if err != nil {
 		return "", err
 	}
+	e.takeReceipts(st)
+	e.warnLate(st, e.now())
 	// Resume before pause: when both came, the pause wins (fail closed).
 	if requests.Resume > 0 {
 		e.resumeRequest(st)
@@ -404,12 +408,23 @@ func (e *Env) decide(ctx context.Context, st *state.State, tip string) (Result, 
 		e.Log.Info("auto mode: apply queued", "sha", tip)
 		return AutoQueued, nil
 	}
-	if err := e.Spool.Send(e.Owners.ListenerGID, spool.Message{Kind: spool.KindAsk, Question: nq.ID, Code: c, Expires: nq.Expires, Text: text}); err != nil {
+	name, err := e.Spool.Send(e.Owners.ListenerGID, spool.Message{Kind: spool.KindAsk, Question: nq.ID, Code: c, Expires: nq.Expires, Text: text})
+	if err != nil {
 		return undo(err)
 	}
 	st.AskTimes = append(st.AskTimes, now)
-	e.Log.Info("asked", "sha", tip, "question", nq.ID)
-	return Asked, nil
+	if i := st.FindCode(c); i >= 0 {
+		st.Questions[i].Outbox = name
+	}
+	// "asked" is logged only after the receipt of the listener (takeReceipts).
+	switch e.waitReceipt(st, c) {
+	case state.DeliverySent:
+		return Asked, nil
+	case state.DeliveryFailed:
+		return NotDelivered, fmt.Errorf("the listener could not read or send question %d for %s, and removed it. Fix: run \"pullgate doctor\" as root, then \"pullgate status %s --ask-again\"", nq.ID, tip, e.Cfg.Name)
+	}
+	e.Log.Info("sent: the question is in the outbox; no receipt from the listener yet. The next run checks it", "sha", tip, "question", nq.ID)
+	return Sent, nil
 }
 
 // CheckExitNothing is the exit status of check that means "this commit

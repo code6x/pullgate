@@ -88,11 +88,6 @@ api_url = %q
 	r.Commit("first policy", map[string]string{"policy.toml": "allow = 1\n"})
 	second := r.Commit("second policy", map[string]string{"policy.toml": "allow = 2\n"})
 
-	// The first run asks about the tip: the second commit.
-	if out := pg("run", "config-repo"); !strings.Contains(out, "result=asked") {
-		t.Fatalf("run: %s", out)
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	listen := exec.CommandContext(ctx, bin, "listen", "--config", filepath.Join(etc, "listener.toml"), "--trust-own-config")
@@ -111,6 +106,12 @@ api_url = %q
 		}
 	}
 	defer stop()
+
+	// The first run asks about the tip: the second commit. It logs
+	// "asked" only after the receipt of the listener (DESIGN.md section 8).
+	if out := pg("run", "config-repo"); !strings.Contains(out, "result=asked") || !strings.Contains(out, "msg=asked") {
+		t.Fatalf("run: %s", out)
+	}
 
 	var q faketg.Sent
 	wait(t, "the question", func() bool {

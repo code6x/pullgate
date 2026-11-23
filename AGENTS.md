@@ -8,7 +8,7 @@ change code. They are the rules the code must follow.
 ## Layout
 
 - `cmd/pullgate/` - the one binary. Subcommands: `run`, `listen`, `apply`,
-  `status`, `version`.
+  `status`, `doctor`, `bootstrap`, `update`, `units`, `version`.
 - `internal/` - one package per part. Packages do not import `cmd/`.
   - `internal/config/` - the instance and listener configs, and the checks
     of the files they name (DESIGN.md sections 4 and 5).
@@ -26,6 +26,8 @@ change code. They are the rules the code must follow.
     list, the cut to one message (DESIGN.md section 12).
   - `internal/gate/` - `run`, `apply` and `status` (DESIGN.md sections 7,
     9, 10, 13).
+  - `internal/doctor/` - `pullgate doctor`: one line per check of the
+    setup (DESIGN.md section 18).
   - `internal/selfupdate/` - `pullgate update`: the notice of a new release,
     `/update`, and the install with its units (DESIGN.md section 15).
 - `embed.go` - the files that the binary carries: `install.sh` and the

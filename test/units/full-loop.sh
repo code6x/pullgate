@@ -20,6 +20,8 @@
 #    tap, the install with the checks of install.sh, a changed unit put
 #    back, a drop-in listed, and the report from the new listener.
 # 9. Every unit the README enables is enabled and active.
+# 10. It runs the README "install-test:doctor" block: pullgate doctor must
+#    find no problem.
 # After each loop, every message root wrote must have been read and sent
 # by the listener: the outbox is empty, and the listener logged no error
 # and no warning.
@@ -504,6 +506,18 @@ for u in $units; do
 	echo "$u: enabled, active"
 done
 [ "$n" -ge 4 ] || err "found $n units in the README start block, want at least 4"
+
+step "10. The README doctor: every check ok"
+# The run unit's last run made every directory, so no "not made yet" note.
+doctor_out="$(sh "$here/readme-block.sh" doctor "$top/README.md" | sh -eu 2>&1)" || {
+	printf '%s\n' "$doctor_out"
+	die "pullgate doctor found a problem (above)"
+}
+printf '%s\n' "$doctor_out"
+printf '%s\n' "$doctor_out" | grep -q '^All checks passed\.$' || err "pullgate doctor did not say: All checks passed."
+if printf '%s\n' "$doctor_out" | grep -q '^PROBLEM'; then
+	err "pullgate doctor printed a PROBLEM line"
+fi
 
 if [ "$fail" -ne 0 ]; then
 	exit 1

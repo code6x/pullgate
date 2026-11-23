@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 )
@@ -66,6 +67,30 @@ func TestHelpListsVersion(t *testing.T) {
 		}
 		if !strings.Contains(out, "--version") || !strings.Contains(out, "\n  version") {
 			t.Errorf("pullgate %s does not list --version and version:\n%s", h, out)
+		}
+	}
+}
+
+func TestDoctorArgs(t *testing.T) {
+	for _, c := range []struct {
+		args []string
+		code int
+		want string
+	}{
+		{[]string{"doctor", "Bad_Name"}, 64, "not an instance name"},
+		{[]string{"doctor", "--nope"}, 64, "unknown arguments"},
+		{[]string{"doctor", "a", "b"}, 64, "unknown arguments"},
+		{[]string{"_doctor-read"}, 64, "takes one path"},
+	} {
+		code, _, errOut := runArgs(t, c.args...)
+		if code != c.code || !strings.Contains(errOut, c.want) {
+			t.Errorf("pullgate %v: exit %d, stderr %q; want %d and %q", c.args, code, errOut, c.code, c.want)
+		}
+	}
+	if os.Geteuid() != 0 {
+		code, _, errOut := runArgs(t, "doctor", "config-repo", "--telegram")
+		if code != 1 || !strings.Contains(errOut, "must run as root") {
+			t.Errorf("doctor as a user: exit %d, stderr %q", code, errOut)
 		}
 	}
 }

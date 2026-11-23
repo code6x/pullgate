@@ -91,8 +91,13 @@ echo "$runlog"
 if echo "$runlog" | grep -q -E 'level=(ERROR|WARN)'; then
 	err "the first run logged an error or a warning"
 fi
-if ! echo "$runlog" | grep -q 'msg=asked '; then
-	err "the first run did not log 'asked': it did not ask the question"
+# No listener runs yet, so no receipt comes: the run says "sent", never
+# "asked" (DESIGN.md section 8).
+if ! echo "$runlog" | grep -q 'msg="sent: '; then
+	err "the first run did not log 'sent': it did not write the question"
+fi
+if echo "$runlog" | grep -q 'msg=asked '; then
+	err "the first run logged 'asked' with no listener running"
 fi
 
 # The owners and modes of DESIGN.md section 4.
@@ -112,6 +117,7 @@ want "$spool" "root root 755"
 want "$spool/outbox" "root pullgate 770"
 want "$spool/inbox" "pullgate pullgate 700"
 want "$spool/check" "pullgate pullgate 700"
+want "$spool/receipts" "pullgate pullgate 700"
 n=0
 for f in "$spool"/outbox/*.json; do
 	[ -e "$f" ] || continue
@@ -174,6 +180,17 @@ if journalctl --no-pager -o cat -u pullgate-listen.service | grep -q -E 'level=(
 fi
 if ! systemctl is-active --quiet pullgate-listen.service; then
 	err "the listener is not running"
+fi
+# The listener wrote a receipt: the next run takes it and logs "asked".
+if ! systemctl start "pullgate-run@$name.service"; then
+	err "the second run failed under pullgate-run@.service"
+fi
+journalctl --sync || true
+if ! journalctl --no-pager -o cat -u "pullgate-run@$name.service" | grep -q 'msg=asked '; then
+	err "the second run did not log 'asked' after the receipt of the listener"
+fi
+if [ -n "$(ls -A "$spool/receipts")" ]; then
+	err "the second run did not take the receipt"
 fi
 systemctl stop pullgate-listen.service
 

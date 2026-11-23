@@ -47,7 +47,21 @@ type Question struct {
 	Expires time.Time `json:"expires"`
 	Open    bool      `json:"open"`
 	Auto    bool      `json:"auto,omitempty"`
+	// Outbox is the name of the outbox file of the question; the receipt
+	// of the listener has the same name (DESIGN.md section 8).
+	Outbox string `json:"outbox,omitempty"`
+	// Delivery is what the receipt said: DeliverySent, DeliveryFailed, or
+	// "" when root has no receipt yet.
+	Delivery string `json:"delivery,omitempty"`
+	// Warned is set when a run logged that no receipt came in time.
+	Warned bool `json:"warned,omitempty"`
 }
+
+// The values of Question.Delivery.
+const (
+	DeliverySent   = "sent"
+	DeliveryFailed = "failed"
+)
 
 // Mark is what pullgate knows about one SHA.
 type Mark struct {

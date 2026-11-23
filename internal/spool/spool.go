@@ -76,6 +76,58 @@ func (d Dirs) Inbox() string { return filepath.Join(d.inst(), "inbox") }
 // CheckDir is the path of the directory of check requests.
 func (d Dirs) CheckDir() string { return filepath.Join(d.inst(), "check") }
 
+// Receipts is the path of the directory of receipts: the listener writes
+// one for each outbox file it handled (DESIGN.md section 8).
+func (d Dirs) Receipts() string { return filepath.Join(d.inst(), "receipts") }
+
+// Receipt contents. A receipt holds nothing from the message.
+const (
+	ReceiptSent   = "sent\n"   // Telegram took the message
+	ReceiptFailed = "failed\n" // the file was unreadable, or Telegram refused it, and it was removed
+)
+
+// MaxReceipt is the largest receipt file root reads.
+const MaxReceipt = 16
+
+// MaxReceipts is the most receipts root reads in one call.
+const MaxReceipts = 1000
+
+// FixMode sets the owner (uid, gid; -1 keeps one) and the mode of an open
+// file or directory. Tests replace it to play a kernel that does not keep
+// a mode (issue #19): every caller reads the result back.
+var FixMode = func(f *os.File, uid, gid int, mode os.FileMode) error {
+	if uid >= 0 || gid >= 0 {
+		if err := f.Chown(uid, gid); err != nil {
+			return err
+		}
+	}
+	return f.Chmod(mode)
+}
+
+// ErrNotKept is the error of a read-back that found another owner or mode
+// than the one pullgate set.
+var ErrNotKept = errors.New("the kernel did not keep the owner or the mode that pullgate set")
+
+// readBack checks that the open file f has the owner uid, the group gid
+// (-1: any) and exactly the mode bits mode (also setuid, setgid, sticky).
+func readBack(f *os.File, what string, uid, gid int, mode os.FileMode) error {
+	fi, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("read back %s: %w", what, err)
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("read back %s: no owner. This is a bug in pullgate", what)
+	}
+	got := fi.Mode() & (fs.ModePerm | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky)
+	if (uid >= 0 && int(st.Uid) != uid) || (gid >= 0 && int(st.Gid) != gid) || got != mode {
+		return fmt.Errorf("%w on %s: want owner %d, group %d, mode %s; got owner %d, group %d, mode %s. "+
+			"Fix: run \"pullgate doctor\" as root; check that the unit keeps CAP_CHOWN and CAP_FOWNER, and the mount options of the file system",
+			ErrNotKept, what, uid, gid, mode, st.Uid, st.Gid, got)
+	}
+	return nil
+}
+
 // SelfName is the spool name of the updates of pullgate itself (DESIGN.md
 // section 15): Base/_update/{outbox,inbox,check}. An instance name matches
 // [a-z0-9][a-z0-9-]{0,31}, so no instance can have this name.
@@ -104,7 +156,16 @@ func (d Dirs) Ensure(uid uint32, o Owners) error {
 		}
 	}
 	for _, p := range []string{d.Base, d.inst()} {
-		if err := os.Chmod(p, 0o755); err != nil {
+		f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0) //nolint:gosec // the spool base and instance directory of root
+		if err != nil {
+			return fmt.Errorf("open %s: %w", p, err)
+		}
+		err = FixMode(f, -1, -1, 0o755)
+		if err == nil {
+			err = readBack(f, p, int(uid), -1, 0o755)
+		}
+		_ = f.Close()
+		if err != nil {
 			return fmt.Errorf("fix %s: %w", p, err)
 		}
 	}
@@ -124,6 +185,7 @@ func (d Dirs) Ensure(uid uint32, o Owners) error {
 		{"outbox", int(uid), o.ListenerGID, 0o770},
 		{"inbox", o.ListenerUID, o.ListenerGID, 0o700},
 		{"check", o.ListenerUID, o.ListenerGID, 0o700},
+		{"receipts", o.ListenerUID, o.ListenerGID, 0o700},
 	} {
 		if err := root.Mkdir(s.name, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
 			return fmt.Errorf("make %s: %w", s.name, err)
@@ -132,9 +194,9 @@ func (d Dirs) Ensure(uid uint32, o Owners) error {
 		if err != nil {
 			return fmt.Errorf("open %s/%s: %w", d.inst(), s.name, err)
 		}
-		err = f.Chown(s.uid, s.gid)
+		err = FixMode(f, s.uid, s.gid, s.mode)
 		if err == nil {
-			err = f.Chmod(s.mode)
+			err = readBack(f, d.inst()+"/"+s.name, s.uid, s.gid, s.mode)
 		}
 		_ = f.Close()
 		if err != nil {
@@ -159,23 +221,25 @@ func seqName() string {
 // temporary name with O_EXCL|O_NOFOLLOW, then a rename in the same dir to
 // final (a new sequence name when final is ""). With gid >= 0 the file gets
 // that group before it is renamed, so a reader never sees it with another.
-func writeIn(dir string, data []byte, mode os.FileMode, gid int, final string) error {
+// The owner and the mode are read back before the rename. It returns the
+// final name.
+func writeIn(dir string, data []byte, mode os.FileMode, gid int, final string) (string, error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
-		return fmt.Errorf("open %s: %w", dir, err)
+		return "", fmt.Errorf("open %s: %w", dir, err)
 	}
 	defer func() { _ = root.Close() }()
 	tmp := randName()
 	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
-		return fmt.Errorf("write in %s: %w", dir, err)
+		return "", fmt.Errorf("write in %s: %w", dir, err)
 	}
 	_, err = f.Write(data)
-	if err == nil && gid >= 0 {
-		err = f.Chown(-1, gid)
+	if err == nil {
+		err = FixMode(f, -1, gid, mode)
 	}
 	if err == nil {
-		err = f.Chmod(mode)
+		err = readBack(f, "a new file in "+dir, -1, gid, mode)
 	}
 	if err == nil {
 		err = f.Sync()
@@ -191,23 +255,151 @@ func writeIn(dir string, data []byte, mode os.FileMode, gid int, final string) e
 	}
 	if err != nil {
 		_ = root.Remove(tmp)
-		return fmt.Errorf("write in %s: %w", dir, err)
+		return "", fmt.Errorf("write in %s: %w", dir, err)
 	}
-	return nil
+	return final, nil
 }
 
 // Send writes a message to the outbox (root). The file is owned by root,
 // with group gid (the group of the listener user, Owners.ListenerGID) and
-// mode 0640, so the listener can read it (DESIGN.md section 4).
-func (d Dirs) Send(gid int, m Message) error {
+// mode 0640, so the listener can read it (DESIGN.md section 4). It returns
+// the name of the file: the receipt of the listener has the same name.
+func (d Dirs) Send(gid int, m Message) (string, error) {
 	if gid < 0 {
-		return errors.New("write in the outbox: no group for the listener. This is a bug in pullgate")
+		return "", errors.New("write in the outbox: no group for the listener. This is a bug in pullgate")
 	}
 	b, err := json.Marshal(m)
 	if err != nil {
-		return err
+		return "", err
 	}
 	return writeIn(d.Outbox(), b, 0o640, gid, "")
+}
+
+// DoctorPrefix starts the name of the test file that pullgate doctor
+// writes to the outbox. The name starts with ".", so the listener never
+// sends it.
+const DoctorPrefix = ".doctor-"
+
+// WriteDoctorTest writes a small file to the outbox as Send does, under a
+// name that the listener skips, and returns its path. The caller removes
+// it with RemoveDoctorTest.
+func (d Dirs) WriteDoctorTest(gid int) (string, error) {
+	if gid < 0 {
+		return "", errors.New("write in the outbox: no group for the listener. This is a bug in pullgate")
+	}
+	n, err := writeIn(d.Outbox(), []byte("{}"), 0o640, gid, DoctorPrefix+randName()[5:])
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d.Outbox(), n), nil
+}
+
+// RemoveDoctorTest removes a file of WriteDoctorTest.
+func (d Dirs) RemoveDoctorTest(path string) error {
+	n := filepath.Base(path)
+	if filepath.Dir(path) != d.Outbox() || !strings.HasPrefix(n, DoctorPrefix) {
+		return errors.New("not a doctor test file. This is a bug in pullgate")
+	}
+	root, err := os.OpenRoot(d.Outbox())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	return root.Remove(n)
+}
+
+// WriteReceipt writes the receipt of the outbox file name (the listener):
+// ReceiptSent when sent is true, else ReceiptFailed.
+func (d Dirs) WriteReceipt(name string, sent bool) error {
+	if name == "" || strings.HasPrefix(name, ".") || strings.ContainsRune(name, '/') {
+		return errors.New("not an outbox file name. This is a bug in pullgate")
+	}
+	c := ReceiptFailed
+	if sent {
+		c = ReceiptSent
+	}
+	_, err := writeIn(d.Receipts(), []byte(c), 0o600, -1, name)
+	return err
+}
+
+// TakeReceipts reads and removes the receipts (root): the map holds true
+// for a sent message and false for a failed one, by outbox file name. Each
+// file must be a regular file owned by the listener user, with one of the
+// two contents; a bad file is removed and comes back as an error. A
+// missing directory (made by an older version) is no receipt.
+func (d Dirs) TakeReceipts(listenerUID int) (map[string]bool, []error, error) {
+	root, err := os.OpenRoot(d.Receipts())
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+	defer func() { _ = root.Close() }()
+	names, err := list(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(names) > MaxReceipts {
+		names = names[:MaxReceipts] // the rest waits for the next run
+	}
+	out := map[string]bool{}
+	var bad []error
+	for _, n := range names {
+		b, err := readOne(root, n, MaxReceipt, listenerUID)
+		if rerr := root.Remove(n); rerr != nil && err == nil {
+			err = rerr
+		}
+		switch {
+		case err != nil:
+		case string(b) == ReceiptSent:
+			out[n] = true
+			continue
+		case string(b) == ReceiptFailed:
+			out[n] = false
+			continue
+		default:
+			err = errors.New("not the content of a receipt")
+		}
+		bad = append(bad, fmt.Errorf("receipt %s: %w", n, err))
+	}
+	return out, bad, nil
+}
+
+// PeekReceipt reads the receipt of the outbox file name and leaves it in
+// place (for pullgate status). found is false when there is none or it is
+// bad.
+func (d Dirs) PeekReceipt(listenerUID int, name string) (sent, found bool) {
+	if name == "" || strings.HasPrefix(name, ".") || strings.ContainsRune(name, '/') {
+		return false, false
+	}
+	root, err := os.OpenRoot(d.Receipts())
+	if err != nil {
+		return false, false
+	}
+	defer func() { _ = root.Close() }()
+	b, err := readOne(root, name, MaxReceipt, listenerUID)
+	switch {
+	case err != nil:
+		return false, false
+	case string(b) == ReceiptSent:
+		return true, true
+	case string(b) == ReceiptFailed:
+		return false, true
+	}
+	return false, false
+}
+
+// OutboxHas reports whether the outbox still holds the file name: the
+// listener has not handled it yet.
+func (d Dirs) OutboxHas(name string) bool {
+	root, err := os.OpenRoot(d.Outbox())
+	if err != nil {
+		return false
+	}
+	defer func() { _ = root.Close() }()
+	_, err = root.Lstat(name)
+	return err == nil
 }
 
 // WriteApproval writes an approval to the inbox (the listener).
@@ -216,13 +408,15 @@ func (d Dirs) WriteApproval(a Approval) error {
 	if err != nil {
 		return err
 	}
-	return writeIn(d.Inbox(), b, 0o600, -1, "")
+	_, err = writeIn(d.Inbox(), b, 0o600, -1, "")
+	return err
 }
 
 // WriteCheck writes a check request (the listener). It always has the same
 // name, so many requests before root reads them are one file.
 func (d Dirs) WriteCheck() error {
-	return writeIn(d.CheckDir(), []byte(CheckContent), 0o600, -1, CheckFile)
+	_, err := writeIn(d.CheckDir(), []byte(CheckContent), 0o600, -1, CheckFile)
+	return err
 }
 
 // HasCheck reports whether the check directory holds a file whose name
@@ -272,7 +466,8 @@ func (d Dirs) WriteRequest(kind string) error {
 	if kind != RequestStatus && kind != RequestPause && kind != RequestResume && kind != RequestAskAgain {
 		return fmt.Errorf("unknown request kind %q", kind)
 	}
-	return writeIn(d.CheckDir(), []byte(kind+"\n"), 0o600, -1, kind)
+	_, err := writeIn(d.CheckDir(), []byte(kind+"\n"), 0o600, -1, kind)
+	return err
 }
 
 // Requests counts the valid requests that TakeRequests took.

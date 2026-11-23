@@ -58,7 +58,7 @@ func TestSettleTwoTipsGiveOneQuestionForTheSecond(t *testing.T) {
 		t.Fatalf("the second tip has not settled: %s", r)
 	}
 	f.now = f.now.Add(5 * time.Minute)
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("the settled tip is asked: %s", r)
 	}
 	ms := f.outbox()
@@ -81,7 +81,7 @@ func TestSettleTipSeenLongerAgoIsAskedAtOnce(t *testing.T) {
 		t.Fatalf("first run: %s", r)
 	}
 	f.now = f.now.Add(31 * time.Minute)
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("a tip older than settle is asked at once: %s", r)
 	}
 }
@@ -103,7 +103,7 @@ func TestSettleClockBackStartsAgain(t *testing.T) {
 func TestSettleWithoutItAsksAtOnce(t *testing.T) {
 	f := newFixture(t, ``, "")
 	f.commit("first", "one", nil)
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("no settle asks at once: %s", r)
 	}
 }
@@ -148,7 +148,7 @@ func TestCheckExit3IsNothingToApply(t *testing.T) {
 	}
 	// The next real commit lists every commit since the last real apply.
 	f.commit("real change", "two", map[string]string{"nothing-here": ""}) // "" removes the file
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("next commit: %s", r)
 	}
 	ms := f.outbox()
@@ -192,7 +192,7 @@ func TestReaskAfterSkip(t *testing.T) {
 		t.Fatalf("before reask_after: %s", r)
 	}
 	f.now = f.now.Add(time.Hour)
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("after reask_after the skipped tip is asked once more: %s", r)
 	}
 	q := f.ask()
@@ -213,7 +213,7 @@ func TestReaskAfterSkip(t *testing.T) {
 		t.Fatalf("after a second Skip, not again before the next wait: %s", r)
 	}
 	f.now = f.now.Add(12 * time.Hour)
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("after the next wait: %s", r)
 	}
 	if st := f.state(); st.Open() == nil || st.Open().SHA != sha {
@@ -234,7 +234,7 @@ func TestReaskAfterExpiry(t *testing.T) {
 		t.Fatal("the expired question says when it is asked again")
 	}
 	f.now = f.now.Add(24 * time.Hour)
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("an expired tip is asked once more: %s", r)
 	}
 }

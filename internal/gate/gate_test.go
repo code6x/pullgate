@@ -17,7 +17,7 @@ import (
 func TestFirstRunAsksWithAllFilesThenApplies(t *testing.T) {
 	f := newFixture(t, `on_failure = "rollback"`, "")
 	sha := f.commit("first", "one", map[string]string{"policy/main.toml": "x = 1\n"})
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("run: %s", r)
 	}
 	q := f.ask()
@@ -53,7 +53,7 @@ func TestSecondCommitGetsOldTreeAndForwardOnly(t *testing.T) {
 	f := newFixture(t, ``, "")
 	a := f.applyNew("one")
 	b := f.commit("second", "two", nil)
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("run: %s", r)
 	}
 	q := f.ask()
@@ -100,7 +100,7 @@ func TestForcePushRefusedUnlessAllowOlder(t *testing.T) {
 	g.applyNew("one")
 	g.r.Git("checkout", "--quiet", "--orphan", "other")
 	other := g.commit("rewritten", "two", nil)
-	if r := g.run(); r != Asked {
+	if r := g.run(); r != Sent {
 		t.Fatalf("with allow_older it is asked, got %s", r)
 	}
 	q := g.ask()
@@ -135,7 +135,7 @@ func TestTapOnSupersededQuestionAppliesOldSHA(t *testing.T) {
 	f.run()
 	q1 := f.ask()
 	b := f.commit("second", "two", nil)
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("run: %s", r)
 	}
 	ms := f.outbox()
@@ -152,7 +152,7 @@ func TestTapOnSupersededQuestionAppliesOldSHA(t *testing.T) {
 	if !contains(f.outbox(), "the applied commit changed") {
 		t.Fatal("the stale question must be closed")
 	}
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("run: %s", r)
 	}
 	q := f.ask()
@@ -224,7 +224,7 @@ func TestSkip(t *testing.T) {
 	if err := f.env.Status(new(strings.Builder), StatusFlags{AskAgain: true}); err != nil {
 		t.Fatal(err)
 	}
-	if r := f.run(); r != Asked || f.ask().Code == "" {
+	if r := f.run(); r != Sent || f.ask().Code == "" {
 		t.Fatalf("--ask-again asks again: %s", r)
 	}
 	_ = a
@@ -237,7 +237,7 @@ func TestSkip(t *testing.T) {
 func TestAskAgainReplacesALostQuestion(t *testing.T) {
 	f := newFixture(t, ``, "")
 	tip := f.commit("first", "one", nil)
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("run: %s", r)
 	}
 	old := f.ask() // read and dropped: as if the listener lost it
@@ -255,7 +255,7 @@ func TestAskAgainReplacesALostQuestion(t *testing.T) {
 	if len(ms) != 1 || ms[0].Kind != spool.KindEdit || ms[0].Question != old.Question || !strings.Contains(ms[0].Text, "closed") {
 		t.Fatalf("--ask-again must close the old message: %+v", ms)
 	}
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("the run after --ask-again must ask: %s", r)
 	}
 	nq := f.ask()
@@ -294,7 +294,7 @@ func TestAskAgainDropsAnApprovalWrittenBefore(t *testing.T) {
 	if r := f.apply(); r == Applied || f.state().Applied != "" {
 		t.Fatalf("an approval written before --ask-again must not apply: %s", r)
 	}
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("the next run asks again: %s", r)
 	}
 }
@@ -401,7 +401,7 @@ func TestExpiredQuestionIsClosedByRun(t *testing.T) {
 		t.Fatal("the expired question must be closed")
 	}
 	f.commit("second", "two", nil)
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("a new commit asks again: %s", r)
 	}
 }
@@ -523,7 +523,7 @@ func TestMaxFailedTries(t *testing.T) {
 	f.applyNew("one")
 	f.commit("bad", "two", map[string]string{"fail-apply": "1"})
 	for try := 1; try <= 2; try++ {
-		if r := f.run(); r != Asked {
+		if r := f.run(); r != Sent {
 			t.Fatalf("try %d: run %s", try, r)
 		}
 		f.tap(f.ask().Code, "apply")
@@ -563,7 +563,7 @@ func TestOnFailurePauseHoldsAndAsksNewer(t *testing.T) {
 		t.Fatalf("status must show the held SHA: %s", out.String())
 	}
 	c := f.commit("fix", "three", map[string]string{"fail-apply": ""})
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("a newer commit is asked: %s", r)
 	}
 	q := f.ask()
@@ -624,7 +624,7 @@ func TestPauseFile(t *testing.T) {
 	if err := f.env.Status(new(strings.Builder), StatusFlags{Resume: true}); err != nil {
 		t.Fatal(err)
 	}
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("after resume the tip is asked again: %s", r)
 	}
 }
@@ -654,7 +654,7 @@ func TestLock(t *testing.T) {
 		t.Fatalf("a second run must stop: %s", r)
 	}
 	_ = l.Close()
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("run: %s", r)
 	}
 }
@@ -662,7 +662,7 @@ func TestLock(t *testing.T) {
 func TestQuestionsPerDay(t *testing.T) {
 	f := newFixture(t, ``, "[limits]\nquestions_per_day = 1\n")
 	f.commit("first", "one", nil)
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("run: %s", r)
 	}
 	f.outbox()
@@ -678,7 +678,7 @@ func TestQuestionsPerDay(t *testing.T) {
 		t.Fatal("only one notice per day")
 	}
 	f.now = f.now.Add(25 * time.Hour)
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("a day later it asks: %s", r)
 	}
 }
@@ -796,7 +796,7 @@ func TestClosedQuestionAsksAgainWhenTheSHAComesBack(t *testing.T) {
 	f.run()
 	f.outbox()
 	f.r.Push(b) // and b comes back
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("b must be asked again: %s", r)
 	}
 }
@@ -813,7 +813,7 @@ func TestFailedOutboxWriteIsTriedAgain(t *testing.T) {
 		t.Fatal("an undelivered question must not stay open")
 	}
 	f.script("check.sh", "true\n")
-	if r := f.run(); r != Asked { // Ensure fixes the mode again
+	if r := f.run(); r != Sent { // Ensure fixes the mode again
 		t.Fatalf("the next run must ask: %s", r)
 	}
 }

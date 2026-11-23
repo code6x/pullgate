@@ -84,6 +84,9 @@ type Env struct {
 	Log     *slog.Logger
 	CmdOut  io.Writer // where the output of apply and health goes (the journal)
 	Now     func() time.Time
+	// ReceiptWait is how long a run waits for the receipt of a new
+	// question: 0 is DefaultReceiptWait, below 0 is no wait (tests).
+	ReceiptWait time.Duration
 }
 
 // New makes an Env. Paths: the state of NAME is stateBase/NAME, the spool

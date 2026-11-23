@@ -112,6 +112,7 @@ can be less strict; each example sets what its `apply` needs.
 | `/var/spool/pullgate/NAME/outbox/*.json` | root, group listener, 0640 | one message |
 | `/var/spool/pullgate/NAME/inbox` | listener, 0700 | approvals from the listener to root |
 | `/var/spool/pullgate/NAME/check` | listener, 0700 | check, status and pause requests from the listener to root |
+| `/var/spool/pullgate/NAME/receipts` | listener, 0700 | receipts from the listener to root: which outbox files it sent (section 8) |
 | `/var/lib/pullgate-listener/state.json` | listener, 0600 | the listener's open questions |
 | `/var/lib/pullgate/_update/` and `.../tmp/` | root, 0700 | the state, the lock and the downloads of `pullgate update` (section 15) |
 | `/var/spool/pullgate/_update/` | as `NAME/` above | the outbox, inbox and check request of the updates |
@@ -151,7 +152,15 @@ under the unit (issue #19). The other choice was to remove
 `RestrictSUIDSGID=yes` from the run unit. We keep it: the run unit runs as
 root with `CAP_FOWNER`, and it must never make a setuid or setgid file.
 `Ensure` also takes the setgid bit off an outbox made by 0.1.0. Removing a
-bit is allowed under `RestrictSUIDSGID=yes`. Because root is not in the
+bit is allowed under `RestrictSUIDSGID=yes`.
+
+**Read back after set.** Each time root sets an owner or a mode (the spool
+directories in `Ensure`, each outbox file in `Send`), it reads them back
+with `fstat` on the same open file, and fails when they differ: "the
+kernel did not keep the owner or the mode that pullgate set on … Fix: run
+pullgate doctor". The run ends with this error before it writes a
+question, so it never logs `asked` for a question that the listener
+cannot read (issue #19: the kernel cleared a bit without an error). Because root is not in the
 listener's group, the `fchown` needs `CAP_CHOWN`: every unit that runs
 `pullgate run` or `pullgate apply` must keep it. Without it, root cannot
 write to the outbox, and the owner gets no question and no reply.
@@ -400,6 +409,38 @@ because it may be a question that the owner never saw. If Telegram refuses
 a message, the listener tries again on the next round, and drops it after
 one day with a log line.
 
+**Receipts** (the listener writes, root reads and removes). For each
+outbox file it handled, the listener writes `receipts/NAME`, where NAME
+is the name of the outbox file: `sent\n` when Telegram took the message,
+`failed\n` when it removed the file without a send (it could not read or
+parse it, Telegram refused it for good, or it was a day old). It writes
+the receipt before it removes the outbox file. A receipt holds nothing
+from the message. The spool of updates (`_update`) has no receipts.
+
+Root keeps the outbox file name of each question in its state
+(`"outbox"`), and reads the receipts (`TakeReceipts`): through
+`os.OpenRoot` with `O_NOFOLLOW`, a regular file owned by the listener
+user, at most 16 bytes, one of the two contents, at most 1000 per run.
+Each file is removed; a bad one is logged. Then:
+
+- After it writes a question, `pullgate run` waits up to 20 seconds for
+  its receipt. `sent`: it logs `asked`, result `asked`. `failed`: the run
+  fails, result `not-delivered`, with the fix (`pullgate doctor`, then
+  `--ask-again`). No receipt yet: it logs `sent: the question is in the
+  outbox; no receipt from the listener yet`, result `sent`.
+- Each later run first takes the receipts. A `sent` receipt of a question
+  logs `asked` then; a `failed` one logs the warning `question not
+  delivered`. An open question with no receipt 3 minutes after it was
+  asked gets the warning `question not delivered: no receipt from the
+  listener`, once.
+- `pullgate status` and `/status` show the line `delivery:` for an open
+  question: `sent`, `waiting for the listener`, or `question not
+  delivered` with the fix. It reads a receipt that no run took yet, and
+  leaves it.
+
+A receipt only changes log lines and the status. It is never an approval,
+and root never acts on a commit because of it.
+
 **Inbox** (the listener writes, root reads and removes). One file per tap,
 `SEQ.json`, written to a `.tmp-*` name and renamed, at most 1 KiB, with
 `{"code": "...", "action": "apply" | "skip"}`. Unknown fields are an error.
@@ -472,8 +513,11 @@ Root keeps its questions in `state.json`:
 
 ```
 { "id": 7, "code": "…", "sha": "…", "base": "…", "asked": time,
-  "expires": time, "open": true }
+  "expires": time, "open": true, "outbox": "…", "delivery": "sent" }
 ```
+
+`outbox` is the name of the outbox file of the question, `delivery` what
+its receipt said (`sent`, `failed`, or none yet; section 8).
 
 `base` is the applied SHA when the question was asked. At most one
 question is open. A superseded question stays in the list (`"open": false`)
@@ -1239,3 +1283,47 @@ of the host in each run.
 `NAME.known_hosts` and the instance `mode` belong to pullgate. A later
 config tool, for example Ansible run by an instance, must not write them.
 `listener.toml` says so in its first lines.
+
+## 18. Doctor (`pullgate doctor`)
+
+`pullgate doctor [NAME] [--telegram] [--config FILE] [--unit-dir DIR]`
+checks the setup of a host, as root. It prints one line per check: `ok`,
+`note` (worth a look, not a problem), or `PROBLEM` with the fix in the same
+line. It exits 1 when there is a problem, else 0. With NAME it checks that
+instance, else every instance of `listener.toml`. It changes nothing, but
+for one test file in each outbox, which it removes.
+
+The checks:
+
+- **Version and units.** The version of the binary. Each unit that this
+  version carries (`pullgate units`) is installed in `/etc/systemd/system`
+  (else a problem); one that differs from it is a note. The units the
+  README enables are enabled: the listener, `pullgate-apply@NAME.path` and
+  `pullgate-run@NAME.timer` must be (else a problem); the check path unit
+  and the update units are optional (a note). `pullgate-listen.service`
+  must be active.
+- **Configs.** `listener.toml` is valid and safe (section 4), and lists
+  NAME. The bot token file is owned by root (the systemd credential of the
+  example unit) or by the listener user, with mode 0600. Each instance
+  config is valid, and its gate files and programs pass the checks of
+  section 4; `check_user` and the listener user exist and differ; the
+  `[listener] user` is the same as `updates.listener_user`.
+- **Owners and modes, as read back.** The state directory, the clone, the
+  trees, `state.json`, the spool, the outbox, the inbox, the check and the
+  receipts directories have exactly the owner, the group and the mode of
+  section 4 (setuid, setgid and sticky bits count). A path the first run
+  has not made yet is a note.
+- **The listener can read the outbox.** Root writes a test file to the
+  outbox as `Send` does, under a name that starts with `.doctor-` (the
+  listener skips names that start with `.`). Then doctor starts itself as
+  the listener user, with its groups (`pullgate _doctor-read PATH`), and
+  reads one byte of it. The test file is removed. `_doctor-read` reads only
+  a file whose name starts with `.doctor-`, and prints nothing of it.
+- **The repo.** `git ls-remote` of the branch, with the deploy key and the
+  pinned host key, as a run fetches, in a new temporary home.
+- **Telegram**, only with `--telegram`: `getMe` (the token works) and
+  `getChat` with `chat_id` (the bot can reach the chat). No message is
+  sent. The token is never printed.
+
+The README "Install" ends with `pullgate doctor`, and the CI install test
+(`test/units/full-loop.sh`) runs that README block and needs exit 0.
