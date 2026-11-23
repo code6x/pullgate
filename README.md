@@ -286,6 +286,82 @@ version with `install.sh`, copy the units of `contrib/systemd/` again, run
 How it works: [DESIGN.md](DESIGN.md) section 15; what it trusts:
 [THREAT-MODEL.md](THREAT-MODEL.md) T20.
 
+## Recipes
+
+A project that uses pullgate can ship an instance as a **recipe**: its
+scripts and a config template, as a `.tar.gz` in a GitHub release, with
+`SHA256SUMS` and a build attestation, as pullgate's own releases have.
+This version has the first step of recipes, `pullgate recipe fetch`; the
+setup of an instance from a recipe with `pullgate bootstrap --recipe` comes
+next (code6x/pullgate#55).
+
+```
+pullgate recipe fetch URL [--gh PATH] [--bundle NAME] [--signer-workflow PATH] [--dir DIR]
+```
+
+As root, it downloads `URL`, checks it, and unpacks it. The last line it
+prints is the folder of the recipe.
+
+- `URL` must be `https://github.com/OWNER/REPO/releases/download/vX.Y.Z/FILE.tar.gz`:
+  no other host, no `latest`, no query.
+- From the same release it gets `SHA256SUMS` (exactly one line for
+  `FILE.tar.gz`, and the SHA-256 must match) and the attestation bundle:
+  `FILE.sigstore.json` (`FILE` without `.tar.gz`), or the name of
+  `--bundle NAME`.
+- It runs `gh attestation verify` with `--repo OWNER/REPO`,
+  `--cert-identity https://github.com/OWNER/REPO/.github/workflows/release.yml@refs/heads/main`
+  and `--deny-self-hosted-runners`, and the signed statement must name
+  `FILE.tar.gz` with its SHA-256. `--signer-workflow .github/workflows/NAME.yml`
+  names another workflow of the same repo. No flag skips a check.
+  gh must be 2.93.0 or newer, a file of root that only root can change:
+  `/usr/bin/gh`, or `--gh PATH`. gh runs with no token and an empty config.
+- Before it writes anything it prints the repo, the tag, the file, its
+  SHA-256 and the signer identity.
+- It unpacks into `/usr/local/lib/pullgate/recipes/OWNER/REPO/X.Y.Z/` (or
+  `--dir DIR` instead of `/usr/local/lib/pullgate/recipes`), through a new
+  temporary folder and a rename, with the record `.pullgate-recipe.json`
+  (the SHA-256 of the tarball and of each file). A folder that is there
+  already is used only if only root can write it and it matches its record.
+- Limits: the tarball 64 MiB, one file 16 MiB, all files 64 MiB, 1000
+  entries.
+
+**The format.** The tarball holds only plain files and folders: no link,
+device, absolute path, `..`, or setuid, setgid or sticky bit. A file with
+an execute bit gets mode 0755, any other 0644; the owner is root. At its
+root, the manifest `pullgate-recipe.toml`:
+
+```toml
+format = 1
+version = "1.2.3"              # must be the tag of the release, without the v
+
+[[instance]]
+name = "example"               # the default instance name
+config = "example.toml.in"     # the template of /etc/pullgate/NAME.toml
+requires = ["python3"]         # programs that must be in the PATH of root
+setup = ["setup"]              # optional: a program of the recipe
+```
+
+An unknown key, a name that is not an instance name, or a path that is
+not a file in the recipe is refused. `version` is signed with the tarball,
+the tag in the URL is not: a tarball of another release is refused. A program of `requires` is looked up
+in `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`; a
+missing one stops it, and nothing is written.
+
+**Test a recipe in your own CI.** Two options make an end-to-end test
+possible with no network:
+
+- `--gh PATH`: a fake gh. It is called as `gh --version` (it must print
+  `gh version X.Y.Z …`) and as `gh attestation verify FILE --bundle FILE
+  --repo OWNER/REPO --cert-identity ID --deny-self-hosted-runners --format
+  json`. It must print the JSON of the real gh; pullgate reads
+  `[{"verificationResult":{"statement":{"subject":[{"name":"FILE.tar.gz","digest":{"sha256":"…"}}]}}}]`.
+  Like the real one, it must be owned by root and not writable by others.
+- A release server on `http://127.0.0.1:PORT`: give the URL
+  `http://127.0.0.1:PORT/OWNER/REPO/releases/download/vX.Y.Z/FILE.tar.gz`.
+  The server serves `FILE.tar.gz`, `SHA256SUMS` and the bundle from the
+  same folder. pullgate prints a loud warning. Only `127.0.0.1` is
+  allowed, as for `--api-url`.
+
 ## Config
 
 The instance config `/etc/pullgate/NAME.toml`:
