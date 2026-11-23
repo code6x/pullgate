@@ -1385,9 +1385,10 @@ as root:
    A subject of the signed statement must have the name FILE and the
    SHA-256 of step 4. Then it prints the repo, the tag, the file, the
    SHA-256 and the identity.
-6. **Unpack** into `DIR/OWNER/REPO/.tmp-*` (DIR is
-   `/usr/local/lib/pullgate/recipes`; the folders above are made 0755 and
-   must pass the check of rule 6). Only regular files and folders, with
+6. **Unpack** into `DIR/.tmp-*` (DIR is
+   `/usr/local/lib/pullgate/recipes`; the folders are made 0755 and must
+   pass the check of rule 6; `OWNER/REPO` is made only after every check).
+   A pax global header (as `git archive` writes) is skipped. Only regular files and folders, with
    clean relative names of `A-Za-z0-9_.+-` and `/`; no `..`, no absolute
    path, no setuid, setgid or sticky bit, no entry named like the record;
    one file at most 16 MiB, all at most 64 MiB, at most 1000 entries. A
@@ -1401,7 +1402,8 @@ as root:
 7. **A version folder that is there already** is used only if it, and
    everything in it, is owned by root, not writable by group or others,
    with no setuid or setgid bit, and its files are exactly the files of
-   its record with the same SHA-256, for the same tarball. Else the error
+   its record with the same SHA-256, for the same tarball; `requires` is
+   checked again. Else the error
    says to move it away.
 
 Next (code6x/pullgate#55): `pullgate bootstrap --recipe`, the template and

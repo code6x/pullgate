@@ -57,6 +57,9 @@ func tarball(t *testing.T, es []entry) []byte {
 			mode = 0o644
 		}
 		h := &tar.Header{Name: e.name, Mode: mode, Typeflag: typ, Linkname: e.link}
+		if typ == tar.TypeXGlobalHeader {
+			h = &tar.Header{Typeflag: typ, PAXRecords: map[string]string{"comment": "a commit"}}
+		}
 		if typ == tar.TypeReg {
 			h.Size = int64(len(e.body))
 		}
@@ -162,7 +165,7 @@ func (r *rel) fetch() (*Result, error) {
 // nothing checks that no version folder was written.
 func (r *rel) nothing() {
 	r.t.Helper()
-	ents, _ := os.ReadDir(filepath.Join(r.f.Dir, "example-org", "example-recipe"))
+	ents, _ := os.ReadDir(r.f.Dir)
 	if len(ents) != 0 {
 		r.t.Fatalf("written: %v", ents)
 	}
@@ -327,4 +330,25 @@ func TestManifest(t *testing.T) {
 		t.Fatal(m, err)
 	}
 	_ = fmt.Sprint()
+}
+
+// A tarball of git archive starts with a pax global header: it is no file.
+func TestPaxGlobalHeader(t *testing.T) {
+	r := newRel(t, tarball(t, append([]entry{{name: "pax_global_header", typ: tar.TypeXGlobalHeader}}, good()...)))
+	if _, err := r.fetch(); err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+}
+
+// A required program that was removed after the first fetch: the second
+// fetch, of the folder that is there, refuses too.
+func TestRequiresAgain(t *testing.T) {
+	r := newRel(t, tarball(t, good()))
+	if _, err := r.fetch(); err != nil {
+		t.Fatal(err)
+	}
+	r.f.Look = func(string) (string, error) { return "", errors.New("gone") }
+	if _, err := r.fetch(); err == nil || !strings.Contains(err.Error(), "needs sh") {
+		t.Fatalf("fetch: %v", err)
+	}
 }

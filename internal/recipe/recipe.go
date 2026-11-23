@@ -452,18 +452,26 @@ type record struct {
 // record.
 func (f *Fetcher) unpack(src Source, tarball []byte, sum string) (string, *Manifest, error) {
 	repoDir := filepath.Join(f.Dir, src.Owner, src.Repo)
-	if err := f.mkdirs(repoDir); err != nil {
-		return "", nil, err
-	}
 	final := filepath.Join(repoDir, src.Version)
 	if _, err := os.Lstat(final); err == nil {
+		if err := safedir.CheckParents(repoDir, f.UID); err != nil {
+			return "", nil, fmt.Errorf("the recipes folder is not safe: %w", err)
+		}
 		m, err := f.checkExisting(final, sum)
+		if err == nil {
+			err = m.CheckRequires(f.look())
+		}
 		if err != nil {
 			return "", nil, err
 		}
 		return final, m, nil
 	}
-	tmp, err := os.MkdirTemp(repoDir, ".tmp-")
+	// The temporary folder is at the root of the recipes, so a failed
+	// check leaves no OWNER/REPO folder either.
+	if err := f.mkdirs(f.Dir); err != nil {
+		return "", nil, err
+	}
+	tmp, err := os.MkdirTemp(f.Dir, ".tmp-")
 	if err != nil {
 		return "", nil, err
 	}
@@ -489,6 +497,9 @@ func (f *Fetcher) unpack(src Source, tarball []byte, sum string) (string, *Manif
 		return "", nil, err
 	}
 	if err := os.Chmod(tmp, 0o755); err != nil {
+		return "", nil, err
+	}
+	if err := f.mkdirs(repoDir); err != nil {
 		return "", nil, err
 	}
 	if err := os.Rename(tmp, final); err != nil {
@@ -565,6 +576,9 @@ func extract(tarball []byte, dir string, files map[string]string) error {
 			return fmt.Errorf("read the recipe: %w", err)
 		}
 		n++
+		if h.Typeflag == tar.TypeXGlobalHeader {
+			continue // the pax header of git archive: no file
+		}
 		name := strings.TrimPrefix(h.Name, "./")
 		name = strings.TrimSuffix(name, "/")
 		bad := func(why string) error {
