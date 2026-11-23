@@ -147,6 +147,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return usageErr(stderr, err.Error())
 		}
 		o.EtcDir, o.Out, o.Err = *configDir, stdout, stderr
+		o.Setup = &bootstrap.Setup{
+			StateDir: *stateDir, SpoolDir: *spoolDir, UnitDir: "/etc/systemd/system", UID: 0,
+			Units: pullgate.Units(), Enable: pullgate.Enable,
+			ListenerUser: o.ListenerGroup, Useradd: "/usr/sbin/useradd", Systemctl: doctor.Systemctl,
+			Doctor: func(ctx context.Context, before bool) int {
+				return doctor.Run(ctx, &doctor.Options{
+					Version: version, ConfigDir: *configDir, StateDir: *stateDir, SpoolDir: *spoolDir,
+					UnitDir: "/etc/systemd/system", Listener: filepath.Join(*configDir, "listener.toml"), UID: 0,
+					Units: pullgate.Units(), Enable: pullgate.Enable, BeforeEnable: before,
+					Systemctl: doctor.Systemctl, ReadAs: doctor.ReadAs, Out: stdout,
+				})
+			},
+		}
 		if euid != 0 {
 			log.Error("bootstrap", "err", "it must run as root. Fix: run it with sudo, or as root")
 			return 1

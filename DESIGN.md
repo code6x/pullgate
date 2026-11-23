@@ -1221,8 +1221,9 @@ nothing was installed. What the script trusts: THREAT-MODEL.md, T17.
 ## 17. Bootstrap (`pullgate bootstrap`)
 
 `pullgate bootstrap` sets up a new host, as root, after the binary is
-installed and the users, the directories and the units are in place
-(README "Install"). Its goal: nobody types or pastes the owner ID or the
+installed (README "Install"). It is the one command of the setup: it also
+makes the users, the directories and the units, runs `pullgate doctor`,
+and enables the units. Its goal: nobody types or pastes the owner ID or the
 chat ID, and the token never shows.
 
 ```
@@ -1242,6 +1243,18 @@ of the host in each run.
    an ssh URL to a host other than `github.com` needs `--known-hosts`. A
    new instance (no `NAME.toml`) needs `--apply`. Nothing is asked or
    written before these pass.
+   **Then the setup:** the listener user `pullgate` and the check user of
+   each instance (`check_user` of an existing `NAME.toml`, else
+   `pullgate-check-NAME`; it must not be the listener user) are made with
+   `useradd --system --no-create-home --user-group --shell
+   /usr/sbin/nologin` when they do not exist. The base directories are
+   made with the owner and the mode that `pullgate doctor` checks (the same
+   table, `doctor.BaseDirs`: `/etc/pullgate` and `/var/spool/pullgate`
+   root 0755, `/var/lib/pullgate` root 0711), set through the open
+   directory (`O_NOFOLLOW`) and read back. The units that the binary
+   carries are written to `/etc/systemd/system` (owner root, 0644; a unit
+   that differs is replaced, so changes belong in a drop-in), then
+   `systemctl daemon-reload`.
 2. **The token.** It runs `systemd-ask-password` (no echo, not in the
    shell history, not an argument), or with `--token-stdin` reads the
    first line of stdin. It must look like a bot token. `getMe` checks it.
@@ -1277,7 +1290,16 @@ of the host in each run.
    key or known hosts file is made, and the probe uses the config. Then it runs `git ls-remote` (section 6: the same git
    flags and ssh options) every 10 seconds, for at most 30 minutes, until
    the branch can be read.
-5. It does not run `pullgate doctor` or enable the units yet (code6x/pullgate#28).
+   Then it makes the state directory and the spool of the instance, as a
+   run does (`state.Dir.Ensure`, `spool.Dirs.Ensure`, with read-back).
+5. **Doctor, then the enable.** It runs `pullgate doctor` on the instances
+   of the new `listener.toml`, without the checks that the units are
+   enabled and run (`BeforeEnable`). Any problem: it enables nothing and
+   fails with "pullgate doctor found N problem(s) … no unit was enabled".
+   Else it runs `systemctl enable --now` for every unit of `pullgate units`
+   `enable` (NAME is each instance) and restarts `pullgate-listen.service`
+   (so it reads the new `listener.toml`), then doctor again with every check.
+   A problem then fails bootstrap with "the units are enabled, but …".
 
 **pullgate's own files.** `listener.toml`, `bot-token`, `NAME.key`,
 `NAME.known_hosts` and the instance `mode` belong to pullgate. A later

@@ -56,6 +56,7 @@ func newFix(t *testing.T) *fix {
 			t.Fatal(err)
 		}
 	}
+	_ = os.Chmod(filepath.Join(b, "etc"), 0o755)
 	for _, d := range []string{"state", "spool"} {
 		if err := os.Mkdir(filepath.Join(b, d), map[string]os.FileMode{"state": 0o711, "spool": 0o755}[d]); err != nil {
 			t.Fatal(err)
@@ -223,6 +224,11 @@ func TestEachProblem(t *testing.T) {
 		{"inbox mode changed", func(f *fix) { _ = os.Chmod(filepath.Join(f.o.SpoolDir, name, "inbox"), 0o755) }, "inbox has owner"},
 		{"state dir mode changed", func(f *fix) { _ = os.Chmod(filepath.Join(f.o.StateDir, name), 0o755) }, "systemctl start pullgate-run@" + name + ".service"},
 		{"listener cannot read the outbox", func(f *fix) { f.readErr = errors.New("permission denied") }, "the listener user cannot read a file in"},
+		{"config dir writable by others", func(f *fix) { _ = os.Chmod(f.o.ConfigDir, 0o775) }, "PROBLEM  listener config"},
+		{"before enable: no unit is checked", func(f *fix) {
+			f.o.BeforeEnable = true
+			_ = os.Remove(filepath.Join(f.o.UnitDir, "pullgate-run@.timer"))
+		}, "pullgate-run@.timer: it is not installed"},
 		{"check user is the listener user", func(f *fix) { f.o.asRoot = true }, "is the listener user or has its group"},
 		{"listener cannot read its config", func(f *fix) { f.readErr = errors.New("permission denied") }, "cannot be read by the listener user"},
 		{"state file is not a regular file", func(f *fix) {
@@ -286,6 +292,17 @@ func TestTokenFileOfTheConfig(t *testing.T) {
 	f.write("etc/listener.toml", strings.Replace(string(b), filepath.Join(f.base, "etc/bot-token"), other, 1), 0o600)
 	f.write("etc/bot-token", "999:old\n", 0o600) // an old file that the listener does not use
 	if n := f.run(); n != 0 || !strings.Contains(f.out.String(), "bot token: "+other) {
+		t.Fatalf("%d problems:\n%s", n, f.out.String())
+	}
+}
+
+// Before enable: the enabled and active checks are left out, with a note.
+func TestBeforeEnable(t *testing.T) {
+	f := newFix(t)
+	f.o.BeforeEnable = true
+	f.enabled = map[string]string{}
+	f.active = "inactive"
+	if n := f.run(); n != 0 || !strings.Contains(f.out.String(), "bootstrap enables them") {
 		t.Fatalf("%d problems:\n%s", n, f.out.String())
 	}
 }

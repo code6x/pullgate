@@ -63,6 +63,10 @@ type Options struct {
 	Out           io.Writer // the console: the code, the keys, the steps
 	Err           io.Writer // the stderr of systemd-ask-password
 	Now           func() time.Time
+	// Setup makes the users, the directories and the units first, and
+	// runs doctor and enables the units at the end. cmd/pullgate always
+	// sets it; nil leaves both steps out (the tests of the other steps).
+	Setup *Setup
 }
 
 // DefaultAPI is the Bot API of Telegram.
@@ -188,6 +192,17 @@ func Run(ctx context.Context, o *Options) error {
 	if err := o.check(); err != nil {
 		return err
 	}
+	if o.Setup != nil {
+		if err := o.users(ctx); err != nil {
+			return err
+		}
+		if err := o.dirs(); err != nil {
+			return err
+		}
+		if err := o.units(ctx); err != nil {
+			return err
+		}
+	}
 	gid, err := o.listenerGID()
 	if err != nil {
 		return err
@@ -221,8 +236,19 @@ func Run(ctx context.Context, o *Options) error {
 		if err := o.instance(ctx, in); err != nil {
 			return err
 		}
+		if o.Setup != nil {
+			if err := o.instanceDirs(in.Name); err != nil {
+				return err
+			}
+		}
 	}
-	o.say("Done. Next, as root: systemctl daemon-reload, then enable the units as the README says.")
+	if o.Setup == nil {
+		return nil
+	}
+	if err := o.enable(ctx); err != nil {
+		return err
+	}
+	o.say("Done. The first question comes when the timer runs, or at once with: systemctl start pullgate-run@%s.service", o.Instances[0].Name)
 	return nil
 }
 

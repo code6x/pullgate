@@ -4,11 +4,13 @@
 #
 # 1. It installs the binary with the README "install-test:binary" block,
 #    or checks the binary that install.sh installed (--installed).
-# 2. It runs the README "install-test:setup" block: the users, the
-#    directories and the units of contrib/systemd/.
-# 3. It writes the configs, a local bare repo as the remote, and a fake
-#    Telegram on 127.0.0.1 that taps Apply on every question.
-# 4. It runs the README "install-test:start" block, with NAME=config-repo.
+# 2. Nothing else: no user, no unit. Only /etc/pullgate, for the config
+#    of the test instance (issue #49).
+# 3. It writes the instance config, a local bare repo as the remote, and a
+#    fake Telegram on 127.0.0.1 that taps Apply on every question. Then
+#    `pullgate bootstrap` makes the users, the directories and the units,
+#    pairs, runs doctor and enables the units.
+# 4. It checks what bootstrap made.
 # 5. A good commit: the run asks (as root, check and summary as the check
 #    user), the fake taps Apply, the listener (user pullgate) writes the
 #    approval, pullgate-apply@ applies it, and `pullgate status` shows it.
@@ -183,8 +185,14 @@ else
 fi
 pullgate --version
 
-step "2. The README setup: users, directories, units"
-readme setup
+step "2. No setup by hand: bootstrap makes the users and the units"
+# Only the directory of the test's own instance config. Bootstrap fixes
+# its owner and mode.
+install -d -m 0700 /etc/pullgate
+check_user="pullgate-check-$name"
+if id pullgate >/dev/null 2>&1 || id "$check_user" >/dev/null 2>&1; then
+	die "the users exist before bootstrap; run this on a fresh machine"
+fi
 want() {
 	got="$(stat -c '%U %G %a' "$1" 2>/dev/null || echo missing)"
 	if [ "$got" != "$2" ]; then
@@ -192,12 +200,6 @@ want() {
 	fi
 }
 want /usr/local/bin/pullgate "root root 755"
-want /etc/pullgate "root root 755"
-want /var/spool/pullgate "root root 755"
-want /var/lib/pullgate "root root 711"
-check_user="pullgate-check-$name"
-id pullgate >/dev/null || die "the README setup made no user pullgate"
-id "$check_user" >/dev/null || die "the README setup made no user $check_user"
 
 step "3. The configs, the remote and the fake Telegram"
 # A local bare repo, owned by root, with one commit.
@@ -399,8 +401,16 @@ FAKE
 	printf '\n[updates]\ngh = "%s"\n' "$lib/gh" >>/etc/pullgate/listener.toml
 fi
 
-step "4. The README start: enable --now"
-readme start
+step "4. What bootstrap made: users, directories, units"
+want /etc/pullgate "root root 755"
+want /var/spool/pullgate "root root 755"
+want /var/lib/pullgate "root root 711"
+id pullgate >/dev/null || die "bootstrap made no user pullgate"
+id "$check_user" >/dev/null || die "bootstrap made no user $check_user"
+grep -q '^Enabled and started: ' "$boot_out" || die "bootstrap did not enable the units"
+for u in $(pullgate units | python3 -I -c 'import json, sys; print(" ".join(json.load(sys.stdin)["units"]))'); do
+	cmp -s "/etc/systemd/system/$u" "$top/contrib/systemd/$u" || err "/etc/systemd/system/$u is not the unit of contrib/systemd/"
+done
 
 step "5. A good commit: ask, tap, apply"
 # The timer may have started a run already; start waits for it.
@@ -493,9 +503,8 @@ urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:%s/test/say" % s
 	listener_read_all "after /update"
 fi
 
-step "9. Every unit the README enables"
-units="$(sh "$here/readme-block.sh" start "$top/README.md" | sed -e 's/#.*//' -e "s/NAME/$name/g" |
-	tr -s ' \t' '\n' | grep -E '^pullgate-[A-Za-z0-9@._-]+\.(service|path|timer)$' | sort -u)"
+step "9. Every unit that bootstrap enables"
+units="$(pullgate units | python3 -I -c 'import json, sys; print("\n".join(sorted(json.load(sys.stdin)["enable"])))' | sed "s/NAME/$name/g")"
 n=0
 for u in $units; do
 	n=$((n + 1))

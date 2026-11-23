@@ -58,6 +58,11 @@ type Options struct {
 
 	Out io.Writer
 
+	// BeforeEnable leaves out the checks that the units are enabled and
+	// that the listener runs: pullgate bootstrap runs doctor so before it
+	// enables them, and enables nothing when doctor finds a problem.
+	BeforeEnable bool
+
 	// asRoot makes the tests check what only root checks: that check_user
 	// is not the listener user. As another user, check_user must be that
 	// user (gate.ResolveSandbox).
@@ -152,6 +157,10 @@ func (d *doc) units(ctx context.Context, names []string) {
 		default:
 			d.ok("unit "+n, "installed, the same as in this version")
 		}
+	}
+	if o.BeforeEnable {
+		d.note("units", "not checked yet whether they are enabled and run: bootstrap enables them when every check passes")
+		return
 	}
 	for _, e := range o.Enable {
 		list := []string{e}
@@ -264,6 +273,25 @@ type want struct {
 	file     bool // a regular file; else a directory
 }
 
+// Want is a directory with the owner and the mode that DESIGN.md section
+// 4 gives it.
+type Want struct {
+	Path string
+	UID  int
+	Mode fs.FileMode
+}
+
+// BaseDirs are the directories that pullgate bootstrap makes and doctor
+// checks: the config, the state and the spool, owned by uid (root).
+func BaseDirs(configDir, stateDir, spoolDir string, uid int) []Want {
+	return []Want{{configDir, uid, 0o755}, {stateDir, uid, 0o711}, {spoolDir, uid, 0o755}}
+}
+
+// ReadBack checks the type, the owner and the mode of w as doctor does.
+func ReadBack(w Want) error {
+	return readBack(want{path: w.Path, uid: w.UID, gid: -1, mode: w.Mode})
+}
+
 // instance checks one instance: its config and gate files, its users, the
 // owners and modes of its directories as read back, that the listener can
 // read its outbox, and that git can read its repo.
@@ -296,19 +324,21 @@ func (d *doc) instance(ctx context.Context, name string, ow *spool.Owners) {
 	u, l := int(o.UID), env.Owners
 	sd := state.Dir{Path: filepath.Join(o.StateDir, name)}
 	sp := env.Spool
-	list := []want{
-		{o.StateDir, u, -1, 0o711, false},
+	var list []want
+	for _, b := range BaseDirs(o.ConfigDir, o.StateDir, o.SpoolDir, u) {
+		list = append(list, want{b.Path, b.UID, -1, b.Mode, false})
+	}
+	list = append(list, []want{
 		{sd.Path, u, -1, 0o711, false},
 		{sd.Repo(), u, -1, 0o700, false},
 		{sd.Trees(), u, -1, 0o711, false},
 		{sd.StateFile(), u, -1, 0o600, true},
-		{o.SpoolDir, u, -1, 0o755, false},
 		{filepath.Dir(sp.Outbox()), u, -1, 0o755, false},
 		{sp.Outbox(), u, l.ListenerGID, 0o770, false},
 		{sp.Inbox(), l.ListenerUID, l.ListenerGID, 0o700, false},
 		{sp.CheckDir(), l.ListenerUID, l.ListenerGID, 0o700, false},
 		{sp.Receipts(), l.ListenerUID, l.ListenerGID, 0o700, false},
-	}
+	}...)
 	missing, bad := []string{}, false
 	for _, w := range list {
 		err := readBack(w)
@@ -363,7 +393,7 @@ func readBack(w want) error {
 			g = "group " + strconv.Itoa(w.gid)
 		}
 		return fmt.Errorf("%s has owner %d, group %d, mode %s%s; DESIGN.md section 4 wants owner %d, %s, mode %s. "+
-			"Fix: run systemctl start pullgate-run@NAME.service, which sets them; if they stay wrong, the file system or the unit changes them (check RestrictSUIDSGID, CAP_CHOWN and the mount options)",
+			"Fix: chown and chmod it so (pullgate bootstrap sets the base directories, systemctl start pullgate-run@NAME.service the others); if they stay wrong, the file system or the unit changes them (check RestrictSUIDSGID, CAP_CHOWN and the mount options)",
 			w.path, st.Uid, st.Gid, got, symlinkNote(fi), w.uid, g, w.mode)
 	}
 	return nil

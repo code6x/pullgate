@@ -86,41 +86,37 @@ install -m 0755 pullgate /usr/local/bin/pullgate
 CGO_ENABLED=0 go build -trimpath -o pullgate ./cmd/pullgate
 ```
 
-Then, as root, make the users and the directories, and copy the units from
-[contrib/systemd/](contrib/systemd/):
-
-<!-- install-test:setup -->
-```sh
-useradd --system --no-create-home --shell /usr/sbin/nologin pullgate
-# One check user per instance, never the listener user:
-useradd --system --no-create-home --shell /usr/sbin/nologin pullgate-check-config-repo
-install -d -m 0755 /etc/pullgate /var/spool/pullgate
-install -d -m 0711 /var/lib/pullgate
-cp contrib/systemd/* /etc/systemd/system/
-```
-
-Then set it up with **`pullgate bootstrap`**, as root, on a console of
-the host:
+Then set it all up with **`pullgate bootstrap`**, as root, on a console of
+the host. It is the one command after the install: nothing else is made
+or pasted by hand.
 
 ```sh
 pullgate bootstrap --instance config-repo --repo git@github.com:example/config-repo.git \
     --apply /usr/local/lib/config-repo/apply.sh
 ```
 
-1. Make a Telegram bot with BotFather first. Bootstrap asks for its token
+1. **Users, directories, units.** It makes the listener user `pullgate`
+   and the check user of each instance (`pullgate-check-NAME`, or the
+   `check_user` of an existing `NAME.toml`) when they do not exist:
+   system users with their own group, no home and no shell. It makes
+   `/etc/pullgate` and `/var/spool/pullgate` (root, 0755) and
+   `/var/lib/pullgate` (root, 0711), and writes the units of this version
+   to `/etc/systemd/system` (a changed unit is replaced; keep your changes
+   in a drop-in), then runs `systemctl daemon-reload`.
+2. Make a Telegram bot with BotFather first. Bootstrap asks for its token
    with `systemd-ask-password`: it does not show the token, does not keep
    it in the shell history, and does not take it as an argument. It checks
    the token with Telegram, and stores it as `/etc/pullgate/bot-token`
    (owner root, mode 0600). For automation, `--token-stdin` reads it from
    the first line of stdin instead.
-2. **Pairing.** Bootstrap prints a one-time code of 8 digits, valid for 10
+3. **Pairing.** Bootstrap prints a one-time code of 8 digits, valid for 10
    minutes. Send it to the bot, in your **private** chat with it.
    Bootstrap takes your user ID and the chat ID from that message, and
    writes `/etc/pullgate/listener.toml`. Nobody types or pastes an ID, so
    a script that someone else wrote cannot plant one. A wrong code (5 of
    them stop it), a group chat or a timeout writes nothing. Stop
    `pullgate-listen.service` while bootstrap runs, if it is running.
-3. For each `--instance NAME --repo URL` (and `--branch`, default `main`):
+4. For each `--instance NAME --repo URL` (and `--branch`, default `main`):
    it makes the deploy key on the host (`/etc/pullgate/NAME.key`; the
    private key never leaves the host) and prints the public key. Add it
    to the repo as a **read-only** deploy key. It pins the host key of the
@@ -132,7 +128,14 @@ pullgate bootstrap --instance config-repo --repo git@github.com:example/config-r
    `--apply PROGRAM` (owner root, mode 0600); add `check`, `health` and
    `watch` as the examples below show. Then it waits until `git ls-remote`
    can read the branch.
-4. Bootstrap does not enable the units yet. Do it as below.
+   It also makes the state and the spool of each instance, as a run does.
+5. **Doctor, then the units.** It runs `pullgate doctor` (below). Only when
+   doctor finds no problem, it runs `systemctl enable --now` for
+   `pullgate-listen.service`, `pullgate-apply@NAME.path`,
+   `pullgate-run@NAME.timer`, `pullgate-check@NAME.path` (for `/check`)
+   and `pullgate-update.timer` and `pullgate-update.path` (release notices
+   and `/update`). Then it runs doctor again, with the units running. A
+   problem enables nothing: fix it, and run bootstrap again.
 
 Each run writes `listener.toml` with the instances of that run only: give
 every instance of the host each time.
@@ -141,20 +144,9 @@ every instance of the host each time.
 pullgate's own files: no other config tool (for example Ansible, run by
 an instance) may write them.
 
-Start it:
-
-<!-- install-test:start -->
-```sh
-systemctl daemon-reload
-systemctl enable --now pullgate-listen.service
-systemctl enable --now pullgate-apply@NAME.path pullgate-run@NAME.timer
-systemctl enable --now pullgate-check@NAME.path   # optional: /check
-systemctl enable --now pullgate-update.timer pullgate-update.path   # optional: release notices, /update
-```
-
 Every step logs to the journal: `journalctl -t pullgate`.
 
-Then check the setup, as root:
+Bootstrap runs doctor itself. Run it again any time, as root:
 
 <!-- install-test:doctor -->
 ```sh
