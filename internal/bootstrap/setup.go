@@ -134,6 +134,13 @@ func (o *Options) dirs() error {
 		if err := os.Mkdir(w.Path, w.Mode); err != nil && !errors.Is(err, fs.ErrExist) {
 			return fmt.Errorf("make %s: %w. Fix: make the directories above it", w.Path, err)
 		}
+		// A directory that another user owns is not taken over: what that
+		// user put in it would stay.
+		if fi, err := os.Lstat(w.Path); err == nil {
+			if st, ok := fi.Sys().(*syscall.Stat_t); !ok || int(st.Uid) != w.UID {
+				return fmt.Errorf("%s exists and is not owned by uid %d. Fix: check what is in it, then chown root %s, or remove it", w.Path, w.UID, w.Path)
+			}
+		}
 		f, err := os.OpenFile(w.Path, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
 		if err != nil {
 			return fmt.Errorf("open %s: %w. Fix: it must be a directory, not a link", w.Path, err)

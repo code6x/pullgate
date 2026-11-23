@@ -134,8 +134,9 @@ pullgate bootstrap --instance config-repo --repo git@github.com:example/config-r
    `pullgate-listen.service`, `pullgate-apply@NAME.path`,
    `pullgate-run@NAME.timer`, `pullgate-check@NAME.path` (for `/check`)
    and `pullgate-update.timer` and `pullgate-update.path` (release notices
-   and `/update`). Then it runs doctor again, with the units running. A
-   problem enables nothing: fix it, and run bootstrap again.
+   and `/update`). A problem enables nothing: fix it, and run bootstrap
+   again. Then it runs doctor again, with the units running; a problem
+   there leaves the units running: fix it, and run `pullgate doctor`.
 
 Each run writes `listener.toml` with the instances of that run only: give
 every instance of the host each time.

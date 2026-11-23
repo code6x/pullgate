@@ -197,3 +197,27 @@ func TestSetupUnitsReplaced(t *testing.T) {
 		t.Fatalf("output:\n%s", f.out.String())
 	}
 }
+
+// A new host: the config directory does not exist yet. Bootstrap checks
+// the directories above it, and makes it.
+func TestSetupMakesTheConfigDir(t *testing.T) {
+	f := newSetupFx(t)
+	f.etc = filepath.Join(f.etc, "pullgate")
+	f.o.EtcDir = f.etc
+	if err := f.pair(); err != nil {
+		t.Fatalf("bootstrap: %v\n%s", err, f.out.String())
+	}
+	if fi, err := os.Stat(f.etc); err != nil || fi.Mode().Perm() != 0o755 {
+		t.Fatalf("%s: %v %v", f.etc, fi, err)
+	}
+}
+
+// A base directory of another user is refused, not taken over.
+func TestSetupRefusesADirOfAnotherUser(t *testing.T) {
+	f := newSetupFx(t)
+	f.o.Setup.UID++ // the test user plays "another user"
+	err := Run(context.Background(), f.o)
+	if err == nil || !strings.Contains(err.Error(), "is not owned by uid") {
+		t.Fatalf("bootstrap: %v", err)
+	}
+}
