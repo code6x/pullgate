@@ -25,6 +25,7 @@ import (
 	"github.com/code6x/pullgate/internal/doctor"
 	"github.com/code6x/pullgate/internal/gate"
 	"github.com/code6x/pullgate/internal/listener"
+	"github.com/code6x/pullgate/internal/recipe"
 	"github.com/code6x/pullgate/internal/selfupdate"
 	"github.com/code6x/pullgate/internal/spool"
 	"github.com/code6x/pullgate/internal/telegram"
@@ -46,6 +47,10 @@ commands:
   update [--config FILE]   look for a new release of pullgate, and install
                  one after a tap (pullgate-update.service runs it, as root)
   units          print the units this binary carries, as JSON
+  recipe fetch URL [--gh PATH] [--bundle NAME] [--signer-workflow PATH]
+                 [--dir DIR]   download a recipe from a GitHub release,
+                 check its SHA-256 and build attestation, and unpack it,
+                 as root; the last line is its folder
   doctor [NAME] [--telegram] [--config FILE] [--unit-dir DIR]
                  check the setup of the host, as root: one line per check,
                  and exit 1 on any problem. --telegram also checks the bot
@@ -215,6 +220,31 @@ func run(args []string, stdout, stderr io.Writer) int {
 			_, _ = fmt.Fprintln(stderr, err)
 			return 1
 		}
+		return 0
+	case "recipe":
+		if len(rest) < 3 || rest[1] != "fetch" {
+			return usageErr(stderr, "give pullgate recipe fetch URL")
+		}
+		rf := flag.NewFlagSet("recipe", flag.ContinueOnError)
+		rf.SetOutput(io.Discard)
+		f := &recipe.Fetcher{Dir: "/usr/local/lib/pullgate/recipes", UID: 0, Out: stdout}
+		rf.StringVar(&f.GH, "gh", "/usr/bin/gh", "")
+		rf.StringVar(&f.Bundle, "bundle", "", "")
+		rf.StringVar(&f.Workflow, "signer-workflow", "", "")
+		rf.StringVar(&f.Dir, "dir", f.Dir, "")
+		if err := rf.Parse(rest[3:]); err != nil || rf.NArg() > 0 {
+			return usageErr(stderr, "unknown arguments after pullgate recipe fetch URL")
+		}
+		if euid != 0 {
+			log.Error("recipe", "err", "it must run as root: it writes to "+f.Dir+". Fix: run it with sudo, or as root")
+			return 1
+		}
+		res, err := f.Fetch(ctx, rest[2])
+		if err != nil {
+			log.Error("recipe", "err", err)
+			return 1
+		}
+		_, _ = fmt.Fprintln(stdout, res.Dir)
 		return 0
 	case "doctor":
 		args := rest[1:]

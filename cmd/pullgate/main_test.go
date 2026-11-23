@@ -94,3 +94,17 @@ func TestDoctorArgs(t *testing.T) {
 		}
 	}
 }
+
+func TestRecipeArgs(t *testing.T) {
+	for _, args := range [][]string{{"recipe"}, {"recipe", "use", "x"}, {"recipe", "fetch", "https://github.com/o/r/releases/download/v1.2.3/f.tar.gz", "--nope"}} {
+		if code, _, _ := runArgs(t, args...); code != 64 {
+			t.Errorf("pullgate %v: exit %d, want 64", args, code)
+		}
+	}
+	if os.Geteuid() != 0 {
+		code, _, errOut := runArgs(t, "recipe", "fetch", "https://github.com/o/r/releases/download/v1.2.3/f.tar.gz")
+		if code != 1 || !strings.Contains(errOut, "must run as root") {
+			t.Errorf("recipe fetch as a user: exit %d, stderr %q", code, errOut)
+		}
+	}
+}

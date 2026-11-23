@@ -1351,3 +1351,57 @@ The checks:
 
 The README "Install" ends with `pullgate doctor`, and the CI install test
 (`test/units/full-loop.sh`) runs that README block and needs exit 0.
+
+## 19. Recipes (`pullgate recipe fetch`)
+
+A recipe is an instance's scripts and config template, as `FILE.tar.gz` in
+a GitHub release of the project that ships it (code6x/pullgate#55). This
+section has the first step: fetch, check and unpack. README "Recipes" has
+the format and the test options.
+
+`pullgate recipe fetch URL [--gh PATH] [--bundle NAME] [--signer-workflow PATH] [--dir DIR]`,
+as root:
+
+1. **The URL** must match
+   `https://github.com/OWNER/REPO/releases/download/vX.Y.Z/FILE.tar.gz`
+   as a whole (OWNER, REPO and FILE of `A-Za-z0-9_.+-`, not starting with
+   `.`). For tests the same path on `http://127.0.0.1:PORT`, with a
+   warning. A redirect must stay on HTTPS (GitHub sends release files to
+   its storage), at most 5. TLS 1.2 or newer, no proxy.
+2. **gh** is checked before any download: an absolute path, a regular
+   file owned by root and not writable by group or others, in safe
+   directories (rule 6), version 2.93.0 or newer (the minimum of
+   install.sh). It runs with only `PATH`, `LC_ALL`, an empty `HOME` and
+   `GH_CONFIG_DIR`, so it has no token.
+3. **Downloads**: the tarball (at most 64 MiB), `SHA256SUMS` and the
+   bundle (at most 1 MiB each), into memory. An HTTP error is a failure.
+4. **SHA-256**: `SHA256SUMS` must have exactly one line for FILE, and it
+   must match.
+5. **Attestation**: `gh attestation verify` on a private copy, with the
+   bundle, `--repo OWNER/REPO`, `--cert-identity
+   https://github.com/OWNER/REPO/WORKFLOW@refs/heads/main` (WORKFLOW is
+   `.github/workflows/release.yml`, or `--signer-workflow`),
+   `--deny-self-hosted-runners` and `--format json`, at most 5 minutes.
+   A subject of the signed statement must have the name FILE and the
+   SHA-256 of step 4. Then it prints the repo, the tag, the file, the
+   SHA-256 and the identity.
+6. **Unpack** into `DIR/OWNER/REPO/.tmp-*` (DIR is
+   `/usr/local/lib/pullgate/recipes`; the folders above are made 0755 and
+   must pass the check of rule 6). Only regular files and folders, with
+   clean relative names of `A-Za-z0-9_.+-` and `/`; no `..`, no absolute
+   path, no setuid, setgid or sticky bit, no entry named like the record;
+   one file at most 16 MiB, all at most 64 MiB, at most 1000 entries. A
+   file gets 0755 when it has an execute bit, else 0644. Then the
+   manifest is read (unknown keys refused) and the programs of `requires`
+   are looked up. Then the record `.pullgate-recipe.json` (the SHA-256 of
+   the tarball and of each file) is written, and the folder is renamed to
+   `X.Y.Z`. Any failure removes the temporary folder: nothing is written.
+7. **A version folder that is there already** is used only if it, and
+   everything in it, is owned by root, not writable by group or others,
+   with no setuid or setgid bit, and its files are exactly the files of
+   its record with the same SHA-256, for the same tarball. Else the error
+   says to move it away.
+
+Next (code6x/pullgate#55): `pullgate bootstrap --recipe`, the template and
+its placeholders, `--add`, the record per instance, and the updates.
+

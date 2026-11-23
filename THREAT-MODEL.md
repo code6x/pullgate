@@ -703,6 +703,31 @@ that won. A pasted script can still do anything else as root; bootstrap
 only takes away the quiet way to plant the owner ID. If the failed run
 leaves an old `listener.toml`, bootstrap says that it did not write it.
 
+### T22. A hostile or swapped recipe
+
+*Attack.* Someone gives the owner a recipe URL of another project, or
+changes a release file, a redirect, or the download on the way, so that
+root unpacks scripts that it later runs. Or the tarball holds a link, a
+`..` path or a setuid file, to write or keep a file outside the recipe
+folder. Or a local user changes an unpacked recipe before root uses it.
+
+*Defense.* Only a GitHub release URL is taken (a test server only on
+`127.0.0.1`, with a warning). The tarball must match the one line of
+`SHA256SUMS`, and `gh attestation verify` must prove that the release
+workflow of that same repo, on `main`, on a GitHub-hosted runner, built a
+file of that name and SHA-256. No flag skips a check; gh is a file of root
+and has no token. Before it writes anything, pullgate prints the repo,
+the tag, the SHA-256 and the signer, so the owner sees whose code it is.
+The unpack takes only plain files and folders with clean names, refuses
+special bits, and has size limits; it goes through a temporary folder, so
+a failure leaves nothing. The folders are root's and are checked as rule 6
+says; a folder that is there already must match its record.
+
+*Left.* A recipe is code that will run as root (its `apply`, its `setup`).
+The checks prove where it comes from, not that it is good: trust the
+project as you would trust its install script. A project whose release
+workflow is taken over can sign a hostile recipe.
+
 ## 6. Out of scope
 
 - An attacker who is root on the host.

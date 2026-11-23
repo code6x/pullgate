@@ -28,6 +28,8 @@ change code. They are the rules the code must follow.
     9, 10, 13).
   - `internal/doctor/` - `pullgate doctor`: one line per check of the
     setup (DESIGN.md section 18).
+  - `internal/recipe/` - `pullgate recipe fetch`: a recipe from a GitHub
+    release, checked and unpacked (DESIGN.md section 19).
   - `internal/selfupdate/` - `pullgate update`: the notice of a new release,
     `/update`, and the install with its units (DESIGN.md section 15).
 - `embed.go` - the files that the binary carries: `install.sh` and the
