@@ -362,10 +362,12 @@ func (d Dirs) TakeReceipts(listenerUID int) (map[string]bool, []error, error) {
 	for _, n := range all {
 		if !strings.HasPrefix(n, ".") {
 			names = append(names, n)
-		} else if strings.HasPrefix(n, ".tmp-") {
-			if fi, err := root.Lstat(n); err == nil && time.Since(fi.ModTime()) > time.Minute {
-				_ = root.Remove(n)
-			}
+			continue
+		}
+		// No dot file belongs here but a fresh .tmp- file of the listener:
+		// removed, so they cannot fill the batch for good.
+		if fi, err := root.Lstat(n); err == nil && (!strings.HasPrefix(n, ".tmp-") || time.Since(fi.ModTime()) > time.Minute) {
+			_ = root.Remove(n)
 		}
 	}
 	out := map[string]bool{}

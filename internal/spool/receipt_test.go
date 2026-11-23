@@ -2,6 +2,7 @@ package spool
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -115,4 +116,25 @@ func TestDoctorTestFile(t *testing.T) {
 	if err := d.RemoveDoctorTest(p); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// Dot files cannot fill the batch of TakeReceipts for good.
+func TestDotFilesDoNotBlockReceipts(t *testing.T) {
+	d := dirs(t)
+	for i := range MaxReceipts {
+		if err := os.WriteFile(filepath.Join(d.Receipts(), fmt.Sprintf(".x%d", i)), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := d.WriteReceipt("a.json", true); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if rs, _, err := d.TakeReceipts(os.Geteuid()); err != nil {
+			t.Fatal(err)
+		} else if rs["a.json"] {
+			return
+		}
+	}
+	t.Fatal("the receipt was never read")
 }
