@@ -59,6 +59,20 @@ jobs:
         with:
           ref: refs/tags/v${{ steps.version.outputs.version }}
           persist-credentials: false
+      # install.sh refuses a bin directory that group or others can write,
+      # and checks each directory above it too (issue #56). The runner
+      # image has a group-writable /usr/local/bin, which a normal Debian or
+      # Ubuntu host does not have. Make the runner look like a normal host,
+      # as an owner would, before install.sh runs. install.sh stays strict.
+      - name: Make /usr/local/bin and the directories above it root-only
+        run: |
+          set -eu
+          for d in /usr/local/bin /usr/local /usr; do
+            stat -c '%n %U:%G %a' "$d"
+            sudo chown root:root "$d"
+            sudo chmod go-w "$d"
+            stat -c '%n %U:%G %a' "$d"
+          done
       - name: install.sh --version, as the README says
         # install.sh checks the SHA-256 and the build attestation, and
         # installs nothing when a check fails. It needs no GitHub login.
