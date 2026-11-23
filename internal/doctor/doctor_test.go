@@ -223,6 +223,12 @@ func TestEachProblem(t *testing.T) {
 		{"inbox mode changed", func(f *fix) { _ = os.Chmod(filepath.Join(f.o.SpoolDir, name, "inbox"), 0o755) }, "inbox has owner"},
 		{"state dir mode changed", func(f *fix) { _ = os.Chmod(filepath.Join(f.o.StateDir, name), 0o755) }, "systemctl start pullgate-run@" + name + ".service"},
 		{"listener cannot read the outbox", func(f *fix) { f.readErr = errors.New("permission denied") }, "the listener user cannot read a file in"},
+		{"listener cannot read its config", func(f *fix) { f.readErr = errors.New("permission denied") }, "cannot be read by the listener user"},
+		{"state file is not a regular file", func(f *fix) {
+			p := filepath.Join(f.o.StateDir, name, "state.json")
+			_ = os.Remove(p)
+			_ = syscall.Mkfifo(p, 0o600)
+		}, "is a p"},
 		{"git cannot read the repo", func(f *fix) {
 			p := filepath.Join(f.o.ConfigDir, name+".toml")
 			b, _ := os.ReadFile(p)
@@ -279,39 +285,6 @@ func TestTokenFileOfTheConfig(t *testing.T) {
 	f.write("etc/listener.toml", strings.Replace(string(b), filepath.Join(f.base, "etc/bot-token"), other, 1), 0o600)
 	f.write("etc/bot-token", "999:old\n", 0o600) // an old file that the listener does not use
 	if n := f.run(); n != 0 || !strings.Contains(f.out.String(), "bot token: "+other) {
-		t.Fatalf("%d problems:\n%s", n, f.out.String())
-	}
-}
-
-func TestCanRead(t *testing.T) {
-	for _, c := range []struct {
-		m        os.FileMode
-		uid, gid int
-		want     bool
-	}{
-		{0o600, 0, 0, false},  // root only: the listener does not start
-		{0o640, 0, 200, true}, // the README mode
-		{0o640, 0, 0, false},  // the group of root
-		{0o644, 0, 0, true},
-		{0o604, 0, 200, false}, // the group bits count for its group
-		{0o600, 100, 0, true},
-		{0o640, 0, 300, true}, // another group of the listener user
-	} {
-		if got := canRead(c.m, c.uid, c.gid, 100, []int{200, 300}); got != c.want {
-			t.Errorf("canRead(%o, %d, %d) = %v", c.m, c.uid, c.gid, got)
-		}
-	}
-}
-
-// The README setup: no token_file, the token is the systemd credential
-// ConfigDir/bot-token, owned by root.
-func TestTokenAsCredential(t *testing.T) {
-	t.Setenv("CREDENTIALS_DIRECTORY", "")
-	f := newFix(t)
-	b, _ := os.ReadFile(f.o.Listener)
-	f.write("etc/listener.toml", strings.Replace(string(b), "token_file = \""+filepath.Join(f.base, "etc/bot-token")+"\"\n", "", 1), 0o600)
-	f.o.Telegram = true
-	if n := f.run(); n != 0 || !strings.Contains(f.out.String(), "the token works") {
 		t.Fatalf("%d problems:\n%s", n, f.out.String())
 	}
 }

@@ -239,7 +239,7 @@ func writeIn(dir string, data []byte, mode os.FileMode, gid int, final string) (
 		err = FixMode(f, -1, gid, mode)
 	}
 	if err == nil {
-		err = readBack(f, "a new file in "+dir, -1, gid, mode)
+		err = readBack(f, "a new file in "+dir, os.Geteuid(), gid, mode)
 	}
 	if err == nil {
 		err = f.Sync()
@@ -348,12 +348,25 @@ func (d Dirs) TakeReceipts(listenerUID int) (map[string]bool, []error, error) {
 		return nil, nil, err
 	}
 	defer func() { _ = root.Close() }()
-	names, err := list(root)
+	// At most MaxReceipts names are read; the rest waits for the next run.
+	dir, err := root.Open(".")
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(names) > MaxReceipts {
-		names = names[:MaxReceipts] // the rest waits for the next run
+	all, err := dir.Readdirnames(MaxReceipts)
+	_ = dir.Close()
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, nil, err
+	}
+	var names []string
+	for _, n := range all {
+		if !strings.HasPrefix(n, ".") {
+			names = append(names, n)
+		} else if strings.HasPrefix(n, ".tmp-") {
+			if fi, err := root.Lstat(n); err == nil && time.Since(fi.ModTime()) > time.Minute {
+				_ = root.Remove(n)
+			}
+		}
 	}
 	out := map[string]bool{}
 	var bad []error

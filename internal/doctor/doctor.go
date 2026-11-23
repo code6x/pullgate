@@ -115,7 +115,7 @@ func Run(ctx context.Context, o *Options) int {
 			d.problem("listener user", err.Error())
 		} else {
 			owners = &ow
-			d.listenerReads(lc, ow)
+			d.listenerReads(ctx, lc, ow)
 			d.token(ctx, lc, ow)
 		}
 	}
@@ -178,28 +178,13 @@ func (d *doc) units(ctx context.Context, names []string) {
 
 // listenerReads checks that the listener user can read listener.toml
 // (root, 0640 with its group, or 0644), and that both use the same spool.
-func (d *doc) listenerReads(lc *config.Listener, ow spool.Owners) {
-	if fi, err := os.Stat(lc.Path); err == nil {
-		st, ok := fi.Sys().(*syscall.Stat_t)
-		if !ok || !canRead(fi.Mode().Perm(), int(st.Uid), int(st.Gid), ow.ListenerUID, listenerGroups(ow)) {
-			d.problem("listener config", lc.Path+" cannot be read by the listener user, so the listener does not start. Fix: chown root:"+strconv.Itoa(ow.ListenerGID)+" "+lc.Path+" and chmod 0640 "+lc.Path)
-		}
+func (d *doc) listenerReads(ctx context.Context, lc *config.Listener, ow spool.Owners) {
+	if err := d.o.ReadAs(ctx, ow.ListenerUID, listenerGroups(ow), lc.Path); err != nil {
+		d.problem("listener config", lc.Path+" cannot be read by the listener user, so the listener does not start: "+err.Error()+". Fix: chown root:"+strconv.Itoa(ow.ListenerGID)+" "+lc.Path+", chmod 0640 "+lc.Path+", and let others enter the directories above it (chmod 0755)")
 	}
 	if filepath.Clean(lc.SpoolDir) != filepath.Clean(d.o.SpoolDir) {
 		d.problem("listener config", "spool_dir of "+lc.Path+" is "+lc.SpoolDir+", but root uses "+d.o.SpoolDir+", so no question reaches the listener. Fix: remove spool_dir from "+lc.Path+", or give doctor the same --spool-dir")
 	}
-}
-
-// canRead says whether the user luid with the groups gids can read a file
-// with the mode m, the owner uid and the group gid.
-func canRead(m fs.FileMode, uid, gid, luid int, gids []int) bool {
-	switch {
-	case uid == luid:
-		return m&0o400 != 0
-	case slices.Contains(gids, gid):
-		return m&0o040 != 0
-	}
-	return m&0o004 != 0
 }
 
 // listenerGroups is the primary group of the listener user, then its
@@ -271,6 +256,7 @@ type want struct {
 	path     string
 	uid, gid int
 	mode     fs.FileMode
+	file     bool // a regular file; else a directory
 }
 
 // instance checks one instance: its config and gate files, its users, the
@@ -301,17 +287,17 @@ func (d *doc) instance(ctx context.Context, name string, ow *spool.Owners) {
 	sd := state.Dir{Path: filepath.Join(o.StateDir, name)}
 	sp := env.Spool
 	list := []want{
-		{o.StateDir, u, -1, 0o711},
-		{sd.Path, u, -1, 0o711},
-		{sd.Repo(), u, -1, 0o700},
-		{sd.Trees(), u, -1, 0o711},
-		{sd.StateFile(), u, -1, 0o600},
-		{o.SpoolDir, u, -1, 0o755},
-		{filepath.Dir(sp.Outbox()), u, -1, 0o755},
-		{sp.Outbox(), u, l.ListenerGID, 0o770},
-		{sp.Inbox(), l.ListenerUID, l.ListenerGID, 0o700},
-		{sp.CheckDir(), l.ListenerUID, l.ListenerGID, 0o700},
-		{sp.Receipts(), l.ListenerUID, l.ListenerGID, 0o700},
+		{o.StateDir, u, -1, 0o711, false},
+		{sd.Path, u, -1, 0o711, false},
+		{sd.Repo(), u, -1, 0o700, false},
+		{sd.Trees(), u, -1, 0o711, false},
+		{sd.StateFile(), u, -1, 0o600, true},
+		{o.SpoolDir, u, -1, 0o755, false},
+		{filepath.Dir(sp.Outbox()), u, -1, 0o755, false},
+		{sp.Outbox(), u, l.ListenerGID, 0o770, false},
+		{sp.Inbox(), l.ListenerUID, l.ListenerGID, 0o700, false},
+		{sp.CheckDir(), l.ListenerUID, l.ListenerGID, 0o700, false},
+		{sp.Receipts(), l.ListenerUID, l.ListenerGID, 0o700, false},
 	}
 	missing, bad := []string{}, false
 	for _, w := range list {
@@ -358,7 +344,10 @@ func readBack(w want) error {
 		return fmt.Errorf("%s: no owner", w.path)
 	}
 	got := fi.Mode() & (fs.ModePerm | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky)
-	if fi.Mode()&fs.ModeSymlink != 0 || int(st.Uid) != w.uid || (w.gid >= 0 && int(st.Gid) != w.gid) || got != w.mode {
+	if w.file != fi.Mode().IsRegular() || (!w.file && !fi.IsDir()) {
+		return fmt.Errorf("%s is a %s, not a %s. Fix: move it away; the next run makes it again", w.path, fi.Mode().Type(), map[bool]string{true: "regular file", false: "directory"}[w.file])
+	}
+	if int(st.Uid) != w.uid || (w.gid >= 0 && int(st.Gid) != w.gid) || got != w.mode {
 		g := "any group"
 		if w.gid >= 0 {
 			g = "group " + strconv.Itoa(w.gid)
@@ -473,13 +462,15 @@ func ReadAs(ctx context.Context, uid int, gids []int, path string) error {
 	return nil
 }
 
-// ReadOne is the body of ReadAsCommand. It reads only a test file of
-// WriteDoctorTest, and prints nothing of it.
+// ReadOne is the body of ReadAsCommand. It reads one byte of the file
+// (the outbox test file, or listener.toml) and prints nothing of it.
+// Doctor starts it as the listener user, so it reads only what the
+// listener can read.
 func ReadOne(path string) error {
-	if !filepath.IsAbs(path) || !strings.HasPrefix(filepath.Base(path), spool.DoctorPrefix) {
-		return errors.New("not a test file of pullgate doctor")
+	if !filepath.IsAbs(path) {
+		return errors.New("not an absolute path")
 	}
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0) //nolint:gosec // a test file of WriteDoctorTest
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0) //nolint:gosec // run as the listener user; prints nothing
 	if err != nil {
 		return err
 	}

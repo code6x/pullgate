@@ -1308,7 +1308,8 @@ The checks:
   config is valid, and its gate files and programs pass the checks of
   section 4; `check_user` and the listener user exist and differ; the
   `[listener] user` is the same as `updates.listener_user`.
-- **Owners and modes, as read back.** The state directory, the clone, the
+- **Owners and modes, as read back.** The type (a directory, or a regular
+  file for `state.json`), and: the state directory, the clone, the
   trees, `state.json`, the spool, the outbox, the inbox, the check and the
   receipts directories have exactly the owner, the group and the mode of
   section 4 (setuid, setgid and sticky bits count). A path the first run
@@ -1317,8 +1318,9 @@ The checks:
   outbox as `Send` does, under a name that starts with `.doctor-` (the
   listener skips names that start with `.`). Then doctor starts itself as
   the listener user, with its groups (`pullgate _doctor-read PATH`), and
-  reads one byte of it. The test file is removed. `_doctor-read` reads only
-  a file whose name starts with `.doctor-`, and prints nothing of it.
+  reads one byte of it. The test file is removed. It reads
+  `listener.toml` the same way, as the listener user. `_doctor-read` reads
+  one byte, follows no symlink, and prints nothing of the file.
 - **The repo.** `git ls-remote` of the branch, with the deploy key and the
   pinned host key, as a run fetches, in a new temporary home.
 - **Telegram**, only with `--telegram`: `getMe` (the token works) and

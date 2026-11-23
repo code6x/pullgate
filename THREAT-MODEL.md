@@ -413,8 +413,9 @@ repo URL must pass the same check as the clone, because root runs
 `pullgate doctor` runs the same checks on demand, and also reads back the
 owners and modes of the state and the spool, so a weak file shows before
 a run needs it (DESIGN.md section 18). Doctor runs as root and starts
-itself as the listener user only to read its own test file
-(`_doctor-read` refuses any other name).
+itself as the listener user only to read one byte of its own test file
+and of `listener.toml` (`_doctor-read` prints nothing of the file). As
+the listener user it can read only what the listener can read.
 
 ### T15. Too many questions
 
