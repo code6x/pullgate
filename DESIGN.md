@@ -1392,8 +1392,10 @@ as root:
    path, no setuid, setgid or sticky bit, no entry named like the record;
    one file at most 16 MiB, all at most 64 MiB, at most 1000 entries. A
    file gets 0755 when it has an execute bit, else 0644. Then the
-   manifest is read (unknown keys refused) and the programs of `requires`
-   are looked up. Then the record `.pullgate-recipe.json` (the SHA-256 of
+   manifest is read (unknown keys refused); its `version` must be the X.Y.Z
+   of the URL (the attestation names the file, not the tag, so a signed
+   tarball of an older release put into a newer one is refused here); and
+   the programs of `requires` are looked up. Then the record `.pullgate-recipe.json` (the SHA-256 of
    the tarball and of each file) is written, and the folder is renamed to
    `X.Y.Z`. Any failure removes the temporary folder: nothing is written.
 7. **A version folder that is there already** is used only if it, and

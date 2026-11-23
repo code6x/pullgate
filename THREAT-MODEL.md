@@ -718,6 +718,8 @@ workflow of that same repo, on `main`, on a GitHub-hosted runner, built a
 file of that name and SHA-256. No flag skips a check; gh is a file of root
 and has no token. Before it writes anything, pullgate prints the repo,
 the tag, the SHA-256 and the signer, so the owner sees whose code it is.
+The manifest must name the version of the tag, so a signed tarball of
+an older release, put into a newer release, is refused.
 The unpack takes only plain files and folders with clean names, refuses
 special bits, and has size limits; it goes through a temporary folder, so
 a failure leaves nothing. The folders are root's and are checked as rule 6

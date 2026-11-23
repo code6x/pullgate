@@ -26,6 +26,7 @@ func TestMain(m *testing.M) {
 }
 
 const manifest = `format = 1
+version = "1.2.3"
 
 [[instance]]
 name = "example"
@@ -258,6 +259,7 @@ func TestDeny(t *testing.T) {
 		{"setuid", append(good(), entry{name: "suid", body: "x", mode: 0o4755}), nil, "setuid"},
 		{"too large", append(good(), entry{name: "big", body: big}), nil, "a file over"},
 		{"unknown manifest key", []entry{{name: ManifestName, body: manifest + "evil = 1\n"}, {name: "example.toml.in", body: ""}}, nil, "unknown key"},
+		{"a tarball of another version", []entry{{name: ManifestName, body: strings.Replace(manifest, "1.2.3", "1.0.0", 1)}, {name: "example.toml.in", body: ""}}, nil, "a tarball of another release"},
 		{"no manifest", []entry{{name: "example.toml.in", body: ""}}, nil, "has no " + ManifestName},
 		{"config not in the recipe", []entry{{name: ManifestName, body: manifest}}, nil, "not a file in the recipe"},
 		{"missing requires", []entry{{name: ManifestName, body: strings.Replace(manifest, `["sh"]`, `["sh", "ansible-playbook"]`, 1)}, {name: "example.toml.in", body: ""}}, nil, "needs ansible-playbook"},
@@ -308,13 +310,14 @@ func (r *rel) rewriteGH(old, new string) string {
 
 func TestManifest(t *testing.T) {
 	for _, bad := range []string{
-		"format = 2\n[[instance]]\nname = \"a\"\nconfig = \"a.toml.in\"\n",
-		"format = 1\n",
-		"format = 1\n[[instance]]\nname = \"A\"\nconfig = \"a.toml.in\"\n",
-		"format = 1\n[[instance]]\nname = \"a\"\nconfig = \"../a.toml.in\"\n",
-		"format = 1\n[[instance]]\nname = \"a\"\nconfig = \"a\"\nsetup = [\"/bin/sh\"]\n",
-		"format = 1\n[[instance]]\nname = \"a\"\nconfig = \"a\"\nrequires = [\"a b\"]\n",
-		"format = 1\n[[instance]]\nname = \"a\"\nconfig = \"a\"\n[[instance]]\nname = \"a\"\nconfig = \"b\"\n",
+		"format = 2\nversion = \"1.0.0\"\n[[instance]]\nname = \"a\"\nconfig = \"a.toml.in\"\n",
+		"format = 1\nversion = \"1.0.0\"\n",
+		"format = 1\n[[instance]]\nname = \"a\"\nconfig = \"a\"\n",
+		"format = 1\nversion = \"1.0.0\"\n[[instance]]\nname = \"A\"\nconfig = \"a.toml.in\"\n",
+		"format = 1\nversion = \"1.0.0\"\n[[instance]]\nname = \"a\"\nconfig = \"../a.toml.in\"\n",
+		"format = 1\nversion = \"1.0.0\"\n[[instance]]\nname = \"a\"\nconfig = \"a\"\nsetup = [\"/bin/sh\"]\n",
+		"format = 1\nversion = \"1.0.0\"\n[[instance]]\nname = \"a\"\nconfig = \"a\"\nrequires = [\"a b\"]\n",
+		"format = 1\nversion = \"1.0.0\"\n[[instance]]\nname = \"a\"\nconfig = \"a\"\n[[instance]]\nname = \"a\"\nconfig = \"b\"\n",
 	} {
 		if _, err := ParseManifest([]byte(bad)); err == nil {
 			t.Errorf("ParseManifest passed:\n%s", bad)

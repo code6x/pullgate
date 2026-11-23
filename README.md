@@ -332,6 +332,7 @@ root, the manifest `pullgate-recipe.toml`:
 
 ```toml
 format = 1
+version = "1.2.3"              # must be the tag of the release, without the v
 
 [[instance]]
 name = "example"               # the default instance name
@@ -341,7 +342,8 @@ setup = ["setup"]              # optional: a program of the recipe
 ```
 
 An unknown key, a name that is not an instance name, or a path that is
-not a file in the recipe is refused. A program of `requires` is looked up
+not a file in the recipe is refused. `version` is signed with the tarball,
+the tag in the URL is not: a tarball of another release is refused. A program of `requires` is looked up
 in `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`; a
 missing one stops it, and nothing is written.
 

@@ -99,11 +99,13 @@ type Instance struct {
 // Manifest is pullgate-recipe.toml.
 type Manifest struct {
 	Format    int        `toml:"format"`
+	Version   string     `toml:"version"` // X.Y.Z: must be the tag of the release (signed with the tarball)
 	Instances []Instance `toml:"instance"`
 }
 
 var (
 	progRE     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$`)
+	versionRE  = regexp.MustCompile(`^[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}$`)
 	workflowRE = regexp.MustCompile(`^\.github/workflows/[A-Za-z0-9_-][A-Za-z0-9_.-]*\.ya?ml$`)
 	relRE      = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.+-]*(/[A-Za-z0-9_][A-Za-z0-9_.+-]*)*$`)
 )
@@ -121,6 +123,9 @@ func ParseManifest(b []byte) (*Manifest, error) {
 	}
 	if m.Format != 1 {
 		return nil, fmt.Errorf("%s: format = %d; this pullgate reads format 1. Fix: update pullgate, or use a recipe of format 1", ManifestName, m.Format)
+	}
+	if !versionRE.MatchString(m.Version) {
+		return nil, fmt.Errorf("%s: version %q is not X.Y.Z. Fix: the recipe must say its own version", ManifestName, m.Version)
 	}
 	if len(m.Instances) == 0 {
 		return nil, fmt.Errorf("%s: no [[instance]]. Fix: the recipe must name at least one instance", ManifestName)
@@ -472,7 +477,7 @@ func (f *Fetcher) unpack(src Source, tarball []byte, sum string) (string, *Manif
 	if err := extract(tarball, tmp, rec.Files); err != nil {
 		return "", nil, err
 	}
-	m, err := readManifest(tmp)
+	m, err := readManifest(tmp, src.Version)
 	if err != nil {
 		return "", nil, err
 	}
@@ -512,7 +517,10 @@ func (f *Fetcher) mkdirs(dir string) error {
 	return nil
 }
 
-func readManifest(dir string) (*Manifest, error) {
+// readManifest reads the manifest of the recipe in dir, whose version
+// must be version: the version is signed with the tarball, the tag of
+// the URL is not.
+func readManifest(dir, version string) (*Manifest, error) {
 	b, err := os.ReadFile(filepath.Join(dir, ManifestName)) //nolint:gosec // in the new recipe folder
 	if err != nil {
 		return nil, fmt.Errorf("the recipe has no %s at its root. Fix: this file is not a pullgate recipe", ManifestName)
@@ -520,6 +528,9 @@ func readManifest(dir string) (*Manifest, error) {
 	m, err := ParseManifest(b)
 	if err != nil {
 		return nil, withFix(err)
+	}
+	if m.Version != version {
+		return nil, fmt.Errorf("%s says version %s, but the release is v%s: a tarball of another release. Nothing was written. Fix: do not use this release; report it to its project", ManifestName, m.Version, version)
 	}
 	for _, in := range m.Instances {
 		paths := []string{in.Config}
@@ -676,7 +687,7 @@ func (f *Fetcher) checkExisting(dir, sum string) (*Manifest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s is there already, but does not match its record: %w%s", dir, err, fix)
 	}
-	return readManifest(dir)
+	return readManifest(dir, filepath.Base(dir))
 }
 
 // withFix adds the fix to an error of the recipe that has none.
