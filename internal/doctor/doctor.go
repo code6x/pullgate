@@ -57,6 +57,11 @@ type Options struct {
 	Remote func(ctx context.Context, cfg *config.Instance, uid uint32) error
 
 	Out io.Writer
+
+	// asRoot makes the tests check what only root checks: that check_user
+	// is not the listener user. As another user, check_user must be that
+	// user (gate.ResolveSandbox).
+	asRoot bool
 }
 
 // The units that must be enabled. The others of Enable are optional.
@@ -277,6 +282,11 @@ func (d *doc) instance(ctx context.Context, name string, ow *spool.Owners) {
 	env, err := gate.New(cfg, o.StateDir, o.SpoolDir, o.UID, slog.New(slog.DiscardHandler), io.Discard)
 	if err != nil {
 		d.problem(what, err.Error())
+		return
+	}
+	if (o.UID == 0 || o.asRoot) && (env.Sandbox.UID == env.Owners.ListenerUID || env.Sandbox.GID == env.Owners.ListenerGID) {
+		// gate.New refuses this as root already; said here in its own words.
+		d.problem(what, "check_user "+cfg.Commands.CheckUser+" is the listener user or has its group: a check that is taken over could write approvals (THREAT-MODEL.md T2). Fix: set [commands] check_user to its own user, such as pullgate-check-"+name)
 		return
 	}
 	d.ok(what, cfg.Path+" is valid; its files, its programs and check_user "+cfg.Commands.CheckUser+" pass the checks")

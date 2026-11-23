@@ -223,6 +223,7 @@ func TestEachProblem(t *testing.T) {
 		{"inbox mode changed", func(f *fix) { _ = os.Chmod(filepath.Join(f.o.SpoolDir, name, "inbox"), 0o755) }, "inbox has owner"},
 		{"state dir mode changed", func(f *fix) { _ = os.Chmod(filepath.Join(f.o.StateDir, name), 0o755) }, "systemctl start pullgate-run@" + name + ".service"},
 		{"listener cannot read the outbox", func(f *fix) { f.readErr = errors.New("permission denied") }, "the listener user cannot read a file in"},
+		{"check user is the listener user", func(f *fix) { f.o.asRoot = true }, "is the listener user or has its group"},
 		{"listener cannot read its config", func(f *fix) { f.readErr = errors.New("permission denied") }, "cannot be read by the listener user"},
 		{"state file is not a regular file", func(f *fix) {
 			p := filepath.Join(f.o.StateDir, name, "state.json")
