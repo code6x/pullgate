@@ -120,6 +120,15 @@ the limit (one run per minute from requests) in its own state, so the
 listener cannot make root fetch more often by writing files; a bad file
 is not a request (T18).
 
+*Receipts.* The listener writes a receipt for each outbox file it handled
+(DESIGN.md section 8). Root reads them with the checks of an approval
+(`O_NOFOLLOW`, regular file, owned by the listener, at most 16 bytes, one
+of two fixed contents, at most 1000 per run). A receipt only changes a log
+line (`asked`, or the warning `question not delivered`) and the `delivery`
+line of the status. It is never an approval. A fake `sent` receipt hides
+a lost question, which a compromised listener can do anyway by not
+sending it.
+
 *Left.* It can approve any open question (or a superseded one that has not
 expired) without the owner, and it can hide or fake messages. So the
 attacker still needs a hostile commit in the repo **and** the listener.
@@ -401,6 +410,12 @@ hosts file, the program of a command, or a directory above one of them.
 *Defense.* pullgate refuses to start then (DESIGN.md section 4). A local
 repo URL must pass the same check as the clone, because root runs
 `git-upload-pack` in it. The listener checks its own config and token file.
+`pullgate doctor` runs the same checks on demand, and also reads back the
+owners and modes of the state and the spool, so a weak file shows before
+a run needs it (DESIGN.md section 18). Doctor runs as root and starts
+itself as the listener user only to read one byte of its own test file
+and of `listener.toml` (`_doctor-read` prints nothing of the file). As
+the listener user it can read only what the listener can read.
 
 ### T15. Too many questions
 

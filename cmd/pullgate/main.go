@@ -15,12 +15,14 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/code6x/pullgate"
 	"github.com/code6x/pullgate/internal/bootstrap"
 	"github.com/code6x/pullgate/internal/config"
+	"github.com/code6x/pullgate/internal/doctor"
 	"github.com/code6x/pullgate/internal/gate"
 	"github.com/code6x/pullgate/internal/listener"
 	"github.com/code6x/pullgate/internal/selfupdate"
@@ -44,6 +46,10 @@ commands:
   update [--config FILE]   look for a new release of pullgate, and install
                  one after a tap (pullgate-update.service runs it, as root)
   units          print the units this binary carries, as JSON
+  doctor [NAME] [--telegram] [--config FILE] [--unit-dir DIR]
+                 check the setup of the host, as root: one line per check,
+                 and exit 1 on any problem. --telegram also checks the bot
+                 token and the chat with Telegram
   bootstrap [--token-stdin] --instance NAME --repo URL [--branch B]
                  [--apply PROGRAM] [--known-hosts FILE] [--instance ...]
                  set up a new host, as root: the bot token (with no echo),
@@ -83,7 +89,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	rest := fs.Args()
 	if len(rest) == 0 {
-		return usageErr(stderr, "give a command: run, apply, status, listen, update, units, bootstrap or version")
+		return usageErr(stderr, "give a command: run, apply, status, listen, update, units, bootstrap, doctor or version")
 	}
 	log := slog.New(slog.NewTextHandler(stderr, nil))
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -185,6 +191,46 @@ func run(args []string, stdout, stderr io.Writer) int {
 		log.Info("listening", "instances", cfg.Instances)
 		if err := l.Run(ctx); err != nil {
 			log.Error("listen", "err", err)
+			return 1
+		}
+		return 0
+	case doctor.ReadAsCommand: // started by pullgate doctor only
+		if len(rest) != 2 {
+			return usageErr(stderr, "pullgate "+doctor.ReadAsCommand+" takes one path")
+		}
+		if err := doctor.ReadOne(rest[1]); err != nil {
+			_, _ = fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	case "doctor":
+		args := rest[1:]
+		name := ""
+		if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+			name, args = args[0], args[1:]
+		}
+		df := flag.NewFlagSet("doctor", flag.ContinueOnError)
+		df.SetOutput(io.Discard)
+		tg := df.Bool("telegram", false, "")
+		path := df.String("config", filepath.Join(*configDir, "listener.toml"), "")
+		unitDir := df.String("unit-dir", "/etc/systemd/system", "")
+		if err := df.Parse(args); err != nil || df.NArg() > 0 {
+			return usageErr(stderr, "unknown arguments after pullgate doctor")
+		}
+		if name != "" && !config.ValidName(name) {
+			return usageErr(stderr, fmt.Sprintf("%q is not an instance name", name))
+		}
+		if euid != 0 {
+			log.Error("doctor", "err", "it must run as root, to read the files of root and to read the outbox as the listener user. Fix: run it with sudo, or as root")
+			return 1
+		}
+		n := doctor.Run(ctx, &doctor.Options{
+			Version: version, ConfigDir: *configDir, StateDir: *stateDir, SpoolDir: *spoolDir,
+			UnitDir: *unitDir, Listener: *path, Name: name, Telegram: *tg, UID: 0,
+			Units: pullgate.Units(), Enable: pullgate.Enable,
+			Systemctl: doctor.Systemctl, ReadAs: doctor.ReadAs, Out: stdout,
+		})
+		if n > 0 {
 			return 1
 		}
 		return 0

@@ -6,11 +6,13 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -455,17 +457,49 @@ func CheckAPIURL(s string) error {
 	return fmt.Errorf("%q: it must be an https:// url. Fix: use https://api.telegram.org", s)
 }
 
+// readSmall reads a regular file of at most max bytes. It follows no
+// symlink and does not wait on a FIFO, so a file that is swapped after
+// the check cannot make root read another file or hang.
+// With owner >= 0 the open file must also be owned by owner and be
+// readable by nobody else, checked on the file that is read.
+func readSmall(path string, max int64, owner int) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0) //nolint:gosec // the checked token file
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, errors.New("not a regular file")
+	}
+	if owner >= 0 {
+		st, ok := fi.Sys().(*syscall.Stat_t)
+		if !ok || int(st.Uid) != owner || fi.Mode().Perm()&0o077 != 0 {
+			return nil, fmt.Errorf("the file changed after its check: it is not owned by uid %d with mode 0600", owner)
+		}
+	}
+	if fi.Size() > max {
+		return nil, fmt.Errorf("larger than %d bytes", max)
+	}
+	return io.ReadAll(io.LimitReader(f, max+1))
+}
+
 // ReadToken reads the bot token. The file must be owned by uid (the
 // listener user) and readable by nobody else. The token is never printed.
 func (c *Listener) ReadToken(uid uint32) (string, error) {
+	owner := int(uid)
 	if err := safedir.CheckFile(c.TokenFile, uid, true); err != nil {
+		owner = -1 // a systemd credential: its directory is safe, its owner may differ
 		if !strings.HasPrefix(c.TokenFile, os.Getenv("CREDENTIALS_DIRECTORY")+"/") || os.Getenv("CREDENTIALS_DIRECTORY") == "" {
 			return "", fmt.Errorf("token_file: %w", err)
 		}
 	}
-	b, err := os.ReadFile(c.TokenFile)
+	b, err := readSmall(c.TokenFile, 4096, owner)
 	if err != nil {
-		return "", fmt.Errorf("read the token file %s: %w", c.TokenFile, err)
+		return "", fmt.Errorf("read the token file %s: %w. Fix: make it a regular file with the token on one line", c.TokenFile, err)
 	}
 	tok := strings.TrimSpace(string(b))
 	if tok == "" || strings.ContainsAny(tok, " /\n\t") {

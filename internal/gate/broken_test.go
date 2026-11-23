@@ -74,7 +74,7 @@ func TestBrokenFixForward(t *testing.T) {
 	f.outbox()
 	f.r.Git("rm", "--quiet", "fail-health")
 	c := f.commit("fix", "three", nil)
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("a fix forward is asked: %s", r)
 	}
 	q := f.ask()
@@ -124,7 +124,7 @@ func TestBrokenBadFixForwardStaysBroken(t *testing.T) {
 		t.Fatalf("the failed fix forward is not asked again: %s", r)
 	}
 	d := f.commit("next", "four", nil)
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("the next newer commit is asked: %s", r)
 	}
 	if q := f.ask(); !strings.Contains(q.Text, "fix forward "+message.Short(c)+" failed") {
@@ -156,7 +156,7 @@ func TestBrokenAsksInAutoMode(t *testing.T) {
 	f.env.Cfg.Mode = config.ModeAuto
 	f.r.Git("rm", "--quiet", "fail-health")
 	f.commit("fix", "three", nil)
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("broken in auto mode asks the owner: %s", r)
 	}
 	if m := f.ask(); m.Kind != spool.KindAsk {
@@ -202,7 +202,7 @@ func TestBrokenDropsOlderQuestions(t *testing.T) {
 		t.Fatalf("an old tap while broken: %s", r)
 	}
 	// The next run asks it again, with the warning.
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("run: %s", r)
 	}
 	if !strings.Contains(f.ask().Text, "This commit is a fix forward.") {

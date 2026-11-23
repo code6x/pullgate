@@ -116,6 +116,7 @@ func (f *fixture) load() {
 		f.t.Fatal(err)
 	}
 	env.Now = func() time.Time { return f.now }
+	env.ReceiptWait = -1 // no listener here: a question stays "sent"
 	f.env = env
 }
 
@@ -220,7 +221,7 @@ func (f *fixture) touch(n string) {
 func (f *fixture) applyNew(value string) string {
 	f.t.Helper()
 	sha := f.commit("set "+value, value, nil)
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		f.t.Fatalf("run: %s, want asked", r)
 	}
 	f.tap(f.ask().Code, "apply")

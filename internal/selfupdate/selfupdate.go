@@ -137,7 +137,7 @@ func (u *Updater) head() string {
 
 func (u *Updater) send(m spool.Message) {
 	m.Text = u.head() + "\n" + m.Text
-	if err := u.Spool.Send(u.Owners.ListenerGID, m); err != nil {
+	if _, err := u.Spool.Send(u.Owners.ListenerGID, m); err != nil {
 		u.Log.Error("write to the outbox", "kind", m.Kind, "err", err)
 	}
 }
@@ -499,7 +499,7 @@ func (u *Updater) ask(st *State, f found) (Result, error) {
 		return "", err
 	}
 	m := spool.Message{Kind: spool.KindAsk, Question: q.ID, Code: c, Expires: q.Expires, Text: u.head() + "\n" + u.questionText(f)}
-	if err := u.Spool.Send(u.Owners.ListenerGID, m); err != nil {
+	if _, err := u.Spool.Send(u.Owners.ListenerGID, m); err != nil {
 		st.Question = nil
 		_ = u.save(st)
 		return "", fmt.Errorf("write the update question to the outbox: %w", err)

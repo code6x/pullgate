@@ -38,6 +38,10 @@ type Server struct {
 	Sent    []Sent
 	Answers []string
 	wake    chan struct{}
+	// Refuse makes sendMessage fail with this error code (400: for good).
+	Refuse int
+	// NoChat makes getChat fail, as for a chat the bot cannot reach.
+	NoChat bool
 }
 
 // New starts a fake server for token.
@@ -62,6 +66,15 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	switch method {
 	case "getMe":
 		writeJSON(w, map[string]any{"ok": true, "result": telegram.User{ID: 1, IsBot: true, Username: "example_bot"}})
+	case "getChat":
+		s.mu.Lock()
+		no := s.NoChat
+		s.mu.Unlock()
+		if no {
+			writeJSON(w, map[string]any{"ok": false, "error_code": 400, "description": "Bad Request: chat not found"})
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "result": map[string]any{"id": num("chat_id"), "type": "private"}})
 	case "deleteWebhook":
 		writeJSON(w, map[string]any{"ok": true, "result": true})
 	case "getUpdates":
@@ -118,6 +131,12 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": true, "result": out})
 	case "sendMessage", "editMessageText":
 		s.mu.Lock()
+		if s.Refuse != 0 {
+			code := s.Refuse
+			s.mu.Unlock()
+			writeJSON(w, map[string]any{"ok": false, "error_code": code, "description": "Bad Request: refused by the fake"})
+			return
+		}
 		sent := Sent{Method: method, Chat: num("chat_id"), Text: str("text")}
 		if rm, ok := req["reply_markup"].(map[string]any); ok {
 			if kb, ok := rm["inline_keyboard"].([]any); ok && len(kb) > 0 {

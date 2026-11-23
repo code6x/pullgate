@@ -208,3 +208,13 @@ func (c *Client) EditMessageText(ctx context.Context, chat, msg int64, text stri
 func (c *Client) AnswerCallbackQuery(ctx context.Context, id, text string) error {
 	return c.call(ctx, "answerCallbackQuery", map[string]any{"callback_query_id": id, "text": text}, nil)
 }
+
+// GetChat returns the chat with the ID chat: it checks that the bot can
+// reach it.
+func (c *Client) GetChat(ctx context.Context, chat int64) (*Chat, error) {
+	var ch Chat
+	if err := c.call(ctx, "getChat", map[string]any{"chat_id": chat}, &ch); err != nil {
+		return nil, err
+	}
+	return &ch, nil
+}

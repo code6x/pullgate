@@ -207,6 +207,7 @@ instances:
 					continue
 				}
 				l.Log.Warn("bad outbox file, removed", "instance", inst, "file", f.Name, "err", f.Err)
+				l.receipt(d, inst, f.Name, false)
 				if !told {
 					// The text cannot be read, but the owner must know that
 					// a message (maybe a question) is lost. One notice per
@@ -218,8 +219,10 @@ instances:
 			}
 			err := l.send(ctx, inst, f.Message)
 			var ae *telegram.APIError
+			sent := err == nil
 			switch {
 			case err == nil:
+			case errors.Is(err, errDropped):
 			case errors.As(err, &ae) && ae.Permanent():
 				l.Log.Warn("telegram refused a message, dropped", "instance", inst, "kind", f.Message.Kind, "err", err)
 			case f.Age > 24*time.Hour:
@@ -234,10 +237,27 @@ instances:
 				l.Log.Error("save the listener state", "err", err)
 				return
 			}
+			// The receipt before the removal: root logs "asked" only after
+			// it. A receipt for a file that stays is written again, the
+			// same, next round.
+			l.receipt(d, inst, f.Name, sent)
 			if err := d.Done(f.Name); err != nil {
 				l.Log.Warn("remove an outbox file", "instance", inst, "err", err)
 			}
 		}
+	}
+}
+
+// receipt tells root that the outbox file name of inst was sent, or was
+// removed without a send (DESIGN.md section 8). The updates of pullgate
+// itself have no receipts.
+func (l *Listener) receipt(d spool.Dirs, inst, name string, sent bool) {
+	if inst == spool.SelfName {
+		return
+	}
+	if err := d.WriteReceipt(name, sent); err != nil {
+		l.Log.Warn("write the receipt of an outbox file; root will log the question as not delivered. Fix: run \"pullgate doctor\" as root",
+			"instance", inst, "file", name, "err", err)
 	}
 }
 
@@ -259,6 +279,10 @@ func (l *Listener) badOutboxNotice(ctx context.Context, inst string) {
 	}
 }
 
+// errDropped is the result of send for a question that was not sent with
+// its buttons: its receipt says failed.
+var errDropped = errors.New("the question was dropped")
+
 func (l *Listener) send(ctx context.Context, inst string, m spool.Message) error {
 	chat := l.Cfg.ChatID
 	switch m.Kind {
@@ -271,6 +295,9 @@ func (l *Listener) send(ctx context.Context, inst string, m spool.Message) error
 				return err
 			}
 			_, err := l.TG.SendMessage(ctx, chat, "pullgate: a question of instance <b>"+html.EscapeString(inst)+"</b> expired before it could be sent. The next commit, or <code>pullgate status "+html.EscapeString(inst)+" --ask-again</code>, asks again.", nil, 0)
+			if err == nil {
+				err = errDropped // the owner got a notice, not the question
+			}
 			return err
 		}
 		if q := l.find(inst, m.Question); q != nil {

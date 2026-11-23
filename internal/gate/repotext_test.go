@@ -55,7 +55,7 @@ func TestHostileCommitTextIsOnlyCode(t *testing.T) {
 	f.script("check.sh", "true\n")
 	f.script("summary.sh", "echo '"+hostileLine+"'\n")
 	f.commit("second "+hostileLine, "two", map[string]string{"fail-apply": "x", "docs.example.org": "x"})
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("run: %s", r)
 	}
 	ms = f.outbox()

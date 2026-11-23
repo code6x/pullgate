@@ -258,3 +258,42 @@ func TestSettleAndReask(t *testing.T) {
 		t.Fatalf("settle %s, reask_after %s", c.Limits.Settle.Duration, c.Limits.ReaskAfter.Duration)
 	}
 }
+
+// readSmall follows no symlink and does not wait on a FIFO: a token file
+// swapped after its check cannot make root read another file or hang.
+func TestReadSmallRefusesLinksAndFIFOs(t *testing.T) {
+	d := t.TempDir()
+	ok := filepath.Join(d, "ok")
+	if err := os.WriteFile(ok, []byte("123:abc\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := readSmall(ok, 4096, -1); err != nil || string(b) != "123:abc\n" {
+		t.Fatalf("readSmall = %q, %v", b, err)
+	}
+	link := filepath.Join(d, "link")
+	if err := os.Symlink(ok, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readSmall(link, 4096, -1); err == nil {
+		t.Fatal("readSmall followed a symlink")
+	}
+	fifo := filepath.Join(d, "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readSmall(fifo, 4096, -1); err == nil {
+		t.Fatal("readSmall read a FIFO")
+	}
+	if _, err := readSmall(ok, 3, -1); err == nil {
+		t.Fatal("readSmall read a file larger than max")
+	}
+	if _, err := readSmall(ok, 4096, os.Geteuid()+1); err == nil {
+		t.Fatal("readSmall read a file of another owner")
+	}
+	if err := os.Chmod(ok, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readSmall(ok, 4096, os.Geteuid()); err == nil {
+		t.Fatal("readSmall read a file that others can read")
+	}
+}

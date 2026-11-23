@@ -27,7 +27,7 @@ func TestCheckRequestStartsANormalRun(t *testing.T) {
 	f := newFixture(t, ``, "")
 	f.commit("first", "one", nil)
 	f.request()
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("run: %s, want asked", r)
 	}
 	q := f.ask()
@@ -86,7 +86,7 @@ func TestCheckRateLimitByRoot(t *testing.T) {
 	f := newFixture(t, ``, "")
 	a := f.commit("first", "one", nil)
 	f.request()
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("run: %s", r)
 	}
 	f.outbox()
@@ -118,7 +118,7 @@ func TestCheckRateLimitByRoot(t *testing.T) {
 	}
 	f.now = f.now.Add(2 * time.Minute)
 	f.request()
-	if r := f.run(); r != Asked || f.state().LastTip != b {
+	if r := f.run(); r != Sent || f.state().LastTip != b {
 		t.Fatalf("a minute later the request runs: %s", r)
 	}
 }
@@ -148,7 +148,7 @@ func TestCheckBadRequestFiles(t *testing.T) {
 			c(f)
 			// A timer run that finds only bad files removes them and
 			// goes on as a normal run, with no reply.
-			if r := f.run(); r != Asked {
+			if r := f.run(); r != Sent {
 				t.Fatalf("the run must go on as a normal run: %s", r)
 			}
 			if left, _ := os.ReadDir(f.env.Spool.CheckDir()); len(left) != 0 {
@@ -229,7 +229,7 @@ func TestCheckWaitsForTheLock(t *testing.T) {
 		t.Fatal("nothing may run while the lock is held")
 	}
 	_ = l.Close()
-	if r := <-done; r != Asked {
+	if r := <-done; r != Sent {
 		t.Fatalf("after the lock is free the request runs once: %s", r)
 	}
 }

@@ -28,7 +28,7 @@ func TestStatusRequest(t *testing.T) {
 	f.requestKind(spool.RequestStatus)
 	// /status never skips the normal run: a stream of them cannot stop
 	// fetches.
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		t.Fatalf("run: %s", r)
 	}
 	ms := f.outbox()
@@ -174,7 +174,7 @@ func TestAskAgainOnlyExpiredOrLost(t *testing.T) {
 		}
 		f.outbox()
 		f.requestKind(spool.RequestAskAgain)
-		if r := f.run(); r != Asked {
+		if r := f.run(); r != Sent {
 			t.Fatalf("/ask-again on an expired question: %s", r)
 		}
 	})
@@ -185,7 +185,7 @@ func TestAskAgainOnlyExpiredOrLost(t *testing.T) {
 		f.run()
 		old := f.ask() // as if it never reached the chat
 		f.requestKind(spool.RequestAskAgain)
-		if r := f.run(); r != Asked {
+		if r := f.run(); r != Sent {
 			t.Fatalf("/ask-again on an open question: %s", r)
 		}
 		if f.ask().Code == old.Code {

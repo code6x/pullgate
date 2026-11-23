@@ -87,6 +87,9 @@ func (e *Env) statusText(w io.Writer, st *state.State) {
 	show("last tip", orNone(st.LastTip))
 	if q := st.Open(); q != nil {
 		show("question", fmt.Sprintf("%s, open until %s", q.SHA, q.Expires.Format("2006-01-02 15:04 MST")))
+		if !q.Auto {
+			show("delivery", e.delivery(q, e.now()))
+		}
 	} else {
 		show("question", "none")
 	}

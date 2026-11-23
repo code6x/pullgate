@@ -25,7 +25,7 @@ func replies(ms []spool.Message) string {
 func (f *fixture) askAndApply(subject, value string, more map[string]string) (Result, string) {
 	f.t.Helper()
 	f.commit(subject, value, more)
-	if r := f.run(); r != Asked {
+	if r := f.run(); r != Sent {
 		f.t.Fatalf("run: %s", r)
 	}
 	f.tap(f.ask().Code, "apply")

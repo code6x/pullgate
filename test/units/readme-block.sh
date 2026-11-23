@@ -6,19 +6,20 @@
 #   binary  install the binary (by hand)
 #   setup   the users, the directories and the units
 #   start   systemctl daemon-reload and enable --now
+#   doctor  pullgate doctor, the check of the setup (issue #28)
 #
 # Usage:
 #   sh test/units/readme-block.sh NAME [README]
 #       Print the commands of block NAME. Fails when the marker is missing,
 #       is there twice, or is not followed by a non-empty ```sh block.
 #   sh test/units/readme-block.sh --check [README]
-#       Check that all three blocks are there, and that no install command
+#       Check that all four blocks are there, and that no install command
 #       (useradd, install -d, cp contrib/systemd, systemctl enable) of a
 #       ```sh block is outside a marked block. Such a command would not
 #       be run by CI.
 set -eu
 
-blocks="binary setup start"
+blocks="binary setup start doctor"
 
 usage() {
 	echo "usage: readme-block.sh NAME [README] | readme-block.sh --check [README]" >&2

@@ -154,6 +154,33 @@ systemctl enable --now pullgate-update.timer pullgate-update.path   # optional: 
 
 Every step logs to the journal: `journalctl -t pullgate`.
 
+Then check the setup, as root:
+
+<!-- install-test:doctor -->
+```sh
+pullgate doctor
+```
+
+**`pullgate doctor [NAME] [--telegram]`** prints one line per check: `ok`,
+`note` (worth a look, not a problem), or `PROBLEM` with the fix in the same
+line. It exits 1 on any problem. It checks that the units of this version
+are installed and enabled and that the listener runs; that the configs,
+the token file, the deploy key, the known hosts file and the programs are
+safe; the owners and modes of the state and the spool directories, as the
+kernel kept them; that the listener user can read the outbox (it tries it
+with a test file); and that git can read the branch with the deploy key.
+`--telegram` also asks Telegram whether the token works and the bot can
+reach your chat (it sends no message). Run it after the install, after an
+update, and whenever a question does not come. Before the first run, it
+notes the directories that the first run makes.
+
+**When a question does not come.** The listener writes a receipt for each
+message it sends. A run logs `asked` only after the receipt. Without one,
+it logs `sent` (the question is in the outbox), and the next run warns
+`question not delivered` after 3 minutes. `pullgate status NAME` shows it
+in the line `delivery:`. Run `pullgate doctor`, fix what it says, then
+`pullgate status NAME --ask-again`.
+
 To see the version of a binary, run `pullgate --version` or
 `pullgate version`. Both print `pullgate X.Y.Z` and exit 0. A build from
 the source without `-ldflags "-X main.version=..."` prints `pullgate dev`.
