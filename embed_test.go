@@ -8,18 +8,19 @@ import (
 	"testing"
 )
 
-// TestEnableIsTheReadme: Enable, which pullgate update re-enables after an
-// update, is the list of units of the README "start" block.
+// TestEnableIsTheReadme: Enable, which pullgate bootstrap enables and
+// pullgate update re-enables after an update, is the list of units of
+// step 5 of bootstrap in the README.
 func TestEnableIsTheReadme(t *testing.T) {
 	b, err := os.ReadFile("README.md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, block, ok := strings.Cut(string(b), "<!-- install-test:start -->\n```sh\n")
+	_, block, ok := strings.Cut(string(b), "5. **Doctor, then the units.**")
 	if !ok {
-		t.Fatal("README.md has no install-test:start block")
+		t.Fatal("README.md has no step 5 of bootstrap (Doctor, then the units)")
 	}
-	block, _, _ = strings.Cut(block, "```")
+	block, _, _ = strings.Cut(block, "\n\n")
 	re := regexp.MustCompile(`pullgate-[a-z-]+(@NAME)?\.(service|timer|path)`)
 	var got []string
 	for line := range strings.SplitSeq(block, "\n") {
@@ -30,7 +31,7 @@ func TestEnableIsTheReadme(t *testing.T) {
 	want := slices.Clone(Enable)
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
-		t.Fatalf("the README start block enables %q, Enable is %q. Fix: change both together", got, want)
+		t.Fatalf("the README bootstrap step 5 enables %q, Enable is %q. Fix: change both together", got, want)
 	}
 	units := Units()
 	for _, e := range Enable {

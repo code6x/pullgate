@@ -1,32 +1,28 @@
 #!/bin/sh
-# Each unit that the README tells you to enable must have an [Install]
+# Each unit that pullgate bootstrap enables must have an [Install]
 # section with WantedBy=. Without it, `systemctl enable` does nothing, and
 # the unit does not start after a reboot (issue #20).
 #
 # Usage: sh test/units/install-sections.sh   (from the top of the repo)
 set -eu
 
-# Lines joined at a trailing backslash; "sudo" and options before
-# "enable" are allowed.
-units="$(sed -e ':a' -e '/\\$/N; s/\\\n//; ta' README.md \
-	| grep -E '^[[:space:]]*(sudo[[:space:]]+)?systemctl([[:space:]]+--?[A-Za-z-]+)*[[:space:]]+(re)?enable[[:space:]]' \
-	| sed -e 's/#.*//' \
-	| tr -s ' \t' '\n' \
-	| grep -E '^pullgate-[A-Za-z0-9@._-]+\.(service|path|timer|socket)$' \
-	| sort -u || true)"
-# The README enables 4 units today. Fewer means the parsing broke.
+# pullgate bootstrap enables the units of Enable in embed.go (issue #49),
+# and pullgate update enables them again after an update.
+units="$(sed -n '/^var Enable = \[\]string{$/,/^}$/p' embed.go \
+	| grep -oE '"pullgate-[A-Za-z0-9@._-]+\.(service|path|timer|socket)"' \
+	| tr -d '"' | sort -u || true)"
+# Enable has 6 units today. Fewer than 4 means the parsing broke.
 n="$(echo "$units" | grep -c . || true)"
 if [ "$n" -lt 4 ]; then
-	echo "FAIL: found $n 'systemctl enable' units in README.md, want at least 4. Fix: check the README, or this script" >&2
+	echo "FAIL: found $n units in Enable of embed.go, want at least 4. Fix: check embed.go, or this script" >&2
 	exit 1
 fi
-
 fail=0
 for u in $units; do
 	# pullgate-run@NAME.timer is an instance of pullgate-run@.timer.
 	f="contrib/systemd/$(echo "$u" | sed -E 's/@[^.]+\./@./')"
 	if [ ! -f "$f" ]; then
-		echo "FAIL: README.md enables $u, but $f does not exist" >&2
+		echo "FAIL: embed.go enables $u, but $f does not exist" >&2
 		fail=1
 		continue
 	fi

@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math/big"
 	"net/url"
 	"os"
@@ -63,6 +64,10 @@ type Options struct {
 	Out           io.Writer // the console: the code, the keys, the steps
 	Err           io.Writer // the stderr of systemd-ask-password
 	Now           func() time.Time
+	// Setup makes the users, the directories and the units first, and
+	// runs doctor and enables the units at the end. cmd/pullgate always
+	// sets it; nil leaves both steps out (the tests of the other steps).
+	Setup *Setup
 }
 
 // DefaultAPI is the Bot API of Telegram.
@@ -145,8 +150,14 @@ func (o *Options) check() error {
 	if o.APIURL != DefaultAPI && !strings.HasPrefix(o.APIURL, "http://127.0.0.1:") {
 		return fmt.Errorf("--api-url %q: bootstrap talks only to %s, or to a test server on http://127.0.0.1:PORT. Another server would see the token and could plant the owner ID", o.APIURL, DefaultAPI)
 	}
-	if err := safedir.CheckParents(o.EtcDir, uint32(os.Geteuid())); err != nil { //nolint:gosec // a uid fits in uint32
-		return fmt.Errorf("%s is not safe: %w", o.EtcDir, err)
+	// On a new host the setup makes the config directory: then only the
+	// directories above it are checked here.
+	etc := o.EtcDir
+	if _, err := os.Lstat(etc); errors.Is(err, fs.ErrNotExist) && o.Setup != nil {
+		etc = filepath.Dir(etc)
+	}
+	if err := safedir.CheckParents(etc, uint32(os.Geteuid())); err != nil { //nolint:gosec // a uid fits in uint32
+		return fmt.Errorf("%s is not safe: %w", etc, err)
 	}
 	seen := map[string]bool{}
 	for _, in := range o.Instances {
@@ -188,6 +199,17 @@ func Run(ctx context.Context, o *Options) error {
 	if err := o.check(); err != nil {
 		return err
 	}
+	if o.Setup != nil {
+		if err := o.users(ctx); err != nil {
+			return err
+		}
+		if err := o.dirs(); err != nil {
+			return err
+		}
+		if err := o.units(ctx); err != nil {
+			return err
+		}
+	}
 	gid, err := o.listenerGID()
 	if err != nil {
 		return err
@@ -221,8 +243,19 @@ func Run(ctx context.Context, o *Options) error {
 		if err := o.instance(ctx, in); err != nil {
 			return err
 		}
+		if o.Setup != nil {
+			if err := o.instanceDirs(in.Name); err != nil {
+				return err
+			}
+		}
 	}
-	o.say("Done. Next, as root: systemctl daemon-reload, then enable the units as the README says.")
+	if o.Setup == nil {
+		return nil
+	}
+	if err := o.enable(ctx); err != nil {
+		return err
+	}
+	o.say("Done. The first question comes when the timer runs, or at once with: systemctl start pullgate-run@%s.service", o.Instances[0].Name)
 	return nil
 }
 

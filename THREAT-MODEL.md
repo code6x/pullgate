@@ -690,6 +690,12 @@ else sends the pairing code first, or guesses it.
 - The deploy key is made on the host; only the public key is printed. The
   host key of `github.com` comes from the binary, with its fingerprint
   shown; another git host needs a file that the owner checked.
+- The setup is part of bootstrap, so nothing is pasted for it: the users
+  are made with fixed `useradd` options and checked names, and a
+  `check_user` that is the listener user is refused before anything is
+  written (T2). The units come from the binary itself. The directories
+  get the owner and the mode that doctor checks, and are read back. No
+  unit is enabled unless `pullgate doctor` finds no problem.
 
 *Left.* Someone who sees the console of the host during the pairing can
 send the code first. Check the chat: bootstrap sends "paired" to the chat
