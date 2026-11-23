@@ -182,3 +182,23 @@ func TestRunFailsOnAFailedReceipt(t *testing.T) {
 		t.Fatalf("run = %q, %v", res, err)
 	}
 }
+
+// A paused run with a request takes the receipts and keeps what they said.
+func TestPausedRunKeepsTheReceipt(t *testing.T) {
+	f := newFixture(t, "", "")
+	f.commit("first", "1", nil)
+	if r := f.run(); r != Sent {
+		t.Fatalf("run = %q", r)
+	}
+	if err := f.env.Spool.WriteReceipt(f.outboxName(), true); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.Dir.Pause("test"); err != nil {
+		t.Fatal(err)
+	}
+	f.requestKind("status")
+	f.run()
+	if q := f.state().Open(); q == nil || q.Delivery != state.DeliverySent {
+		t.Fatalf("the receipt was lost: %+v", q)
+	}
+}

@@ -176,7 +176,7 @@ func (d *doc) units(ctx context.Context, names []string) {
 // tokenFile is the bot token file: token_file of the listener config, or
 // the file of the systemd credential of the example unit.
 func (d *doc) tokenFile(lc *config.Listener) string {
-	if lc.TokenFile != "" && !strings.HasPrefix(lc.TokenFile, os.Getenv("CREDENTIALS_DIRECTORY")+"/") {
+	if cd := os.Getenv("CREDENTIALS_DIRECTORY"); lc.TokenFile != "" && (cd == "" || !strings.HasPrefix(lc.TokenFile, cd+"/")) {
 		return lc.TokenFile
 	}
 	return filepath.Join(d.o.ConfigDir, "bot-token")

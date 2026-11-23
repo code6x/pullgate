@@ -262,3 +262,19 @@ func TestNotesAreNotProblems(t *testing.T) {
 		}
 	}
 }
+
+// token_file outside the config dir: doctor checks that file, not
+// ConfigDir/bot-token (no CREDENTIALS_DIRECTORY under sudo).
+func TestTokenFileOfTheConfig(t *testing.T) {
+	t.Setenv("CREDENTIALS_DIRECTORY", "")
+	f := newFix(t)
+	f.o.Telegram = true
+	other := filepath.Join(f.base, "token")
+	f.write("token", token+"\n", 0o600)
+	b, _ := os.ReadFile(f.o.Listener)
+	f.write("etc/listener.toml", strings.Replace(string(b), filepath.Join(f.base, "etc/bot-token"), other, 1), 0o600)
+	f.write("etc/bot-token", "999:old\n", 0o600) // an old file that the listener does not use
+	if n := f.run(); n != 0 || !strings.Contains(f.out.String(), "bot token: "+other) {
+		t.Fatalf("%d problems:\n%s", n, f.out.String())
+	}
+}

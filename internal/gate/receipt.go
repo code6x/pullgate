@@ -28,13 +28,15 @@ func (e *Env) receiptWait() time.Duration {
 // takeReceipts reads and removes the receipts of the listener, and marks
 // the questions they belong to. It logs "asked" for a question that the
 // listener sent, and a warning for one it could not send. A receipt of
-// another message (a notice, a reply) is only removed.
-func (e *Env) takeReceipts(st *state.State) {
+// another message (a notice, a reply) is only removed. It says whether it
+// changed the state.
+func (e *Env) takeReceipts(st *state.State) bool {
 	rs, bad, err := e.Spool.TakeReceipts(e.Owners.ListenerUID)
 	if err != nil {
 		e.Log.Warn("read the receipts of the listener", "dir", e.Spool.Receipts(), "err", err)
-		return
+		return false
 	}
+	changed := false
 	for _, b := range bad {
 		e.Log.Warn("bad receipt, removed", "err", b)
 	}
@@ -47,6 +49,7 @@ func (e *Env) takeReceipts(st *state.State) {
 		if !ok {
 			continue
 		}
+		changed = true
 		if sent {
 			q.Delivery = state.DeliverySent
 			e.Log.Info("asked", "sha", q.SHA, "question", q.ID)
@@ -57,21 +60,25 @@ func (e *Env) takeReceipts(st *state.State) {
 				"sha", q.SHA, "question", q.ID)
 		}
 	}
+	return changed
 }
 
 // warnLate logs one warning for each open question that has no receipt
-// after ReceiptLate.
-func (e *Env) warnLate(st *state.State, now time.Time) {
+// after ReceiptLate. It says whether it changed the state.
+func (e *Env) warnLate(st *state.State, now time.Time) bool {
+	changed := false
 	for i := range st.Questions {
 		q := &st.Questions[i]
 		if !q.Open || q.Auto || q.Outbox == "" || q.Delivery != "" || q.Warned || now.Sub(q.Asked) < ReceiptLate {
 			continue
 		}
 		q.Warned = true
+		changed = true
 		e.Log.Warn("question not delivered: no receipt from the listener after "+ReceiptLate.String()+
 			". Fix: check that pullgate-listen.service runs, and run \"pullgate doctor\" as root",
 			"sha", q.SHA, "question", q.ID, "outbox_file_left", e.Spool.OutboxHas(q.Outbox))
 	}
+	return changed
 }
 
 // waitReceipt waits up to receiptWait for the receipt of the question with

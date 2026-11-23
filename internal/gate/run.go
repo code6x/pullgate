@@ -162,8 +162,13 @@ func (e *Env) Run(ctx context.Context) (Result, error) {
 	if err != nil {
 		return "", err
 	}
-	e.takeReceipts(st)
-	e.warnLate(st, e.now())
+	// Saved at once: a paused or off run below may end without a save,
+	// and the receipts are gone.
+	if r, w := e.takeReceipts(st), e.warnLate(st, e.now()); r || w {
+		if err := e.Dir.Save(st); err != nil {
+			return "", err
+		}
+	}
 	// Resume before pause: when both came, the pause wins (fail closed).
 	if requests.Resume > 0 {
 		e.resumeRequest(st)
