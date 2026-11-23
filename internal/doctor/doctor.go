@@ -181,7 +181,7 @@ func (d *doc) units(ctx context.Context, names []string) {
 func (d *doc) listenerReads(lc *config.Listener, ow spool.Owners) {
 	if fi, err := os.Stat(lc.Path); err == nil {
 		st, ok := fi.Sys().(*syscall.Stat_t)
-		if !ok || !canRead(fi.Mode().Perm(), int(st.Uid), int(st.Gid), ow) {
+		if !ok || !canRead(fi.Mode().Perm(), int(st.Uid), int(st.Gid), ow.ListenerUID, listenerGroups(ow)) {
 			d.problem("listener config", lc.Path+" cannot be read by the listener user, so the listener does not start. Fix: chown root:"+strconv.Itoa(ow.ListenerGID)+" "+lc.Path+" and chmod 0640 "+lc.Path)
 		}
 	}
@@ -190,16 +190,32 @@ func (d *doc) listenerReads(lc *config.Listener, ow spool.Owners) {
 	}
 }
 
-// canRead says whether the listener user can read a file with the mode
-// m, the owner uid and the group gid.
-func canRead(m fs.FileMode, uid, gid int, ow spool.Owners) bool {
+// canRead says whether the user luid with the groups gids can read a file
+// with the mode m, the owner uid and the group gid.
+func canRead(m fs.FileMode, uid, gid, luid int, gids []int) bool {
 	switch {
-	case uid == ow.ListenerUID:
+	case uid == luid:
 		return m&0o400 != 0
-	case gid == ow.ListenerGID:
+	case slices.Contains(gids, gid):
 		return m&0o040 != 0
 	}
 	return m&0o004 != 0
+}
+
+// listenerGroups is the primary group of the listener user, then its
+// other groups.
+func listenerGroups(l spool.Owners) []int {
+	gids := []int{l.ListenerGID}
+	if lu, err := user.LookupId(strconv.Itoa(l.ListenerUID)); err == nil {
+		if ids, err := lu.GroupIds(); err == nil {
+			for _, s := range ids {
+				if g, err := strconv.Atoi(s); err == nil && g != l.ListenerGID {
+					gids = append(gids, g)
+				}
+			}
+		}
+	}
+	return gids
 }
 
 // tokenFile is the bot token file, and whether it is the systemd
@@ -374,17 +390,7 @@ func (d *doc) outbox(ctx context.Context, name string, sp spool.Dirs, l spool.Ow
 		return
 	}
 	defer func() { _ = sp.RemoveDoctorTest(p) }()
-	gids := []int{l.ListenerGID}
-	if lu, err := user.LookupId(strconv.Itoa(l.ListenerUID)); err == nil {
-		if ids, err := lu.GroupIds(); err == nil {
-			for _, s := range ids {
-				if g, err := strconv.Atoi(s); err == nil && g != l.ListenerGID {
-					gids = append(gids, g)
-				}
-			}
-		}
-	}
-	if err := d.o.ReadAs(ctx, l.ListenerUID, gids, p); err != nil {
+	if err := d.o.ReadAs(ctx, l.ListenerUID, listenerGroups(l), p); err != nil {
 		d.problem(what, "the listener user cannot read a file in "+sp.Outbox()+" that root wrote, so no question would reach the owner: "+err.Error()+". Fix: run systemctl start pullgate-run@"+name+".service to fix the modes, and check that the outbox has the group of the listener user")
 		return
 	}

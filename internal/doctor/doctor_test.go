@@ -284,7 +284,6 @@ func TestTokenFileOfTheConfig(t *testing.T) {
 }
 
 func TestCanRead(t *testing.T) {
-	ow := spool.Owners{ListenerUID: 100, ListenerGID: 200}
 	for _, c := range []struct {
 		m        os.FileMode
 		uid, gid int
@@ -296,8 +295,9 @@ func TestCanRead(t *testing.T) {
 		{0o644, 0, 0, true},
 		{0o604, 0, 200, false}, // the group bits count for its group
 		{0o600, 100, 0, true},
+		{0o640, 0, 300, true}, // another group of the listener user
 	} {
-		if got := canRead(c.m, c.uid, c.gid, ow); got != c.want {
+		if got := canRead(c.m, c.uid, c.gid, 100, []int{200, 300}); got != c.want {
 			t.Errorf("canRead(%o, %d, %d) = %v", c.m, c.uid, c.gid, got)
 		}
 	}
