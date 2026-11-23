@@ -509,7 +509,8 @@ done
 
 step "10. The README doctor: every check ok"
 # The run unit's last run made every directory, so no "not made yet" note.
-doctor_out="$(sh "$here/readme-block.sh" doctor "$top/README.md" | sh -eu 2>&1)" || {
+doctor_cmds="$(sh "$here/readme-block.sh" doctor "$top/README.md")" || die "README.md has no install-test:doctor block"
+doctor_out="$(printf '%s\n' "$doctor_cmds" | sh -eu 2>&1)" || {
 	printf '%s\n' "$doctor_out"
 	die "pullgate doctor found a problem (above)"
 }
