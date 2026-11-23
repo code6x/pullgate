@@ -265,6 +265,18 @@ func writeIn(dir string, data []byte, mode os.FileMode, gid int, final string) (
 // mode 0640, so the listener can read it (DESIGN.md section 4). It returns
 // the name of the file: the receipt of the listener has the same name.
 func (d Dirs) Send(gid int, m Message) (string, error) {
+	return d.SendAs(gid, NewMessageName(), m)
+}
+
+// NewMessageName is a new outbox file name, for SendAs.
+func NewMessageName() string { return seqName() }
+
+// SendAs is Send with the file name of NewMessageName, so that root can
+// save the name with a question before the listener can see the file.
+func (d Dirs) SendAs(gid int, name string, m Message) (string, error) {
+	if name == "" || strings.HasPrefix(name, ".") || strings.ContainsRune(name, '/') {
+		return "", errors.New("write in the outbox: not a message name. This is a bug in pullgate")
+	}
 	if gid < 0 {
 		return "", errors.New("write in the outbox: no group for the listener. This is a bug in pullgate")
 	}
@@ -272,7 +284,7 @@ func (d Dirs) Send(gid int, m Message) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return writeIn(d.Outbox(), b, 0o640, gid, "")
+	return writeIn(d.Outbox(), b, 0o640, gid, name)
 }
 
 // DoctorPrefix starts the name of the test file that pullgate doctor

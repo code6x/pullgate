@@ -90,7 +90,9 @@ func Run(ctx context.Context, o *Options) int {
 	} else {
 		d.ok("version", "pullgate "+o.Version)
 	}
-	lc, err := config.LoadListener(o.Listener, o.UID)
+	// token_file may be empty: the example unit gives the token as a
+	// systemd credential, which a root shell does not have. token checks it.
+	lc, err := config.LoadListenerForUpdate(o.Listener, o.UID)
 	if err != nil {
 		d.problem("listener config", err.Error())
 	} else {
@@ -113,6 +115,7 @@ func Run(ctx context.Context, o *Options) int {
 			d.problem("listener user", err.Error())
 		} else {
 			owners = &ow
+			d.listenerReads(lc, ow)
 			d.token(ctx, lc, ow)
 		}
 	}
@@ -173,27 +176,55 @@ func (d *doc) units(ctx context.Context, names []string) {
 	}
 }
 
-// tokenFile is the bot token file: token_file of the listener config, or
-// the file of the systemd credential of the example unit.
-func (d *doc) tokenFile(lc *config.Listener) string {
-	if cd := os.Getenv("CREDENTIALS_DIRECTORY"); lc.TokenFile != "" && (cd == "" || !strings.HasPrefix(lc.TokenFile, cd+"/")) {
-		return lc.TokenFile
+// listenerReads checks that the listener user can read listener.toml
+// (root, 0640 with its group, or 0644), and that both use the same spool.
+func (d *doc) listenerReads(lc *config.Listener, ow spool.Owners) {
+	if fi, err := os.Stat(lc.Path); err == nil {
+		st, ok := fi.Sys().(*syscall.Stat_t)
+		if !ok || !canRead(fi.Mode().Perm(), int(st.Uid), int(st.Gid), ow) {
+			d.problem("listener config", lc.Path+" cannot be read by the listener user, so the listener does not start. Fix: chown root:"+strconv.Itoa(ow.ListenerGID)+" "+lc.Path+" and chmod 0640 "+lc.Path)
+		}
 	}
-	return filepath.Join(d.o.ConfigDir, "bot-token")
+	if filepath.Clean(lc.SpoolDir) != filepath.Clean(d.o.SpoolDir) {
+		d.problem("listener config", "spool_dir of "+lc.Path+" is "+lc.SpoolDir+", but root uses "+d.o.SpoolDir+", so no question reaches the listener. Fix: remove spool_dir from "+lc.Path+", or give doctor the same --spool-dir")
+	}
+}
+
+// canRead says whether the listener user can read a file with the mode
+// m, the owner uid and the group gid.
+func canRead(m fs.FileMode, uid, gid int, ow spool.Owners) bool {
+	switch {
+	case uid == ow.ListenerUID:
+		return m&0o400 != 0
+	case gid == ow.ListenerGID:
+		return m&0o040 != 0
+	}
+	return m&0o004 != 0
+}
+
+// tokenFile is the bot token file, and whether it is the systemd
+// credential of the example unit (owned by root) rather than a token_file
+// that the listener reads itself (owned by the listener user).
+func (d *doc) tokenFile(lc *config.Listener) (string, bool) {
+	if cd := os.Getenv("CREDENTIALS_DIRECTORY"); lc.TokenFile != "" && (cd == "" || !strings.HasPrefix(lc.TokenFile, cd+"/")) {
+		return lc.TokenFile, false
+	}
+	return filepath.Join(d.o.ConfigDir, "bot-token"), true
 }
 
 // token checks the owner and the mode of the token file; with --telegram
 // also the token and the chat, with Telegram. The token is never printed.
 func (d *doc) token(ctx context.Context, lc *config.Listener, ow spool.Owners) {
-	p := d.tokenFile(lc)
+	p, credential := d.tokenFile(lc)
 	c := *lc
 	c.TokenFile = p
-	tok, err := c.ReadToken(d.o.UID) // a systemd credential: owned by root
-	if err != nil {
-		tok, err = c.ReadToken(uint32(ow.ListenerUID)) //nolint:gosec // a uid fits in uint32
+	owner, fix := uint32(ow.ListenerUID), "token_file is read by the listener: it must be owned by the listener user, with mode 0600" //nolint:gosec // a uid fits in uint32
+	if credential {
+		owner, fix = d.o.UID, "the example unit gives "+p+" to the listener as a systemd credential: it must be owned by root, with mode 0600 (pullgate bootstrap writes it)"
 	}
+	tok, err := c.ReadToken(owner)
 	if err != nil {
-		d.problem("bot token", err.Error()+". Fix: the token file must be owned by root (for the systemd credential of the example unit) or by the listener user, with mode 0600")
+		d.problem("bot token", err.Error()+". Fix: "+fix)
 		return
 	}
 	d.ok("bot token", p+": the owner and the mode are right")

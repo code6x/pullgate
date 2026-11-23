@@ -200,6 +200,10 @@ func TestEachProblem(t *testing.T) {
 		{"listener config writable by others", func(f *fix) { _ = os.Chmod(f.o.Listener, 0o666) }, "PROBLEM  listener config"},
 		{"listener config not valid", func(f *fix) { f.write("etc/listener.toml", "owner_id = 1\n", 0o600) }, "PROBLEM  listener config"},
 		{"listener config without the instance", func(f *fix) { f.o.Name = "other" }, "does not list the instance other"},
+		{"listener config with another spool", func(f *fix) {
+			b, _ := os.ReadFile(f.o.Listener)
+			f.write("etc/listener.toml", strings.Replace(string(b), filepath.Join(f.base, "spool"), filepath.Join(f.base, "other"), 1), 0o600)
+		}, "spool_dir of"},
 		{"token readable by others", func(f *fix) { _ = os.Chmod(filepath.Join(f.base, "etc/bot-token"), 0o644) }, "PROBLEM  bot token"},
 		{"telegram token refused", func(f *fix) {
 			f.o.Telegram = true
@@ -275,6 +279,39 @@ func TestTokenFileOfTheConfig(t *testing.T) {
 	f.write("etc/listener.toml", strings.Replace(string(b), filepath.Join(f.base, "etc/bot-token"), other, 1), 0o600)
 	f.write("etc/bot-token", "999:old\n", 0o600) // an old file that the listener does not use
 	if n := f.run(); n != 0 || !strings.Contains(f.out.String(), "bot token: "+other) {
+		t.Fatalf("%d problems:\n%s", n, f.out.String())
+	}
+}
+
+func TestCanRead(t *testing.T) {
+	ow := spool.Owners{ListenerUID: 100, ListenerGID: 200}
+	for _, c := range []struct {
+		m        os.FileMode
+		uid, gid int
+		want     bool
+	}{
+		{0o600, 0, 0, false},  // root only: the listener does not start
+		{0o640, 0, 200, true}, // the README mode
+		{0o640, 0, 0, false},  // the group of root
+		{0o644, 0, 0, true},
+		{0o604, 0, 200, false}, // the group bits count for its group
+		{0o600, 100, 0, true},
+	} {
+		if got := canRead(c.m, c.uid, c.gid, ow); got != c.want {
+			t.Errorf("canRead(%o, %d, %d) = %v", c.m, c.uid, c.gid, got)
+		}
+	}
+}
+
+// The README setup: no token_file, the token is the systemd credential
+// ConfigDir/bot-token, owned by root.
+func TestTokenAsCredential(t *testing.T) {
+	t.Setenv("CREDENTIALS_DIRECTORY", "")
+	f := newFix(t)
+	b, _ := os.ReadFile(f.o.Listener)
+	f.write("etc/listener.toml", strings.Replace(string(b), "token_file = \""+filepath.Join(f.base, "etc/bot-token")+"\"\n", "", 1), 0o600)
+	f.o.Telegram = true
+	if n := f.run(); n != 0 || !strings.Contains(f.out.String(), "the token works") {
 		t.Fatalf("%d problems:\n%s", n, f.out.String())
 	}
 }

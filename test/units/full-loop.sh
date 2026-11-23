@@ -519,6 +519,11 @@ printf '%s\n' "$doctor_out" | grep -q '^All checks passed\.$' || err "pullgate d
 if printf '%s\n' "$doctor_out" | grep -q '^PROBLEM'; then
 	err "pullgate doctor printed a PROBLEM line"
 fi
+# A note is no problem, but here every check must be ok: only the note
+# that Telegram was not checked (no --telegram) is expected.
+if printf '%s\n' "$doctor_out" | grep '^note' | grep -v '^note *telegram: not checked'; then
+	err "pullgate doctor printed a note (above); on this host every check must be ok"
+fi
 
 if [ "$fail" -ne 0 ]; then
 	exit 1

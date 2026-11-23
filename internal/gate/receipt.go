@@ -81,21 +81,22 @@ func (e *Env) warnLate(st *state.State, now time.Time) bool {
 	return changed
 }
 
-// waitReceipt waits up to receiptWait for the receipt of the question with
-// the code c, and returns its delivery ("" when none came in time).
-func (e *Env) waitReceipt(st *state.State, c string) string {
+// waitReceipt waits up to receiptWait for the receipt name of the
+// question with the code c, and returns its delivery ("" when none came
+// in time). It looks only at that one file while it waits.
+func (e *Env) waitReceipt(st *state.State, c, name string) string {
 	deadline := time.Now().Add(e.receiptWait())
 	for {
-		e.takeReceipts(st)
-		i := st.FindCode(c)
-		if i < 0 {
-			return ""
-		}
-		if d := st.Questions[i].Delivery; d != "" || !time.Now().Before(deadline) {
-			return d
+		if _, ok := e.Spool.PeekReceipt(e.Owners.ListenerUID, name); ok || !time.Now().Before(deadline) {
+			break
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+	e.takeReceipts(st)
+	if i := st.FindCode(c); i >= 0 {
+		return st.Questions[i].Delivery
+	}
+	return ""
 }
 
 // delivery is the line of pullgate status about the delivery of q.

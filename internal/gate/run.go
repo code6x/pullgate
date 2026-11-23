@@ -391,6 +391,11 @@ func (e *Env) decide(ctx context.Context, st *state.State, tip string) (Result, 
 		Expires: now.Add(e.Cfg.Limits.ApprovalTTL.Duration), Open: true,
 		Auto: !ask,
 	}
+	if ask {
+		// Saved with the question before the file exists, so a receipt
+		// always finds its question, also after a crash.
+		nq.Outbox = spool.NewMessageName()
+	}
 	st.NextID++
 	st.Questions = append(st.Questions, nq)
 	st.SetMark(tip, state.MarkAsked, now)
@@ -413,16 +418,12 @@ func (e *Env) decide(ctx context.Context, st *state.State, tip string) (Result, 
 		e.Log.Info("auto mode: apply queued", "sha", tip)
 		return AutoQueued, nil
 	}
-	name, err := e.Spool.Send(e.Owners.ListenerGID, spool.Message{Kind: spool.KindAsk, Question: nq.ID, Code: c, Expires: nq.Expires, Text: text})
-	if err != nil {
+	if _, err := e.Spool.SendAs(e.Owners.ListenerGID, nq.Outbox, spool.Message{Kind: spool.KindAsk, Question: nq.ID, Code: c, Expires: nq.Expires, Text: text}); err != nil {
 		return undo(err)
 	}
 	st.AskTimes = append(st.AskTimes, now)
-	if i := st.FindCode(c); i >= 0 {
-		st.Questions[i].Outbox = name
-	}
 	// "asked" is logged only after the receipt of the listener (takeReceipts).
-	switch e.waitReceipt(st, c) {
+	switch e.waitReceipt(st, c, nq.Outbox) {
 	case state.DeliverySent:
 		return Asked, nil
 	case state.DeliveryFailed:

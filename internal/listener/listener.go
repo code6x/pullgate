@@ -222,6 +222,7 @@ instances:
 			sent := err == nil
 			switch {
 			case err == nil:
+			case errors.Is(err, errDropped):
 			case errors.As(err, &ae) && ae.Permanent():
 				l.Log.Warn("telegram refused a message, dropped", "instance", inst, "kind", f.Message.Kind, "err", err)
 			case f.Age > 24*time.Hour:
@@ -278,6 +279,10 @@ func (l *Listener) badOutboxNotice(ctx context.Context, inst string) {
 	}
 }
 
+// errDropped is the result of send for a question that was not sent with
+// its buttons: its receipt says failed.
+var errDropped = errors.New("the question was dropped")
+
 func (l *Listener) send(ctx context.Context, inst string, m spool.Message) error {
 	chat := l.Cfg.ChatID
 	switch m.Kind {
@@ -290,6 +295,9 @@ func (l *Listener) send(ctx context.Context, inst string, m spool.Message) error
 				return err
 			}
 			_, err := l.TG.SendMessage(ctx, chat, "pullgate: a question of instance <b>"+html.EscapeString(inst)+"</b> expired before it could be sent. The next commit, or <code>pullgate status "+html.EscapeString(inst)+" --ask-again</code>, asks again.", nil, 0)
+			if err == nil {
+				err = errDropped // the owner got a notice, not the question
+			}
 			return err
 		}
 		if q := l.find(inst, m.Question); q != nil {

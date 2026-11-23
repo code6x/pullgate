@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/code6x/pullgate/internal/spool"
 )
@@ -58,5 +59,22 @@ func TestNoReceiptsForUpdates(t *testing.T) {
 	f.l.Outbox(context.Background())
 	if left, _ := os.ReadDir(self.Receipts()); len(left) != 0 {
 		t.Fatalf("receipts for updates: %v", left)
+	}
+}
+
+// A question that expired before it could be sent: the owner gets a
+// notice, not the question, so the receipt says failed.
+func TestReceiptOfAnExpiredQuestion(t *testing.T) {
+	f := newL(t)
+	n, err := f.d.Send(os.Getegid(), spool.Message{Kind: spool.KindAsk, Question: 1, Code: code, Expires: f.now.Add(-time.Minute), Text: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.l.Outbox(context.Background())
+	if rs, _, _ := f.d.TakeReceipts(os.Geteuid()); len(rs) != 1 || rs[n] {
+		t.Fatalf("receipts = %v", rs)
+	}
+	if ms := f.tg.Messages(); len(ms) != 1 || len(ms[0].Buttons) != 0 {
+		t.Fatalf("messages = %+v", ms)
 	}
 }
