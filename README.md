@@ -13,8 +13,8 @@ the host applies it, with a health check and a rollback or a hold.
   when a newer commit arrives in between.
 - **No code from the new commit runs before Apply.** Optional `check` and
   `summary` commands read the commit as data, as an unprivileged user.
-- **Only the listener holds the bot token.** It runs as its own user and
-  opens no port on either platform. On Windows it runs inside the SYSTEM agent.
+- **The listener opens no port.** On Linux it runs as its own user and
+  holds the bot token. On Windows it runs inside the SYSTEM agent.
 - **Forward only** by default. A force push or an older commit is refused.
 - **Root never runs git in a directory another user can write.**
 
@@ -42,8 +42,8 @@ path unit ─> pullgate apply NAME (root)
 
 ## Install on Linux
 
-On Linux, pullgate runs on amd64 or arm64. See [Windows](#windows) for Windows setup. There are three ways to get the
-binary.
+On Linux, pullgate runs on amd64 or arm64. There are three ways to get
+the binary. See [Windows](#windows) for Windows setup.
 
 **With the install script** (as root, on the host itself). Download the
 script, read it, then run it:
