@@ -325,6 +325,14 @@ func TestDoctorRequest(t *testing.T) {
 	if calls != 2 || !contains(f.outbox(), "Doctor of") {
 		t.Fatal("/doctor must work while paused")
 	}
+	// The limit holds while paused too: the run saves doctor_at.
+	f.requestKind(spool.RequestDoctor)
+	f.requestKind(spool.RequestStatus)
+	f.run()
+	if calls != 2 {
+		t.Fatal("a second /doctor within a minute while paused must run nothing")
+	}
+	f.outbox()
 	// Without a doctor (not pullgate run), it says how to run it as root.
 	f.now = f.now.Add(2 * time.Minute)
 	f.env.Doctor = nil

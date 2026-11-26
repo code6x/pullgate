@@ -187,6 +187,13 @@ func (e *Env) Run(ctx context.Context) (Result, error) {
 	if requests.Doctor > 0 {
 		e.doctorRequest(ctx, st)
 	}
+	// Saved at once: a paused or off run below may end without a save,
+	// and the limits of /status, /pause and /doctor must hold then too.
+	if requests.Status+requests.Pause+requests.Doctor > 0 {
+		if err := e.Dir.Save(st); err != nil {
+			return "", err
+		}
+	}
 	// Then the normal run goes on: /status never skips a fetch, and after
 	// /pause the paused check below ends the run.
 	requested := requests.Check > 0

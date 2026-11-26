@@ -108,9 +108,14 @@ func Run(ctx context.Context, o *Options) int {
 	// token_file may be empty: the example unit gives the token as a
 	// systemd credential, which a root shell does not have. token checks it.
 	lc, err := config.LoadListenerForUpdate(o.Listener, o.UID)
-	if err != nil {
+	switch {
+	case err != nil && o.Public:
+		// The error may quote a value of the config (api_url): from
+		// Telegram, only where it is.
+		d.problem("listener config", o.Listener+" is not valid or not safe. Fix: run pullgate doctor as root to see why")
+	case err != nil:
 		d.problem("listener config", err.Error())
-	} else {
+	default:
 		d.ok("listener config", o.Listener+" is valid, with the instances "+strings.Join(lc.Instances, ", "))
 	}
 	names := []string{}
@@ -308,6 +313,12 @@ func (d *doc) instance(ctx context.Context, name string, ow *spool.Owners) {
 	o := d.o
 	what := "instance " + name
 	cfg, err := config.Load(o.ConfigDir, name, o.UID)
+	if err != nil && o.Public {
+		// The error may quote a value of the config (the repo url): from
+		// Telegram, only where it is.
+		d.problem(what, filepath.Join(o.ConfigDir, name+".toml")+" is not valid or not safe. Fix: run pullgate doctor "+name+" as root to see why")
+		return
+	}
 	if err != nil {
 		msg := err.Error()
 		if !strings.Contains(msg, "Fix") {

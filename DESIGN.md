@@ -464,7 +464,8 @@ a SHA, not a code. A check request can only start a normal run. It is not
 an approval, and `pullgate apply` never reads this directory.
 
 `pullgate-check@NAME.path` watches the files `check/request`,
-`check/status` and `check/pause` (`PathExists=`; another file there starts
+`check/status`, `check/pause`, `check/resume`, `check/ask-again` and
+`check/doctor` (`PathExists=`; another file there starts
 nothing) and starts `pullgate-run@NAME.service`, the unit of the timer. `pullgate run`,
 with the lock held (a run that had to wait for the lock, and then finds
 no request, stops: another run took the request):
@@ -590,8 +591,12 @@ addresses become `<address>`, runs of 32 or more key characters and bot
 token forms `<secret>`, IP addresses `<ip>`, absolute paths outside
 pullgate's own files `<path>`, and the host name of the system (and its
 first label) `<host>`. Then it is cleaned and cut as command output
-(section 12), in `<pre>`. The normal run goes on after it, as after
-`/status`.
+(section 12), in `<pre>`: when it is too long, the first lines are cut
+and the summary stays. A config that does not load is named with its
+file only, as its error may quote a value of the config (the repo url,
+`api_url`); `pullgate doctor` as root shows why. Root saves `doctor_at`
+at once, also when the instance is paused or off, so the limit holds
+then too. The normal run goes on after it, as after `/status`.
 
 **`/resume NAME` and `/ask_again NAME`** (code6x/pullgate#33) go the same
 way, with request files `resume` and `ask-again`. They are limited, so

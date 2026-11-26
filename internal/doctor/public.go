@@ -52,15 +52,21 @@ var hostname = os.Hostname
 var (
 	reURL    = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://\S+|[A-Za-z0-9._-]+@[A-Za-z0-9][A-Za-z0-9.-]*:\S+`)
 	reSecret = regexp.MustCompile(`-----BEGIN[^-]*-----|\d{5,}:[A-Za-z0-9_-]{20,}|(^|[^A-Za-z0-9+/=_-])[A-Za-z0-9+=_-][A-Za-z0-9+/=_-]{31,}`)
-	reIP     = regexp.MustCompile(`[0-9A-Fa-f:.]*[:.][0-9A-Fa-f:.]*`)
-	rePath   = regexp.MustCompile(`(^|[\s"'(=])(/[^\s"'(),;<>]*)`)
+	reIPv4   = regexp.MustCompile(`\d{1,3}(\.\d{1,3}){3}`)
+	reIP     = regexp.MustCompile(`[0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*`)
+	// A word with a "/" in it: a path, or a part of one.
+	rePath = regexp.MustCompile("[^\\s\"'(),;<>\\[\\]{}|`*]*/[^\\s\"'(),;<>\\[\\]{}|`*]*")
 )
+
+// wordChar are the characters of a file or directory name.
+const wordChar = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._~-"
 
 // Redact removes from s what a Telegram reply must not show: URLs and
 // git addresses (they name hosts), long runs that may be keys or tokens,
-// IP addresses, every absolute path that is not one of the paths in own
-// (a path, or a directory and all below it, or a prefix ending in "*"),
-// and the host name of the system.
+// IP addresses, every path that is not one of the paths in own (a path,
+// or a directory and all below it, or a prefix ending in "*"), and the
+// host name of the system. It fails closed: a word with a "/" that is not
+// one of pullgate's own paths is removed, also a relative one.
 func Redact(s string, own []string) string {
 	s = reURL.ReplaceAllString(s, "<address>")
 	s = reSecret.ReplaceAllStringFunc(s, func(m string) string {
@@ -68,6 +74,12 @@ func Redact(s string, own []string) string {
 			return m[:1] + "<secret>"
 		}
 		return "<secret>"
+	})
+	s = reIPv4.ReplaceAllStringFunc(s, func(t string) string {
+		if net.ParseIP(t) != nil {
+			return "<ip>"
+		}
+		return t
 	})
 	s = reIP.ReplaceAllStringFunc(s, func(t string) string {
 		if net.ParseIP(strings.Trim(t, ".")) != nil || net.ParseIP(strings.Trim(t, ":.")) != nil {
@@ -78,15 +90,20 @@ func Redact(s string, own []string) string {
 	s = rePath.ReplaceAllStringFunc(s, func(m string) string {
 		i := strings.Index(m, "/")
 		pre, p := m[:i], m[i:]
+		if pre != "" && strings.ContainsRune(wordChar, rune(pre[len(pre)-1])) {
+			return "<path>" // a relative path, or the end of a path with a space
+		}
 		rest := ""
 		for strings.HasSuffix(p, ".") || strings.HasSuffix(p, ":") {
 			rest = p[len(p)-1:] + rest
 			p = p[:len(p)-1]
 		}
-		if ownPath(p, own) {
-			return m
+		for _, part := range strings.Split(p, ":") {
+			if !strings.HasPrefix(part, "/") || !ownPath(part, own) {
+				return pre + "<path>" + rest
+			}
 		}
-		return pre + "<path>" + rest
+		return m
 	})
 	if h, err := hostname(); err == nil {
 		s = redactHost(s, h)
@@ -121,7 +138,7 @@ func redactHost(s, h string) string {
 		if len(n) < 2 {
 			continue
 		}
-		re := regexp.MustCompile(`(?i)(^|[^A-Za-z0-9_-])` + regexp.QuoteMeta(n) + `($|[^A-Za-z0-9_-])`)
+		re := regexp.MustCompile(`(?i)(^|[^A-Za-z0-9_])` + regexp.QuoteMeta(n) + `($|[^A-Za-z0-9_])`)
 		// Twice: a match takes the character around it, so "a a" needs two.
 		s = re.ReplaceAllString(re.ReplaceAllString(s, "${1}<host>${2}"), "${1}<host>${2}")
 	}

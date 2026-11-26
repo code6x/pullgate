@@ -3,6 +3,9 @@ package doctor
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -37,9 +40,11 @@ func TestRedact(t *testing.T) {
 		"url " + fakeURL + " and https://git.example.com/x and ssh://git@" + fakeIPv4 + "/r",
 		"keep /etc/pullgate/config-repo.toml. and /var/lib/pullgate and /etc/systemd/system/pullgate-run@.timer: pullgate 0.4.0 at 12:30, DESIGN.md section 4",
 		"unit pullgate-run@config-repo.timer: not enabled",
+		"port " + fakeIPv4 + ":22 and key:/home/example/a and [/home/example/b] and x,/home/example/c and `/home/example/d` and abc|/home/example/e",
+		"two /etc/pullgate/a,/home/example/f and /home/example/my keys/id_g and /etc/pullgate/x:/home/example/h and " + fakeHost + "-2",
 	}, "\n")
 	out := Redact(in, own)
-	for _, bad := range []string{fakeIPv4, "2001:db8", fakeHost, strings.ToUpper(fakeHost), fakeToken, "AAHfake", fakeKey, "BEGIN", fakePath, "/home/", "shadow", "other.service", "git.example.com", "example-org"} {
+	for _, bad := range []string{fakeIPv4, "2001:db8", fakeHost, strings.ToUpper(fakeHost), fakeToken, "AAHfake", fakeKey, "BEGIN", fakePath, "/home/", "shadow", "other.service", "git.example.com", "example-org", "example/", "keys/id_g", "id_g", "-host-2"} {
 		if strings.Contains(out, bad) {
 			t.Errorf("the text still holds %q:\n%s", bad, out)
 		}
@@ -94,5 +99,27 @@ func TestRunPublicRedactsEachKind(t *testing.T) {
 		if strings.Contains(out, bad) {
 			t.Errorf("the reply holds %q:\n%s", bad, out)
 		}
+	}
+}
+
+// TestRunPublicHidesConfigErrors: an error of a config may quote its
+// values (the repo url); from Telegram only the file is named.
+func TestRunPublicHidesConfigErrors(t *testing.T) {
+	f := newFix(t)
+	withHost(t, fakeHost)
+	b, err := os.ReadFile(filepath.Join(f.base, "etc", name+".toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := regexp.MustCompile(`(?m)^url = .*$`).ReplaceAllString(string(b), `url = "git.example.com/config-repo"`)
+	f.write("etc/"+name+".toml", bad, 0o600)
+	out := RunPublic(context.Background(), f.o)
+	if !strings.Contains(out, name+".toml is not valid or not safe") || strings.Contains(out, "git.example.com") {
+		t.Fatalf("want the file only, no url:\n%s", out)
+	}
+	// As root, pullgate doctor still says why.
+	f.run()
+	if !strings.Contains(f.out.String(), "git.example.com") {
+		t.Fatalf("pullgate doctor must still show the error:\n%s", f.out.String())
 	}
 }
