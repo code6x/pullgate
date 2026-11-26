@@ -41,10 +41,11 @@ func TestRedact(t *testing.T) {
 		"keep /etc/pullgate/config-repo.toml. and /var/lib/pullgate and /etc/systemd/system/pullgate-run@.timer: pullgate 0.4.0 at 12:30, DESIGN.md section 4",
 		"unit pullgate-run@config-repo.timer: not enabled",
 		"port " + fakeIPv4 + ":22 and key:/home/example/a and [/home/example/b] and x,/home/example/c and `/home/example/d` and abc|/home/example/e",
+		"three added:2001:db8:0:0:0:0:0:77 and git.example.com:/srv/repo.git and naïvé/x",
 		"two /etc/pullgate/a,/home/example/f and /home/example/my keys/id_g and /etc/pullgate/x:/home/example/h and " + fakeHost + "-2",
 	}, "\n")
 	out := Redact(in, own)
-	for _, bad := range []string{fakeIPv4, "2001:db8", fakeHost, strings.ToUpper(fakeHost), fakeToken, "AAHfake", fakeKey, "BEGIN", fakePath, "/home/", "shadow", "other.service", "git.example.com", "example-org", "example/", "keys/id_g", "id_g", "-host-2"} {
+	for _, bad := range []string{fakeIPv4, "2001:db8", fakeHost, strings.ToUpper(fakeHost), fakeToken, "AAHfake", fakeKey, "BEGIN", fakePath, "/home/", "shadow", "other.service", "git.example.com", "example-org", "example/", "keys/id_g", "id_g", "-host-2", "2001:db8:0", "srv/repo", "/x"} {
 		if strings.Contains(out, bad) {
 			t.Errorf("the text still holds %q:\n%s", bad, out)
 		}

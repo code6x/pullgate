@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // RunPublic runs the checks that need no secret (Options.Public) and
@@ -82,16 +84,26 @@ func Redact(s string, own []string) string {
 		return t
 	})
 	s = reIP.ReplaceAllStringFunc(s, func(t string) string {
-		if net.ParseIP(strings.Trim(t, ".")) != nil || net.ParseIP(strings.Trim(t, ":.")) != nil {
-			return "<ip>"
+		// The match may start with a word of hex letters ("added:"):
+		// try it from each ":" on.
+		for i := 0; i < len(t); i++ {
+			if i > 0 && t[i-1] != ':' {
+				continue
+			}
+			if net.ParseIP(strings.Trim(t[i:], ".")) != nil || net.ParseIP(strings.Trim(t[i:], ":.")) != nil {
+				return t[:i] + "<ip>"
+			}
 		}
 		return t
 	})
 	s = rePath.ReplaceAllStringFunc(s, func(m string) string {
 		i := strings.Index(m, "/")
 		pre, p := m[:i], m[i:]
-		if pre != "" && strings.ContainsRune(wordChar, rune(pre[len(pre)-1])) {
+		if r, _ := utf8.DecodeLastRuneInString(pre); pre != "" && (strings.ContainsRune(wordChar, r) || unicode.IsLetter(r) || unicode.IsDigit(r)) {
 			return "<path>" // a relative path, or the end of a path with a space
+		}
+		if h, ok := strings.CutSuffix(pre, ":"); ok && strings.Contains(h, ".") {
+			pre = "<address>:" // host:/path, a git address
 		}
 		rest := ""
 		for strings.HasSuffix(p, ".") || strings.HasSuffix(p, ":") {
