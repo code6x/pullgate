@@ -184,6 +184,9 @@ func (e *Env) Run(ctx context.Context) (Result, error) {
 	if requests.Status > 0 {
 		e.statusRequest(st)
 	}
+	if requests.Doctor > 0 {
+		e.doctorRequest(ctx, st)
+	}
 	// Then the normal run goes on: /status never skips a fetch, and after
 	// /pause the paused check below ends the run.
 	requested := requests.Check > 0

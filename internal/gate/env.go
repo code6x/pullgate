@@ -87,6 +87,10 @@ type Env struct {
 	// ReceiptWait is how long a run waits for the receipt of a new
 	// question: 0 is DefaultReceiptWait, below 0 is no wait (tests).
 	ReceiptWait time.Duration
+	// Doctor runs the checks of pullgate doctor that need no secret, for
+	// this instance, and returns the redacted text (doctor.RunPublic,
+	// code6x/pullgate#50). nil: /doctor answers that it is not available.
+	Doctor func(ctx context.Context) string
 }
 
 // New makes an Env. Paths: the state of NAME is stateBase/NAME, the spool

@@ -63,6 +63,11 @@ type Options struct {
 	// enables them, and enables nothing when doctor finds a problem.
 	BeforeEnable bool
 
+	// Public leaves out every check that reads a secret: the bot token,
+	// Telegram, and git with the deploy key. /doctor from Telegram uses it
+	// (RunPublic, code6x/pullgate#50).
+	Public bool
+
 	// asRoot makes the tests check what only root checks: that check_user
 	// is not the listener user. As another user, check_user must be that
 	// user (gate.ResolveSandbox).
@@ -230,6 +235,10 @@ func (d *doc) tokenFile(lc *config.Listener) (string, bool) {
 // token checks the owner and the mode of the token file; with --telegram
 // also the token and the chat, with Telegram. The token is never printed.
 func (d *doc) token(ctx context.Context, lc *config.Listener, ow spool.Owners) {
+	if d.o.Public {
+		d.note("bot token", "not checked from Telegram (it reads the token). Run pullgate doctor as root to check it")
+		return
+	}
 	p, credential := d.tokenFile(lc)
 	c := *lc
 	c.TokenFile = p
@@ -357,6 +366,10 @@ func (d *doc) instance(ctx context.Context, name string, ow *spool.Owners) {
 		d.ok(what, "the owners and the modes of the state and the spool, as read back, are right")
 	}
 	d.outbox(ctx, name, sp, l)
+	if o.Public {
+		d.note(what, "git and the deploy key not checked from Telegram. Run pullgate doctor as root to check them")
+		return
+	}
 	remote := o.Remote
 	if remote == nil {
 		remote = lsRemote

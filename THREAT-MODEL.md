@@ -536,7 +536,7 @@ until the owner resets it (DESIGN.md section 8). The run unit has no start
 limit, so the timer goes on. This denies; it never approves. A clock jump back of more than
 a minute allows one more run.
 
-### T18b. `/status`, `/pause`, `/resume`, `/ask_again` from a stolen token or the listener
+### T18b. `/status`, `/pause`, `/resume`, `/ask_again`, `/doctor` from a stolen token or the listener
 
 *Attack.* Someone with the bot token, or a compromised listener, sends
 `/status` or `/pause`, or writes the request files directly.
@@ -556,6 +556,25 @@ reads its own state and acts. So the most they can do:
   the file with a hard link, which fails if the name exists), so a
   `/pause` cannot replace the reason of a safety pause, and a later
   limited `/resume` (code6x/pullgate#33) cannot use it to lift one.
+
+*`/doctor`* (code6x/pullgate#50). A token holder or a compromised
+listener can make root run the checks of `pullgate doctor` that need no
+secret, at most once a minute per instance, and read the answer. What
+they learn: the version of pullgate; which pullgate units are installed,
+changed, enabled and active; whether the configs are valid; the owners
+and modes of pullgate's own directories; whether the listener can read
+the outbox; and the user names of `check_user` and the listener. They do
+not learn the token (root does not read it for `/doctor`), the deploy key
+or the git address (no `git ls-remote` runs), an IP address, the host
+name, or a path outside pullgate's own files: `doctor.Redact` replaces
+them, and a test with a known fake value of each checks it. The request
+file holds only its kind, so the listener cannot choose what root checks
+or where. This is acceptable: the facts are about the setup of pullgate
+and show what to fix, the token already shows the instance names and the
+questions, and a wrong setup is something the owner wants to see. The
+checks only read, but for the test file in the outbox that doctor writes
+and removes; the once-a-minute limit keeps a stream of `/doctor` from
+loading the host, and a `/doctor` never skips the normal run.
 
 *`/resume` and `/ask_again`* (code6x/pullgate#33) can undo a stop, so
 they are limited. `/resume` lifts only a pause whose file is exactly what

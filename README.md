@@ -258,6 +258,22 @@ usual Apply question, or "No new commit (the applied commit is …)", or
 As with `/check`, only your user ID in your chat counts, and the listener
 only writes a small request file; root does the work.
 
+## Check the setup from Telegram: `/doctor`
+
+`/doctor` (all instances) or `/doctor NAME` asks root to run the checks
+of `pullgate doctor` that need no secret. The answer lists each problem
+and each note with its fix, how many checks passed, and the summary. It
+leaves out the checks that read a secret: the bot token, Telegram, and
+git with the deploy key. For those, run `pullgate doctor` as root.
+
+The answer never shows an IP address, a key or a token, the host name, a
+git address, or a path outside the files of pullgate (`/etc/pullgate`,
+`/var/lib/pullgate`, `/var/spool/pullgate`, `/usr/local/bin/pullgate`,
+`/usr/local/lib/pullgate` and the `pullgate-*` units): such text shows as
+`<ip>`, `<secret>`, `<host>`, `<address>` or `<path>`. Root answers at most
+once a minute per instance. The checks run inside the sandbox of
+`pullgate-run@NAME.service`, so they see what a run sees.
+
 ## Update pullgate: `/update`
 
 Once a day `pullgate-update.timer` looks for a new release of pullgate. For
