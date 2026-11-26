@@ -329,3 +329,10 @@ func (s *Server) Updates() int {
 	defer s.mu.Unlock()
 	return len(s.updates)
 }
+
+// CallbackAnswers returns the answers sent to callback queries.
+func (s *Server) CallbackAnswers() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.Answers...)
+}
