@@ -165,7 +165,7 @@ func replaceStateFile(tmp, path string) error {
 	if err := os.Rename(tmp, path); err != nil {
 		return err
 	}
-	if df, err := os.Open(filepath.Dir(path)); err == nil { //nolint:gosec // our own directory
+	if df, err := os.Open(filepath.Dir(path)); err == nil {
 		_ = df.Sync()
 		_ = df.Close()
 	}

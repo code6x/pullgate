@@ -1615,3 +1615,9 @@ The runtime must validate parent directories before using these checks.
 
 Token setup will encrypt the token with machine-scope DPAPI. The
 encrypted file needs the same access checks as other protected files.
+
+Windows state uses an exclusive byte-range lock. State updates write
+and flush a private temporary file, then replace the old state using
+a write-through move on the same volume. New state paths get an ACL
+at creation. The Linux state paths continue to use Unix modes and
+`flock`.

@@ -822,3 +822,8 @@ Machine-scope DPAPI protects a token blob taken off the machine. Any
 account on the machine that obtains the blob may decrypt it. The ACL
 therefore protects the blob from other users. SYSTEM and Administrators
 are trusted. The current Windows helpers do not start a gate or listener.
+
+Windows state reads reject a file with a wider ACL or multiple hard
+links. The Windows state layer assumes the caller has validated the
+ancestors of the state directory. A failed lock or failed write must
+stop the operation before it applies a commit.
