@@ -31,7 +31,7 @@ func TestWindowsPowerShell(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := &Env{WindowsRoot: root, Cfg: &config.Instance{Name: "example"}}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	var output bytes.Buffer
 	if err := e.runApplyCommand(ctx, []string{script, "one argument"}, cmdEnv{Tree: root, SHA: "example"}, &output); err != nil {

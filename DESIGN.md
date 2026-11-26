@@ -1641,7 +1641,6 @@ The agent lock prevents two listener loops from sharing a token.
 
 The Windows apply and health scripts run through Windows PowerShell
 with no profile, no interactive prompts, and `-File`. The script path
-and each argument go in their own argv slot. The process starts
-suspended and joins a Job Object before it can run. Closing the job
+and each argument go in their own argv slot. Windows places the process in a Job Object when it starts. Closing the job
 stops its children. Git uses the all-users Git for Windows installation
 and pinned SSH keys, or a protected local repository.

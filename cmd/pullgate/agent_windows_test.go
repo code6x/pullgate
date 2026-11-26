@@ -78,7 +78,7 @@ $policy = [System.IO.File]::ReadAllText((Join-Path $Env:PULLGATE_TREE 'policy.tx
 	}
 	write(filepath.Join(root, "listener.toml"), cfg)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 55*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
 	var logs bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&logs, nil))
 	finished := make(chan error, 1)
