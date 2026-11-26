@@ -17,7 +17,7 @@ func TestWindowsApprovalSpool(t *testing.T) {
 	if err := d.Ensure(0, Owners{}); err != nil {
 		t.Fatal(err)
 	}
-	a := Approval{Code: "example", Action: "apply"}
+	a := Approval{Code: "AAAAAAAAAAAAAAAAAAAAAA", Action: "apply"}
 	if err := d.WriteApproval(a); err != nil {
 		t.Fatal(err)
 	}
