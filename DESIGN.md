@@ -1604,3 +1604,14 @@ Both run as root, on an instance that has a record `NAME.recipe`
   version, and forward only keeps it there. A recipe's `apply` must be
   able to roll back with the new version's scripts.
 
+
+## Windows file and token protections
+
+Windows support is under development. The Windows file checks use a
+handle opened without following the final reparse point. Managed files
+and directories require a SYSTEM or Administrators owner and a DACL
+that grants access only to those two SIDs. Files must have one hard link.
+The runtime must validate parent directories before using these checks.
+
+Token setup will encrypt the token with machine-scope DPAPI. The
+encrypted file needs the same access checks as other protected files.

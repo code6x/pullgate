@@ -810,3 +810,15 @@ install script.
 - An attacker who controls the owner's Telegram account.
 - A bad change that the owner approves on purpose.
 - Signed commits (planned later).
+
+## Windows file and token protections
+
+The Windows file check rejects untrusted owners, missing or null DACLs,
+access grants to other SIDs, unknown ACE types, final reparse points and
+files with multiple hard links. A caller must first establish that an
+untrusted local user cannot replace or redirect parent directories.
+
+Machine-scope DPAPI protects a token blob taken off the machine. Any
+account on the machine that obtains the blob may decrypt it. The ACL
+therefore protects the blob from other users. SYSTEM and Administrators
+are trusted. The current Windows helpers do not start a gate or listener.
