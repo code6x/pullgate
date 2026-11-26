@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.0](https://github.com/code6x/pullgate/compare/v0.3.0...v0.4.0) (2026-11-26)
+
+
+### Features
+
+* pullgate bootstrap --recipe, --add and --replace-config, with the recipe in status ([#67](https://github.com/code6x/pullgate/issues/67)) ([c62b642](https://github.com/code6x/pullgate/commit/c62b642843fbf60ec49abede580000c07fe3598d))
+* pullgate bootstrap makes the users, directories and units, runs doctor and enables the units ([#60](https://github.com/code6x/pullgate/issues/60)) ([7297a34](https://github.com/code6x/pullgate/commit/7297a347b0c10bca27f274bcc606cd2e683f1e40)), closes [#49](https://github.com/code6x/pullgate/issues/49)
+* pullgate doctor, read-back of modes, and receipts so a run never logs asked for a question that was not delivered ([#58](https://github.com/code6x/pullgate/issues/58)) ([e1fd232](https://github.com/code6x/pullgate/commit/e1fd232355e20226348e4ac7d87c450253a89e48)), closes [#28](https://github.com/code6x/pullgate/issues/28)
+* pullgate recipe fetch: a recipe from a GitHub release, checked like a release and unpacked ([#62](https://github.com/code6x/pullgate/issues/62)) ([f05980d](https://github.com/code6x/pullgate/commit/f05980de52e0914f932208555e607383034f65a0))
+* pullgate recipe update and recipe use, forward only, and bootstrap --recipe in the CI install loop ([#68](https://github.com/code6x/pullgate/issues/68)) ([99c4c44](https://github.com/code6x/pullgate/commit/99c4c4462f752a1be36228cfd12f5f6b90eb1171))
+
 ## [0.3.0](https://github.com/code6x/pullgate/compare/v0.2.0...v0.3.0) (2026-11-20)
 
 
