@@ -22,6 +22,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/code6x/pullgate/internal/config"
 	"github.com/code6x/pullgate/internal/message"
@@ -363,13 +364,17 @@ type found struct {
 	Fetched  bool // the files were downloaded: a failure after this is a failed check
 	Checked  bool // every check passed
 	SHA256   string
-	Upto     bool // the installed version is the newest
+	Upto     bool     // the installed version is the newest
+	Notes    []string // the release notes from CHANGELOG.md of the checked tarball, HTML; nil: none
 	Reason   string
 	Err      error
 }
 
 func (u *Updater) checkRelease(ctx context.Context) found {
-	args := []string{"--check-only", "--bin-dir", filepath.Dir(u.Bin)}
+	notesFile := filepath.Join(u.tmpDir(), "notes.md")
+	_ = os.Remove(notesFile)
+	defer func() { _ = os.Remove(notesFile) }()
+	args := []string{"--check-only", "--bin-dir", filepath.Dir(u.Bin), "--notes-out", notesFile}
 	if u.Cfg.Updates.GH != "" {
 		args = append(args, "--gh", u.Cfg.Updates.GH)
 	}
@@ -395,8 +400,47 @@ func (u *Updater) checkRelease(ctx context.Context) found {
 	f.Checked, f.SHA256 = true, c[1]
 	if !newer(f.Version, u.Version) {
 		f.Checked, f.Upto = false, true
+		return f
+	}
+	// The notes: only from the file that install.sh wrote after every
+	// check passed, never from the release body (code6x/pullgate#70).
+	if n := tell["notes"]; len(n) == 1 && n[0] == f.Version {
+		if text, ok := readNotes(notesFile); ok {
+			if nt, ok := parseNotes(text, u.Version, f.Version); ok {
+				f.Notes, f.Security = nt.Lines, nt.Security
+				u.Log.Info("release notes read from the checked tarball", "version", f.Version, "lines", len(nt.Lines), "security", nt.Security)
+			} else {
+				u.Log.Info("CHANGELOG.md of the checked tarball has no section for the new version; no notes", "version", f.Version)
+			}
+		}
 	}
 	return f
+}
+
+// readNotes reads the notes file that install.sh wrote: a regular file,
+// at most NotesFile bytes. Anything else is no notes.
+func readNotes(p string) (string, bool) {
+	fh, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NOFOLLOW, 0) //nolint:gosec // root's own notes file in _update/tmp (0700)
+	if err != nil {
+		return "", false
+	}
+	defer func() { _ = fh.Close() }()
+	if fi, err := fh.Stat(); err != nil || !fi.Mode().IsRegular() {
+		return "", false
+	}
+	b, err := io.ReadAll(io.LimitReader(fh, NotesFile+1))
+	if err != nil || len(b) > NotesFile || !utf8.Valid(b) {
+		return "", false
+	}
+	return string(b), true
+}
+
+// notesLines are the lines of the notes in a message, or none.
+func notesLines(f found) []string {
+	if len(f.Notes) == 0 {
+		return nil
+	}
+	return append([]string{"<b>What changed</b> (from CHANGELOG.md in the checked file):"}, f.Notes...)
 }
 
 // look finds the newest release. requested: the owner sent /update; else
@@ -477,7 +521,9 @@ func (u *Updater) look(ctx context.Context, st *State, requested bool) (Result, 
 		lines = append(lines, "⚠ <b>Security release.</b> It fixes a security problem. Install it soon.")
 	}
 	lines = append(lines,
-		"pullgate "+message.Code(f.Version)+" is out. Installed: "+message.Code(u.Version)+".",
+		"pullgate "+message.Code(f.Version)+" is out. Installed: "+message.Code(u.Version)+".")
+	lines = append(lines, notesLines(f)...)
+	lines = append(lines,
 		"Release notes: "+releaseURL(f.Version),
 		"Send <code>/update</code> to install it.")
 	u.notice(strings.Join(lines, "\n"))
@@ -516,7 +562,9 @@ func (u *Updater) questionText(f found) string {
 	}
 	lines = append(lines,
 		"Update pullgate to "+message.Code(f.Version)+"?",
-		"Installed now: "+message.Code(u.Version),
+		"Installed now: "+message.Code(u.Version))
+	lines = append(lines, notesLines(f)...)
+	lines = append(lines,
 		"Release notes: "+releaseURL(f.Version),
 		"File: "+message.Code(u.tarball(f.Version)),
 		"SHA-256: "+message.Code(f.SHA256),

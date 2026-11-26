@@ -222,7 +222,7 @@ func newInstaller(t *testing.T) *installer {
 	if os.Geteuid() == 0 {
 		skipOrFail(t, "as root, install.sh runs only the programs of the system, not the fakes of the test")
 	}
-	for _, name := range []string{"sed", "tar", "gzip", "sha256sum", "install", "mktemp", "id", "stat", "cp", "env", "wc", "sleep", "timeout", "sync"} {
+	for _, name := range []string{"sed", "tar", "gzip", "sha256sum", "install", "mktemp", "id", "stat", "cp", "env", "wc", "head", "sleep", "timeout", "sync"} {
 		if _, err := exec.LookPath(name); err != nil {
 			skipOrFail(t, "%s is not installed", name)
 		}
@@ -295,17 +295,28 @@ func (in *installer) latest(tag string) {
 }
 
 // release puts a release on the fake GitHub: its answer of the API, for
-// each CPU a tarball with pullgate, LICENSE and README.md, and SHA256SUMS
+// each CPU a tarball with pullgate, LICENSE, README.md and CHANGELOG.md, and SHA256SUMS
 // and the bundle. pullgate returns the file pullgate of each CPU.
 func (in *installer) release(version string, pullgate func(arch string) []byte) {
+	in.releaseWith(version, pullgate, &tarFile{"CHANGELOG.md", 0o644, []byte(madeUpChangelog)})
+}
+
+// madeUpChangelog is the CHANGELOG.md of the made-up releases.
+const madeUpChangelog = "# Changelog\n\n## [0.2.0](https://example.com) (2026-11-01)\n\n### Features\n\n* a made-up feature\n"
+
+// releaseWith is release, with changelog as CHANGELOG.md (nil: none).
+func (in *installer) releaseWith(version string, pullgate func(arch string) []byte, changelog *tarFile) {
 	in.serve(tagPath+version, releaseJSON("v"+version))
 	var sums strings.Builder
 	for _, arch := range []string{"amd64", "arm64"} {
 		name := "pullgate_" + version + "_linux_" + arch + ".tar.gz"
-		data := tarGz(in.t,
-			tarFile{"pullgate", 0o755, pullgate(arch)},
-			tarFile{"LICENSE", 0o644, []byte("a made-up license\n")},
-			tarFile{"README.md", 0o644, []byte("# a made-up readme\n")})
+		files := []tarFile{{"pullgate", 0o755, pullgate(arch)},
+			{"LICENSE", 0o644, []byte("a made-up license\n")},
+			{"README.md", 0o644, []byte("# a made-up readme\n")}}
+		if changelog != nil {
+			files = append(files, *changelog)
+		}
+		data := tarGz(in.t, files...)
 		in.serve(releasePath+version+"/"+name, data)
 		fmt.Fprintf(&sums, "%x  %s\n", sha256.Sum256(data), name)
 	}
@@ -1425,4 +1436,85 @@ func windows(s []string, n int) [][]string {
 		w = append(w, s[i:i+n])
 	}
 	return w
+}
+
+// TestCheckOnlyNotes: --check-only --notes-out writes CHANGELOG.md of the
+// checked tarball, and only after every check passed (code6x/pullgate#70).
+func TestCheckOnlyNotes(t *testing.T) {
+	big := []byte(strings.Repeat("x", 262145))
+	for _, c := range []struct {
+		name      string
+		changelog *tarFile
+		ghExit    string
+		want      string // the notes; "" is none
+		fails     bool
+	}{
+		{name: "notes", changelog: &tarFile{"CHANGELOG.md", 0o644, []byte(madeUpChangelog)}, want: madeUpChangelog},
+		{name: "at the limit", changelog: &tarFile{"CHANGELOG.md", 0o644, big[1:]}, want: string(big[1:])},
+		{name: "no CHANGELOG.md", changelog: nil},
+		{name: "too big", changelog: &tarFile{"CHANGELOG.md", 0o644, big}},
+		{name: "attestation fails", changelog: &tarFile{"CHANGELOG.md", 0o644, []byte(madeUpChangelog)}, ghExit: "1", fails: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			in := newInstaller(t)
+			in.latest("v0.2.0")
+			in.releaseWith("0.2.0", says("pullgate 0.2.0"), c.changelog)
+			if c.ghExit != "" {
+				in.env = append(in.env, "FAKE_GH_EXIT="+c.ghExit)
+			}
+			notes := filepath.Join(in.dir, "notes.md")
+			writeFile(t, notes, []byte("an old notes file\n"), 0o600)
+			r := in.run("--check-only", "--gh", in.gh, "--bin-dir", in.bin, "--notes-out", notes)
+			if c.fails != (r.code != 0) {
+				t.Fatalf("exit %d:\n%s\n%s", r.code, r.stdout, r.stderr)
+			}
+			got, err := os.ReadFile(notes)
+			switch {
+			case c.want == "" && !errors.Is(err, fs.ErrNotExist):
+				t.Fatalf("want no notes file, got %v %q", err, got)
+			case c.want != "" && string(got) != c.want:
+				t.Fatalf("notes: %v %q", err, got)
+			}
+			if told := strings.Contains(r.stdout, "@pullgate notes 0.2.0"); told != (c.want != "") {
+				t.Fatalf("@pullgate notes told %v:\n%s", told, r.stdout)
+			}
+			if !c.fails && !strings.Contains(r.stdout, "@pullgate checked 0.2.0") {
+				t.Fatalf("the check must pass:\n%s", r.stdout)
+			}
+			if _, err := os.Lstat(filepath.Join(in.bin, "CHANGELOG.md")); err == nil {
+				t.Fatal("CHANGELOG.md must not be installed")
+			}
+			in.checkTmpGone()
+		})
+	}
+}
+
+// TestInstallIgnoresTheChangelog: an install takes only pullgate out of
+// the tarball, which holds CHANGELOG.md too.
+func TestInstallIgnoresTheChangelog(t *testing.T) {
+	in := newInstaller(t)
+	in.latest("v0.2.0")
+	in.release("0.2.0", says("pullgate 0.2.0"))
+	if r := in.run("--gh", in.gh, "--bin-dir", in.bin); r.code != 0 {
+		t.Fatalf("exit %d:\n%s\n%s", r.code, r.stdout, r.stderr)
+	}
+	if got := files(t, in.bin); len(got) != 1 {
+		t.Fatalf("only pullgate is installed, got %v", got)
+	}
+}
+
+func TestNotesOutUsage(t *testing.T) {
+	in := newInstaller(t)
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--notes-out", "/x/notes.md"}, "--notes-out needs --check-only"},
+		{[]string{"--check-only", "--notes-out", "notes.md"}, "--notes-out must be an absolute path"},
+		{[]string{"--check-only", "--notes-out"}, "--notes-out needs a file"},
+	} {
+		if r := in.run(c.args...); r.code != 64 || !strings.Contains(r.stderr, c.want) {
+			t.Errorf("%q: exit %d, want 64 and %q:\n%s", c.args, r.code, c.want, r.stderr)
+		}
+	}
 }

@@ -68,6 +68,7 @@ max_verify=300 # gh attestation verify: it gets the trusted root of Sigstore onl
 # size that the server announces.
 max_small=1048576 # 1 MiB: the answer of the API, SHA256SUMS, the bundle
 max_big=67108864  # 64 MiB: the tarballs of pullgate and of gh
+max_notes=262144  # 256 KiB: CHANGELOG.md for --notes-out; a bigger one gives no notes
 
 usage() {
 	cat <<EOF
@@ -91,6 +92,10 @@ the host itself.
                    --version; for pullgate update
   --forward-only   never install the same or an older version; for
                    pullgate update
+  --notes-out FILE with --check-only: after every check passed, write
+                   CHANGELOG.md of the checked tarball to FILE (an
+                   absolute path); none when it is missing or too big;
+                   for pullgate update
   --help           print this help
 
 Before it installs anything, it checks the SHA-256 and the build
@@ -348,6 +353,13 @@ parse_args() {
 			forward_only=1
 			shift
 			;;
+		--notes-out)
+			if [ "$#" -lt 2 ]; then
+				usage_error "--notes-out needs a file"
+			fi
+			notes_out=$2
+			shift 2
+			;;
 		--sha256)
 			if [ "$#" -lt 2 ]; then
 				usage_error "--sha256 needs the SHA-256 of the tarball, 64 hex digits"
@@ -383,6 +395,15 @@ parse_args() {
 	fi
 	if [ -n "$check_only" ] && [ -n "$pin_sha256" ]; then
 		usage_error "--check-only and --sha256 do not go together"
+	fi
+	if [ -n "$notes_out" ]; then
+		case $notes_out in
+		/*) ;;
+		*) usage_error "--notes-out must be an absolute path" ;;
+		esac
+		if [ -z "$check_only" ]; then
+			usage_error "--notes-out needs --check-only"
+		fi
 	fi
 	if [ -n "$forward_only" ] && [ -n "$reinstall" ]; then
 		usage_error "--forward-only and --reinstall do not go together"
@@ -721,6 +742,34 @@ unpack() {
 	check_new_version "$tmp/new/pullgate" " (if programs cannot run in $tmp_parent, $tmp_fix)"
 }
 
+# write_notes writes CHANGELOG.md of the checked tarball to $notes_out.
+# It runs only after every check passed, so the text is the one the
+# release workflow built. A missing, odd or too big file gives no notes,
+# never a failure: the notes are only a help for the owner.
+write_notes() {
+	rm -f "$notes_out" || :
+	mkdir "$tmp/notes" || return 0
+	if ! tar --no-same-owner -xzf "$tmp/$tarball" -C "$tmp/notes" CHANGELOG.md </dev/null 2>/dev/null; then
+		say "$tarball has no CHANGELOG.md, so the question shows no notes."
+		return 0
+	fi
+	notes=$tmp/notes/CHANGELOG.md
+	if [ ! -f "$notes" ] || [ -L "$notes" ]; then
+		say "CHANGELOG.md in $tarball is not a regular file, so the question shows no notes."
+		return 0
+	fi
+	if [ "$(head -c "$((max_notes + 1))" "$notes" | wc -c)" -gt "$max_notes" ]; then
+		say "CHANGELOG.md in $tarball is bigger than $max_notes bytes, so the question shows no notes."
+		return 0
+	fi
+	if ! head -c "$max_notes" "$notes" >"$notes_out.tmp" || ! mv -f "$notes_out.tmp" "$notes_out"; then
+		rm -f "$notes_out.tmp" || :
+		say "cannot write $notes_out, so the question shows no notes."
+		return 0
+	fi
+	tell notes "$version"
+}
+
 # install_new copies the new pullgate into the directory of the old one,
 # under a new name, and checks again that it says it is pullgate
 # $version. Then it renames it over the old file. A rename in one
@@ -768,6 +817,7 @@ main() {
 	reinstall=
 	check_only=
 	forward_only=
+	notes_out=
 	pin_sha256=
 	security=normal
 	tarball_sha256=
@@ -781,6 +831,11 @@ main() {
 
 	clean_env
 	parse_args "$@"
+	# An old notes file never counts: only this run, after its checks,
+	# writes one.
+	if [ -n "$notes_out" ]; then
+		rm -f "$notes_out" || die "cannot remove the old $notes_out; check that root can write there"
+	fi
 	check_platform
 	check_tools
 	check_paths
@@ -796,6 +851,9 @@ main() {
 	verify_attestation
 	unpack
 	if [ -n "$check_only" ]; then
+		if [ -n "$notes_out" ]; then
+			write_notes
+		fi
 		tell checked "$version" "$tarball_sha256" "$security"
 		say "Every check of pullgate $version passed. --check-only installs nothing."
 		exit 0

@@ -93,9 +93,13 @@ jobs:
             CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
               go build -trimpath -ldflags "-w -X main.version=${VERSION}" \
               -o "${stage}/pullgate" ./cmd/pullgate
-            cp LICENSE README.md "$stage/"
+            # CHANGELOG.md: the update question shows the notes of the new
+            # versions from it, as it is covered by the attestation
+            # (DESIGN.md section 15). The checkout is at the tag, so it has
+            # the section of this version.
+            cp LICENSE README.md CHANGELOG.md "$stage/"
             tar --owner=0 --group=0 --numeric-owner --mode=go-w --mtime="$mtime" \
-              -C "$stage" -cf - pullgate LICENSE README.md | gzip -9n > "dist/${name}.tar.gz"
+              -C "$stage" -cf - pullgate LICENSE README.md CHANGELOG.md | gzip -9n > "dist/${name}.tar.gz"
           done
           cd dist
           sha256sum -- *.tar.gz > SHA256SUMS

@@ -22,7 +22,8 @@ workflow checks it.
 | `chore`, `ci`, `test`, `refactor`, `build`, `style` | none | hidden |
 
 A `security:` pull request makes a section `### Security` in the release
-notes. `pullgate update` reads it (DESIGN.md section 15): the notice of such
+notes and in `CHANGELOG.md`. `pullgate update` reads it from
+`CHANGELOG.md` in the checked tarball (DESIGN.md section 15): the notice of such
 a release says so first, and comes again each day until the release is
 installed. Use `security:` only for the fix of a security problem.
 
@@ -33,12 +34,13 @@ installed. Use `security:` only for the fix of a security problem.
    like `chore(main): release 0.1.0`. It changes `CHANGELOG.md` and
    `.release-please-manifest.json`.
 2. **Before you merge it, read the version and every line of the
-   changelog.** This text becomes the release notes.
+   changelog.** This text becomes the release notes, and the update
+   question of every host shows it (from `CHANGELOG.md` in the tarball).
 3. When you merge it, release-please makes the tag (`v0.1.0`) and a
    **draft** release.
 4. The `build` job (read-only) checks that the tag is the commit of the run,
    builds static binaries for Linux amd64 and arm64 (`CGO_ENABLED=0`,
-   `-trimpath`), packs each with `LICENSE` and `README.md` into
+   `-trimpath`), packs each with `LICENSE`, `README.md` and `CHANGELOG.md` into
    `pullgate_<version>_linux_<arch>.tar.gz`, and writes `SHA256SUMS`.
 5. The `publish` job checks the files and the tag again, makes a signed
    build provenance attestation (`pullgate_<version>.sigstore.json`),

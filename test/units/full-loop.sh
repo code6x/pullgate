@@ -433,7 +433,9 @@ if [ -n "$update_to" ]; then
 		install -d -m 0755 "$dl"
 		install -m 0755 "$2" "$stage/pullgate"
 		cp "$top/LICENSE" "$top/README.md" "$stage/"
-		tar --owner=0 --group=0 --numeric-owner --mode=go-w -C "$stage" -cf - pullgate LICENSE README.md |
+		# The notes of the update question come from this file only.
+		printf '# Changelog\n\n## [%s](https://example.com/c) (2026-11-26)\n\n### Features\n\n* <b>a made-up feature</b> ([#1](https://example.com/1)) ([abcdef1](https://example.com/c/abcdef1))\n' "$1" >"$stage/CHANGELOG.md"
+		tar --owner=0 --group=0 --numeric-owner --mode=go-w -C "$stage" -cf - pullgate LICENSE README.md CHANGELOG.md |
 			gzip -9n >"$dl/pullgate_$1_linux_$arch.tar.gz"
 		rm -rf "$stage"
 		(cd "$dl" && sha256sum -- *.tar.gz >SHA256SUMS)
@@ -586,6 +588,12 @@ urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:%s/test/say" % s
 		die "no 'pullgate is updated' report reached the fake Telegram"
 	fi
 	grep -F "Update pullgate to" "$texts" | grep -q -F "$sum" || err "the update question does not show the SHA-256 $sum"
+	question="$(grep -F "Update pullgate to" "$texts")"
+	printf '%s\n' "$question" | grep -q -F 'What changed' || err "the update question shows no notes from CHANGELOG.md"
+	printf '%s\n' "$question" | grep -q -F '&lt;b&gt;a made-up feature&lt;/b&gt; (#1)' || err "the notes in the update question are not escaped and short"
+	if printf '%s\n' "$question" | grep -q -F 'abcdef1'; then
+		err "the notes in the update question show a commit id"
+	fi
 	got="$(/usr/local/bin/pullgate --version || true)"
 	[ "$got" = "pullgate $new_v" ] || err "after /update, pullgate --version says '$got', want 'pullgate $new_v'"
 	cmp -s "$top/contrib/systemd/pullgate-run@.timer" /etc/systemd/system/pullgate-run@.timer ||

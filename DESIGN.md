@@ -1098,15 +1098,40 @@ attestation; it does not run the new binary before the tap), installs
 nothing, and
 prints lines that start with `@pullgate ` for root: `version X.Y.Z
 security|normal`, `up-to-date X.Y.Z`, `fetched X.Y.Z`, `checked X.Y.Z
-SHA256 security|normal`. A release is a security release when its notes
-have the section `### Security` (release-please makes it from `security:`
-pull requests, docs/releasing.md). Root itself checks again that the
-version is newer than its own. Then:
+SHA256 security|normal`, and `notes X.Y.Z` (below). Root itself checks
+again that the version is newer than its own.
+
+**The notes, from the signed tarball** (code6x/pullgate#70). Each tarball
+holds `CHANGELOG.md` of the tag, so it is covered by `SHA256SUMS` and the
+attestation like the binary. Root passes `--notes-out
+/var/lib/pullgate/_update/tmp/notes.md`. `install.sh` removes that file
+first, and writes it only after every check passed: `CHANGELOG.md` of the
+checked tarball, if it is a regular file of at most 256 KiB (else no notes,
+never a failed check), then prints `notes X.Y.Z`. Root reads the file
+(no symlink, a regular file, at most 256 KiB, UTF-8) only after that line,
+and removes it after each look. It takes the sections of the versions newer
+than the installed one, up to the new one (for 0.4.0 → 0.6.0: 0.5.0 and
+0.6.0). It shows only `Features`, `Bug Fixes` and `Security`: a version
+line, the heading, one line per entry, with its text and the pull request
+(`#67`); links, commit ids and the `, closes …` part are removed, and an
+entry is cut at 200 characters. All of it is HTML-escaped. At most 12
+lines and 1200 characters, then "… and N more". When the file has no
+section for the new version, there are no notes. The text of the release
+on GitHub (its body) is never shown: it is not signed and can change after
+the release.
+
+**A security release.** When there are notes, a release is a security
+release when a version in that range has the section `### Security`
+(release-please makes it from `security:` pull requests,
+docs/releasing.md); the release body does not count then. Without notes
+(an older release, or no `CHANGELOG.md`), it is one when the release body
+has `### Security`, as before. Then:
 
 - **Up to date**: nothing. For `/update`, a notice says so.
 - **A newer release that passed every check**: for `/update`, root asks.
-  From the timer, it sends one notice per release: the version, the link
-  to the release notes and "send /update to install it". A security
+  From the timer, it sends one notice per release: the version, the notes
+  (after "Installed: …"), the link to the release notes and "send /update
+  to install it". A security
   release says so on the first line, and its notice comes again each day
   (23 hours) until it is installed. A notice has no buttons and needs no
   tap. `[updates] check = false` in `listener.toml` stops the daily look
@@ -1129,10 +1154,19 @@ pullgate on <b>HOST</b>, update of pullgate
 ⚠ Security release. It fixes a security problem.   (only for one)
 Update pullgate to <code>X.Y.Z</code>?
 Installed now: <code>OLD</code>
+<b>What changed</b> (from CHANGELOG.md in the checked file):   (with notes)
+<b>X.Y.Z</b>
+Features:
+• the text of an entry (#67)
 Release notes: https://github.com/code6x/pullgate/releases/tag/vX.Y.Z
 File: <code>pullgate_X.Y.Z_linux_ARCH.tar.gz</code>
 SHA-256: <code>…64 hex digits…</code>
 ```
+
+The question that is sent again for `/update` while it is open has the
+notes of that look too. The notes are never in the first line. The
+installed pullgate makes the question, so the first release with this
+code shows notes only from the update after it.
 
 It can be answered for 12 hours. At most one update question is open.
 When the timer or `/update` finds a newer checked release while a question
