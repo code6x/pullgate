@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 
@@ -82,13 +83,39 @@ func (d Dir) TelegramPaused(_ uint32) bool {
 	return err == nil && telegramPauseFile(f, fi)
 }
 
-// ResumeTelegram runs under the instance lock, as do the Windows CLI's
-// other state changes.
-func (d Dir) ResumeTelegram(uid uint32) (bool, error) {
-	if !d.TelegramPaused(uid) {
+// ResumeTelegram removes the pause file only if it is a /pause one
+// (TelegramPaused). It checks and deletes the file through one handle that
+// does not share write or delete access, so nobody can replace the file
+// between the check and the delete (status --pause takes no lock). It
+// reports whether the pause was lifted.
+func (d Dir) ResumeTelegram(_ uint32) (bool, error) {
+	if err := winsecure.Check(d.Path, true); err != nil {
+		return false, err
+	}
+	name, err := windows.UTF16PtrFromString(d.PauseFile())
+	if err != nil {
+		return false, err
+	}
+	h, err := windows.CreateFile(name, windows.GENERIC_READ|windows.DELETE,
+		windows.FILE_SHARE_READ, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	if err != nil {
 		return false, nil
 	}
-	return true, d.Resume()
+	f := os.NewFile(uintptr(h), d.PauseFile())
+	defer func() { _ = f.Close() }()
+	if winsecure.CheckFileHandle(f) != nil {
+		return false, nil
+	}
+	fi, err := f.Stat()
+	if err != nil || !telegramPauseFile(f, fi) {
+		return false, nil
+	}
+	info := fileDispositionInfo{DeleteFile: true}
+	if err := windows.SetFileInformationByHandle(h, windows.FileDispositionInfo,
+		(*byte)(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
+		return false, fmt.Errorf("remove the pause file: %w. Fix: check the ACL of the state directory, or run pullgate status NAME --resume as an administrator", err)
+	}
+	return true, nil
 }
 
 func (d Dir) Lock(wait bool) (*os.File, error) {
@@ -173,4 +200,10 @@ func moveStateFile(from, to string, flags uint32) error {
 		return err
 	}
 	return windows.MoveFileEx(src, dst, flags)
+}
+
+// fileDispositionInfo is FILE_DISPOSITION_INFO; x/sys/windows has no type
+// for it. DeleteFile is a one-byte BOOLEAN.
+type fileDispositionInfo struct {
+	DeleteFile bool
 }

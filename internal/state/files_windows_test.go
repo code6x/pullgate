@@ -54,6 +54,21 @@ func TestWindowsState(t *testing.T) {
 	if d.PauseReason() != "operator" {
 		t.Fatal("operator pause was lost")
 	}
+	if err := d.Resume(); err != nil {
+		t.Fatal(err)
+	}
+	if made, err := d.PauseIfNone(TelegramPause + "2026-11-26 10:00 UTC"); err != nil || !made {
+		t.Fatalf("Telegram pause failed: %v", err)
+	}
+	if resumed, err := d.ResumeTelegram(0); err != nil || !resumed {
+		t.Fatalf("Telegram did not resume its own pause: %v", err)
+	}
+	if d.Paused() {
+		t.Fatal("pause file is still there after a Telegram resume")
+	}
+	if resumed, err := d.ResumeTelegram(0); err != nil || resumed {
+		t.Fatalf("Telegram resumed with no pause: %v", err)
+	}
 	if err := os.Link(d.StateFile(), filepath.Join(d.Path, "second-link")); err != nil {
 		t.Fatal(err)
 	}
