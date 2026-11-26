@@ -1,0 +1,11 @@
+# Example 1 as a recipe (README "Recipes"). A project ships this folder as
+# FILE.tar.gz in its GitHub release, and the owner sets it up with
+# pullgate bootstrap --recipe URL. version is the tag of the release,
+# without the "v".
+format = 1
+version = "1.0.0"
+
+[[instance]]
+name = "config-repo"
+config = "config-repo.toml.in"
+requires = ["install", "systemctl"]

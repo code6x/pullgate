@@ -139,7 +139,17 @@ pullgate bootstrap --instance config-repo --repo git@github.com:example/config-r
    there leaves the units running: fix it, and run `pullgate doctor`.
 
 Each run writes `listener.toml` with the instances of that run only: give
-every instance of the host each time.
+every instance of the host each time. To add an instance to a host that
+is paired already, add `--add`: no token, no pairing; it keeps the IDs and
+the other instances.
+
+**From a recipe.** When the project of an instance ships it as a recipe
+(below), one command sets it up, with its scripts and its config:
+
+```sh
+pullgate bootstrap --recipe https://github.com/OWNER/REPO/releases/download/vX.Y.Z/FILE.tar.gz \
+    --instance config-repo --repo git@github.com:example/config-repo.git
+```
 
 `listener.toml`, the token, the deploy key and the known hosts file are
 pullgate's own files: no other config tool (for example Ansible, run by
@@ -291,9 +301,8 @@ How it works: [DESIGN.md](DESIGN.md) section 15; what it trusts:
 A project that uses pullgate can ship an instance as a **recipe**: its
 scripts and a config template, as a `.tar.gz` in a GitHub release, with
 `SHA256SUMS` and a build attestation, as pullgate's own releases have.
-This version has the first step of recipes, `pullgate recipe fetch`; the
-setup of an instance from a recipe with `pullgate bootstrap --recipe` comes
-next (code6x/pullgate#55).
+`pullgate bootstrap --recipe URL` sets an instance up from one (below);
+`pullgate recipe fetch URL` only checks and unpacks it.
 
 ```
 pullgate recipe fetch URL [--gh PATH] [--bundle NAME] [--signer-workflow PATH] [--dir DIR]
@@ -347,6 +356,66 @@ the tag in the URL is not: a tarball of another release is refused. A program of
 in `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`; a
 missing one stops it, and nothing is written.
 
+**The template** is the TOML of `/etc/pullgate/NAME.toml`, with these
+placeholders only: `@NAME@` (the instance name), `@HOST@` (the host name),
+`@REPO_URL@` and `@BRANCH@` (from `--repo` and `--branch`), and
+`@RECIPE_DIR@` (the folder of the unpacked recipe, for the paths of its
+programs). An example: [contrib/examples/config-file/](contrib/examples/config-file/)
+(`pullgate-recipe.toml` and `config-repo.toml.in`).
+
+```toml
+host = "@HOST@"
+
+[repo]
+url = "@REPO_URL@"
+branch = "@BRANCH@"
+
+[commands]
+check = ["@RECIPE_DIR@/check.sh"]
+apply = ["@RECIPE_DIR@/apply.sh"]
+```
+
+A template may not set `mode`, `[repo] deploy_key`, `[repo] known_hosts`,
+`[commands] check_user` or `[listener]`: pullgate writes `mode = "ask"`,
+the deploy key, the host keys and the check user itself, so a recipe never
+picks `auto` mode or a key. Every key must be in lower case. Another placeholder, or a value with a quote,
+a backslash or a newline, is refused, and the result must be a valid
+instance config. Comments of the template are not kept.
+
+**Set up an instance from a recipe:**
+
+```
+pullgate bootstrap [--add] --recipe URL [--gh PATH] [--bundle NAME] [--signer-workflow PATH]
+    [--replace-config] --instance NAME --repo URL [--branch B] [--known-hosts FILE]
+    [--recipe-instance NAME] [--instance NAME2 ...]
+```
+
+It does all of `pullgate bootstrap` (Install, above), and:
+
+1. It checks everything first, then fetches the recipe as `recipe fetch`
+   does, and makes the config of each instance from its template. A
+   failure writes nothing.
+2. `--instance NAME` takes the recipe's instance of that name, or the
+   only one; `--recipe-instance R` takes the instance R of the recipe
+   under the name NAME. A recipe may hold more instances: give one
+   `--instance` for each one to set up.
+3. If `/etc/pullgate/NAME.toml` exists, it is kept, and bootstrap prints
+   how the recipe's config differs from it. `--replace-config` writes the
+   recipe's config instead, and keeps the old one as
+   `NAME.toml.bak-YYYYMMDD-HHMMSS`. A kept config keeps its repo, deploy
+   key, host keys and check user; `--repo` must be the same.
+4. The recipe's `setup`, if it has one, runs once as root in the recipe
+   folder, with only `PATH`, `LC_ALL`, `PULLGATE_INSTANCE` and
+   `PULLGATE_RECIPE_DIR`, before `NAME.toml` is written. If it fails, no
+   config is written and no unit is enabled.
+5. It writes `/etc/pullgate/NAME.recipe`: the recipe, its version and its
+   SHA-256 (not for a kept config that differs from the recipe's: then an old record is removed). `pullgate status NAME` shows it in the line `recipe:`.
+
+With `--add`, the host must be paired already: bootstrap reads no token
+and does no pairing. It prints the owner ID, the chat ID and the
+instances that it keeps, and only adds the new names to `listener.toml`.
+A `listener.toml` that fails the checks of the listener is refused.
+
 **Test a recipe in your own CI.** Two options make an end-to-end test
 possible with no network:
 
@@ -361,6 +430,10 @@ possible with no network:
   The server serves `FILE.tar.gz`, `SHA256SUMS` and the bundle from the
   same folder. pullgate prints a loud warning. Only `127.0.0.1` is
   allowed, as for `--api-url`.
+
+Both work for `pullgate bootstrap --recipe` too, with `--api-url
+http://127.0.0.1:PORT` for a fake Telegram, or `--add` on a host that
+your test has paired already.
 
 ## Config
 

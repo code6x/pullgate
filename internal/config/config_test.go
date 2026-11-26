@@ -66,6 +66,8 @@ func TestRefused(t *testing.T) {
 		"reask below 0":       good + "[limits]\nreask_after = \"-1h\"\n",
 		"absolute watch path": good + "[watch]\npaths = [\"/etc/x\"]\n",
 		"host html":           `host = "<b>"` + good,
+		"key in upper case":   `Mode = "auto"` + "\n" + good,
+		"table in upper case": good + "[Limits]\nsettle = \"0\"\n",
 	}
 	for n, body := range cases {
 		t.Run(n, func(t *testing.T) {

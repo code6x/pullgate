@@ -242,6 +242,24 @@ func Load(dir, name string, uid uint32) (*Instance, error) {
 	return c, nil
 }
 
+// Parse checks the text of the instance config NAME, as Load does, but
+// not the file: bootstrap checks a config before it writes it. path is
+// only for the errors.
+func Parse(path, name string, b []byte) (*Instance, error) {
+	if !ValidName(name) {
+		return nil, fmt.Errorf("%q is not an instance name. Fix: use [a-z0-9][a-z0-9-]{0,31}", name)
+	}
+	c := &Instance{Name: name, Path: path}
+	if err := decodeBytes(path, b, c); err != nil {
+		return nil, err
+	}
+	c.defaults()
+	if err := c.validate(); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
 // CheckGateFiles checks the deploy key, the known hosts file and the
 // program of each command (DESIGN.md section 4).
 func (c *Instance) CheckGateFiles(uid uint32) error {
@@ -334,12 +352,36 @@ func decodeFile(path string, v any) error {
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
+	return decodeBytes(path, b, v)
+}
+
+func decodeBytes(path string, b []byte, v any) error {
 	md, err := toml.Decode(string(b), v)
 	if err != nil {
 		return fmt.Errorf("%s: %w. Fix: correct the TOML", path, err)
 	}
+	if err := ExactKeys(md); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
 	if und := md.Undecoded(); len(und) > 0 {
 		return fmt.Errorf("%s: unknown key %q. Fix: remove it, or check its spelling in DESIGN.md section 5", path, und[0].String())
+	}
+	return nil
+}
+
+var keyRE = regexp.MustCompile(`^[a-z0-9_]+$`)
+
+// ExactKeys refuses a key that is not written in lower case. The TOML
+// decoder matches a key to a field without case, so "Mode" would set
+// mode, and could hide from a check that looks for "mode" (a recipe
+// template, DESIGN.md section 20). Every key of pullgate is lower case.
+func ExactKeys(md toml.MetaData) error {
+	for _, k := range md.Keys() {
+		for _, part := range k {
+			if !keyRE.MatchString(part) {
+				return fmt.Errorf("the key %q is not written as pullgate writes its keys (a-z, 0-9 and _). Fix: write it in lower case", k.String())
+			}
+		}
 	}
 	return nil
 }

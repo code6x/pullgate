@@ -321,6 +321,7 @@ func TestManifest(t *testing.T) {
 		"format = 1\nversion = \"1.0.0\"\n[[instance]]\nname = \"a\"\nconfig = \"a\"\nsetup = [\"/bin/sh\"]\n",
 		"format = 1\nversion = \"1.0.0\"\n[[instance]]\nname = \"a\"\nconfig = \"a\"\nrequires = [\"a b\"]\n",
 		"format = 1\nversion = \"1.0.0\"\n[[instance]]\nname = \"a\"\nconfig = \"a\"\n[[instance]]\nname = \"a\"\nconfig = \"b\"\n",
+		"format = 1\nversion = \"1.0.0\"\n[[instance]]\nname = \"a\"\nconfig = \"a\"\nSetup = [\"x\"]\n",
 	} {
 		if _, err := ParseManifest([]byte(bad)); err == nil {
 			t.Errorf("ParseManifest passed:\n%s", bad)

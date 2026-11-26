@@ -28,6 +28,11 @@ change code. They are the rules the code must follow.
     9, 10, 13).
   - `internal/doctor/` - `pullgate doctor`: one line per check of the
     setup (DESIGN.md section 18).
+  - `internal/bootstrap/` - `pullgate bootstrap`: the setup of a host and
+    its instances, also from a recipe with `--recipe` (DESIGN.md sections
+    17 and 20).
+  - `internal/recipe/recipetest/` - a fake release server and a fake gh,
+    for tests.
   - `internal/recipe/` - `pullgate recipe fetch`: a recipe from a GitHub
     release, checked and unpacked (DESIGN.md section 19).
   - `internal/selfupdate/` - `pullgate update`: the notice of a new release,

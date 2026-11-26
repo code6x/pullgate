@@ -730,6 +730,43 @@ The checks prove where it comes from, not that it is good: trust the
 project as you would trust its install script. A project whose release
 workflow is taken over can sign a hostile recipe.
 
+### T23. Code and config from a recipe, set up as root (`bootstrap --recipe`)
+
+*Attack.* A recipe (T22) tries to get more than its scripts: its config
+template sets `mode = "auto"` so commits apply with no tap, names a deploy
+key or host keys of its choice, makes the checks run as root or as the
+listener user, or points the repo at another one. Or a value that the
+owner gives (the repo URL, the branch, the host name) holds a quote or a
+newline, to add a key to the config. Or a host that is paired is paired
+again with `--add`, to swap the owner ID.
+
+*Defense.* The template is checked before anything is written: inside the
+fetch, before the recipe folder is renamed into place. It may use only
+the fixed placeholders `@NAME@`, `@HOST@`, `@REPO_URL@`, `@BRANCH@` and
+`@RECIPE_DIR@`; another one is refused. A value with a quote, a backslash,
+a newline or another control character is refused. A template that sets
+`mode`, `[repo] deploy_key`, `[repo] known_hosts`, `[commands]
+check_user` or `[listener]`, or sets `[repo] url` or `branch` to other
+values than the owner gave, is refused. A key that is not in lower case
+is refused too, in a template and in every config: the TOML decoder
+matches keys without case, so `Mode = "auto"` would set the mode past a
+check that looks for `mode`. pullgate writes `mode = "ask"`,
+the repo, the key, the host keys and the check user itself, and the
+result must pass the checks of any instance config. A config that is
+there already is kept (its diff is shown); `--replace-config` replaces
+it with a backup, and keeps its repo, key, host keys and check user.
+`--add` takes no token and does no pairing: it keeps every key of
+`listener.toml`, which must pass the listener's checks, and only adds
+instance names. The recipe's `setup` runs as root with only `PATH`,
+`LC_ALL`, `PULLGATE_INSTANCE` and `PULLGATE_RECIPE_DIR`: never the token.
+A failed `setup` writes no config and enables no unit.
+
+*Left.* The recipe's `apply`, `check`, `health` and `setup` are its own
+code, and `setup` runs as root once, at the setup. A template may still
+pick the programs, the limits (for example `allow_older`) and the watch
+list. Read the template, or the config it writes, as you would read an
+install script.
+
 ## 6. Out of scope
 
 - An attacker who is root on the host.

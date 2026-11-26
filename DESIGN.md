@@ -208,7 +208,9 @@ reask_after = "24h"       # default 0 (never); ask a skipped or expired tip once
 user = "pullgate"         # the user of the listener; owns the inbox
 ```
 
-Unknown keys are an error. An unknown mode or `on_failure` is an error. A
+Unknown keys are an error. Every key must be written in lower case
+(`a-z`, `0-9`, `_`; `Mode` is an error, in every config of pullgate:
+section 20). An unknown mode or `on_failure` is an error. A
 missing `apply` is an error. Every error names the file, the key and the fix.
 
 There is no default for `on_failure` in the example configs: each example
@@ -1237,7 +1239,9 @@ It must run as root, and `/etc/pullgate` and its parents must be safe
 server on `http://127.0.0.1:PORT` (no user info): another server would see
 the token and could plant the IDs. A test server gets a loud warning.
 `listener.toml` lists only the instances of this run: give every instance
-of the host in each run.
+of the host in each run, or use `--add` (section 20) on a host that is
+paired. `--recipe URL` makes the configs from a checked recipe instead
+of `--apply` (section 20).
 
 1. **Checks first.** Every instance name, URL and branch is checked, and
    an ssh URL to a host other than `github.com` needs `--known-hosts`. A
@@ -1406,6 +1410,84 @@ as root:
    checked again. Else the error
    says to move it away.
 
-Next (code6x/pullgate#55): `pullgate bootstrap --recipe`, the template and
-its placeholders, `--add`, the record per instance, and the updates.
+Section 20 sets an instance up from a recipe.
 
+## 20. Bootstrap from a recipe (`pullgate bootstrap --recipe`)
+
+```
+pullgate bootstrap [--add] --recipe URL [--gh PATH] [--bundle NAME] [--signer-workflow PATH]
+    [--replace-config] --instance NAME --repo URL [--branch B] [--known-hosts FILE]
+    [--recipe-instance NAME] [--instance NAME2 ...]
+```
+
+It is section 17 with the config of each instance made from the recipe's
+template. The order:
+
+1. **Checks** of section 17 step 1, and the recipe URL (section 19 step
+   1). `--apply` is refused with `--recipe` (the template names the
+   programs). `--gh`, `--bundle`, `--signer-workflow`, `--replace-config`
+   and `--recipe-instance` need `--recipe`. A `NAME.toml` that is there
+   already must load (section 5) and have the same repo URL (and branch,
+   if `--branch` is given): a kept config keeps its repo. Every
+   placeholder value is checked (step 3).
+2. **Fetch** (section 19, with the same flags). Inside it, before the
+   rename of the new folder (or on a folder that is there already), every
+   instance gets its config from its template (step 3). A failure writes
+   nothing: no recipe folder, no user, no unit, no config.
+3. **The template.** Each `--instance NAME` picks the instance of the
+   manifest named by `--recipe-instance`, else the one named NAME, else
+   the only one. Its template is TOML with the placeholders `@NAME@`,
+   `@HOST@` (the host name), `@REPO_URL@`, `@BRANCH@` and `@RECIPE_DIR@`
+   (the version folder), filled in one pass. For a kept config,
+   `@REPO_URL@` and `@BRANCH@` are its own. Another `@WORD@` is refused,
+   and so is a value with `"`, `'`, `\`, a newline, another control
+   character, or a `@WORD@`. The filled template must be TOML with every key in lower
+   case (`a-z`, `0-9`, `_`: the TOML decoder matches keys without case,
+   so `Mode` would set `mode`; every config of pullgate refuses such a
+   key). It must not set `mode`, `[repo] deploy_key`, `[repo]
+   known_hosts`, `[commands] check_user` or `[listener]`; it may set
+   `[repo] url` and `branch` only to `@REPO_URL@` and `@BRANCH@`. pullgate
+   then sets `mode = "ask"`, the repo URL and branch, the deploy key and
+   the known hosts (`NAME.key` and `NAME.known_hosts` for an ssh URL, or
+   those of a kept config), and `check_user` (`pullgate-check-NAME`, or
+   that of a kept config). The result must pass the checks of section 5,
+   without the file checks. It is written with a header that names the
+   recipe; comments of the template are not kept.
+4. **Users, directories, units**, then the token and the pairing, as
+   section 17. With `--add`, no token is read and no pairing is done:
+   `listener.toml` must pass the checks of the listener (owner, mode,
+   keys) and `bot-token` must be there. It prints the owner ID, the chat
+   ID and the instances it keeps. `--add` takes no `--token-stdin` and no
+   `--api-url`.
+5. **Each instance**: the deploy key and the host keys for a new config
+   (section 17 step 4), the wait for `git ls-remote`, and the state and
+   the spool.
+6. **The setup** of each instance, if its manifest entry has `setup`:
+   the program of the recipe with its arguments, as root, in the version
+   folder, with only `PATH` (section 19's search path), `LC_ALL=C`,
+   `PULLGATE_INSTANCE` and `PULLGATE_RECIPE_DIR`, at most 30 minutes, in
+   its own process group (killed at the timeout). Its output goes to the
+   console. A failure stops bootstrap: no config is written and no unit
+   is enabled; the instance is off, or keeps the config it had. The error
+   says so.
+7. **`NAME.toml`**, only after every setup passed. If there is none, the
+   template's config is written (root, 0600). The header names the
+   recipe and holds no date, so the same recipe with the same values
+   makes the same file. If there is one and it differs, the diff is printed (`-` the file, `+` the recipe) and the
+   file is kept; with `--replace-config`, the old one is copied to
+   `NAME.toml.bak-YYYYMMDD-HHMMSS` (root, 0600) and the new one written.
+   A new config is in `ask` mode, also when the old one was `auto`.
+8. **The record**, only when `NAME.toml` is now the recipe's config (written,
+   or the same; not for a kept config that differs: then an old record
+   is removed, so status does not name a recipe the config may not be), in
+   `/etc/pullgate/NAME.recipe` (root, 0644, TOML): the URL,
+   `OWNER/REPO`, the version, the file, its SHA-256, the version folder,
+   the instance of the manifest, the bundle and signer workflow flags,
+   the value of `@HOST@` and the time. `pullgate status NAME` and
+   `/status` show the recipe and its version from it (a line `recipe:`),
+   or say that it cannot be read. It is information: no check of a run
+   reads it.
+9. With `--add`, `listener.toml` is written again only now, with every
+   key kept and the new names added to `instances`, so the listener does
+   not ask for an instance that is not set up. Then doctor and the
+   enable (section 17 step 5).

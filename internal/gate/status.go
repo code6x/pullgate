@@ -1,10 +1,14 @@
 package gate
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"path/filepath"
 
 	"github.com/code6x/pullgate/internal/config"
+	"github.com/code6x/pullgate/internal/recipe"
 	"github.com/code6x/pullgate/internal/state"
 )
 
@@ -83,6 +87,14 @@ func (e *Env) statusText(w io.Writer, st *state.State) {
 	show("instance", e.Cfg.Name)
 	show("mode", e.Cfg.Mode)
 	show("on_failure", e.Cfg.OnFailure)
+	if e.Cfg.Path != "" {
+		p := recipe.RecordPath(filepath.Dir(e.Cfg.Path), e.Cfg.Name)
+		if r, err := recipe.ReadInstanceRecord(p); err == nil {
+			show("recipe", fmt.Sprintf("%s v%s (%s, instance %s, in %s)", r.Repo, r.Version, r.File, r.Instance, r.Dir))
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			show("recipe", fmt.Sprintf("the record %s cannot be read: %v", p, err))
+		}
+	}
 	show("applied", orNone(st.Applied))
 	show("last tip", orNone(st.LastTip))
 	if q := st.Open(); q != nil {
