@@ -143,6 +143,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		switch cmd {
 		case "run":
+			// /doctor from Telegram: root runs the checks that need no
+			// secret, after it reads the request (code6x/pullgate#50).
+			env.Doctor = func(ctx context.Context) string {
+				return doctor.RunPublic(ctx, &doctor.Options{
+					Version: version, ConfigDir: *configDir, StateDir: *stateDir, SpoolDir: *spoolDir,
+					UnitDir: "/etc/systemd/system", Listener: filepath.Join(*configDir, "listener.toml"), Name: name, UID: euid,
+					Units: pullgate.Units(), Enable: pullgate.Enable,
+					Systemctl: doctor.Systemctl, ReadAs: doctor.ReadAs,
+				})
+			}
 			res, err := env.Run(ctx)
 			return done(log, string(res), err)
 		case "apply":

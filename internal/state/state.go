@@ -105,6 +105,7 @@ type State struct {
 	CheckNote  time.Time        `json:"check_note,omitzero"` // the last "too many check requests" reply
 	StatusAt   time.Time        `json:"status_at,omitzero"`  // the last /status that was answered
 	PauseNote  time.Time        `json:"pause_note,omitzero"` // the last reply to /pause
+	DoctorAt   time.Time        `json:"doctor_at,omitzero"`  // the last /doctor that was answered
 	NextID     int64            `json:"next_id"`
 }
 

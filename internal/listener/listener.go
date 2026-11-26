@@ -464,14 +464,14 @@ func (l *Listener) request(ctx context.Context, m *telegram.Message, c *botComma
 	f := strings.Fields(m.Text)
 	var names []string
 	switch {
-	case kind == spool.RequestStatus && len(f) == 1:
+	case (kind == spool.RequestStatus || kind == spool.RequestDoctor) && len(f) == 1:
 		names = slices.Clone(l.Cfg.Instances)
 	case len(f) >= 2 && slices.Contains(l.Cfg.Instances, f[1]) && (kind == spool.RequestPause || len(f) == 2):
 		names = []string{f[1]}
 	default:
 		l.Log.Info("message ignored", "reason", "bad "+kind+" arguments", "from", fromID(m))
-		use := "<code>/status</code> or <code>/status NAME</code>"
-		if kind != spool.RequestStatus {
+		use := "<code>/" + c.Name + "</code> or <code>/" + c.Name + " NAME</code>"
+		if kind != spool.RequestStatus && kind != spool.RequestDoctor {
 			use = "<code>/" + c.Name + " NAME</code>"
 		}
 		l.sendReply(ctx, m, "Use "+use+". NAME is one of: "+html.EscapeString(strings.Join(l.Cfg.Instances, ", "))+".")
@@ -501,7 +501,8 @@ func (l *Listener) request(ctx context.Context, m *telegram.Message, c *botComma
 	var text []string
 	if len(ok) > 0 {
 		verb := map[string]string{spool.RequestStatus: "Asking for the status of", spool.RequestPause: "Pausing",
-			spool.RequestResume: "Asking to resume", spool.RequestAskAgain: "Asking to ask again on"}[kind]
+			spool.RequestResume: "Asking to resume", spool.RequestAskAgain: "Asking to ask again on",
+			spool.RequestDoctor: "Asking for the checks of pullgate doctor on"}[kind]
 		line := verb + " <b>" + html.EscapeString(strings.Join(ok, ", ")) + "</b>…"
 		if kind == spool.RequestPause && len(f) > 2 {
 			line += " (the reason is not sent to the host: a request holds no text)"

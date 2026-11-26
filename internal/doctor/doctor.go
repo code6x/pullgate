@@ -63,6 +63,11 @@ type Options struct {
 	// enables them, and enables nothing when doctor finds a problem.
 	BeforeEnable bool
 
+	// Public leaves out every check that reads a secret: the bot token,
+	// Telegram, and git with the deploy key. /doctor from Telegram uses it
+	// (RunPublic, code6x/pullgate#50).
+	Public bool
+
 	// asRoot makes the tests check what only root checks: that check_user
 	// is not the listener user. As another user, check_user must be that
 	// user (gate.ResolveSandbox).
@@ -103,9 +108,14 @@ func Run(ctx context.Context, o *Options) int {
 	// token_file may be empty: the example unit gives the token as a
 	// systemd credential, which a root shell does not have. token checks it.
 	lc, err := config.LoadListenerForUpdate(o.Listener, o.UID)
-	if err != nil {
+	switch {
+	case err != nil && o.Public:
+		// The error may quote a value of the config (api_url): from
+		// Telegram, only where it is.
+		d.problem("listener config", o.Listener+" is not valid or not safe. Fix: run pullgate doctor as root to see why")
+	case err != nil:
 		d.problem("listener config", err.Error())
-	} else {
+	default:
 		d.ok("listener config", o.Listener+" is valid, with the instances "+strings.Join(lc.Instances, ", "))
 	}
 	names := []string{}
@@ -230,6 +240,10 @@ func (d *doc) tokenFile(lc *config.Listener) (string, bool) {
 // token checks the owner and the mode of the token file; with --telegram
 // also the token and the chat, with Telegram. The token is never printed.
 func (d *doc) token(ctx context.Context, lc *config.Listener, ow spool.Owners) {
+	if d.o.Public {
+		d.note("bot token", "not checked from Telegram (it reads the token). Run pullgate doctor as root to check it")
+		return
+	}
 	p, credential := d.tokenFile(lc)
 	c := *lc
 	c.TokenFile = p
@@ -299,6 +313,12 @@ func (d *doc) instance(ctx context.Context, name string, ow *spool.Owners) {
 	o := d.o
 	what := "instance " + name
 	cfg, err := config.Load(o.ConfigDir, name, o.UID)
+	if err != nil && o.Public {
+		// The error may quote a value of the config (the repo url): from
+		// Telegram, only where it is.
+		d.problem(what, filepath.Join(o.ConfigDir, name+".toml")+" is not valid or not safe. Fix: run pullgate doctor "+name+" as root to see why")
+		return
+	}
 	if err != nil {
 		msg := err.Error()
 		if !strings.Contains(msg, "Fix") {
@@ -357,6 +377,10 @@ func (d *doc) instance(ctx context.Context, name string, ow *spool.Owners) {
 		d.ok(what, "the owners and the modes of the state and the spool, as read back, are right")
 	}
 	d.outbox(ctx, name, sp, l)
+	if o.Public {
+		d.note(what, "git and the deploy key not checked from Telegram. Run pullgate doctor as root to check them")
+		return
+	}
 	remote := o.Remote
 	if remote == nil {
 		remote = lsRemote

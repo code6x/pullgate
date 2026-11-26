@@ -464,7 +464,8 @@ a SHA, not a code. A check request can only start a normal run. It is not
 an approval, and `pullgate apply` never reads this directory.
 
 `pullgate-check@NAME.path` watches the files `check/request`,
-`check/status` and `check/pause` (`PathExists=`; another file there starts
+`check/status`, `check/pause` and `check/doctor` (`PathExists=`; `resume`
+and `ask-again` wait for the timer; another file there starts
 nothing) and starts `pullgate-run@NAME.service`, the unit of the timer. `pullgate run`,
 with the lock held (a run that had to wait for the lock, and then finds
 no request, stops: another run took the request):
@@ -574,6 +575,31 @@ nothing):
   read-only.
 - Then the normal run goes on, so a stream of `/status` never stops the
   fetches. After a `/pause`, the run ends as paused.
+
+**`/doctor` and `/doctor NAME`** (code6x/pullgate#50) go the same way, with
+the request file `doctor`, as `/status`: `/doctor` writes one request for
+every instance. Root, in `pullgate run NAME`, after it takes the request,
+runs the checks of section 18 for NAME with `Public` set, at most once a
+minute (`doctor_at` in the state), and sends one notice. Root runs them,
+not the listener, because some checks read root-only owners and modes
+and read the outbox as the listener user. `Public` leaves out every check
+that reads a secret: the token file, Telegram, and `git ls-remote` with
+the deploy key; each is a note that says to run `pullgate doctor` as
+root. The notice holds only the `PROBLEM` and `note` lines, the number of
+`ok` checks and the summary, after `doctor.Redact`: URLs and git
+addresses become `<address>`, runs of 32 or more key characters and bot
+token forms `<secret>`, IP addresses `<ip>`, absolute paths outside
+pullgate's own files `<path>`, and the host name of the system (and its
+first label) `<host>`. Then it is cleaned and cut as command output
+(section 12), in `<pre>`: when it is too long, the first lines are cut
+and the summary stays. A config that does not load is named with its
+file only, as its error may quote a value of the config (the repo url,
+`api_url`); `pullgate doctor` as root shows why. A known limit: in a path
+with spaces that is not pullgate's own, the words between the spaces stay
+(the parts with a `/` go). The files that pullgate makes have no spaces;
+such a path can only come from a config value that the owner chose. Root
+saves `doctor_at` at once, also when the instance is paused or off, so the
+limit holds then too. The normal run goes on after it, as after `/status`.
 
 **`/resume NAME` and `/ask_again NAME`** (code6x/pullgate#33) go the same
 way, with request files `resume` and `ask-again`. They are limited, so
@@ -1350,6 +1376,9 @@ checks the setup of a host, as root. It prints one line per check: `ok`,
 line. It exits 1 when there is a problem, else 0. With NAME it checks that
 instance, else every instance of `listener.toml`. It changes nothing, but
 for one test file in each outbox, which it removes.
+
+`/doctor` from Telegram runs these checks too, without the ones that read
+a secret, and redacted (section 9).
 
 The checks:
 

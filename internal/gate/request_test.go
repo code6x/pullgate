@@ -1,6 +1,7 @@
 package gate
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -288,5 +289,73 @@ func TestAskAgainRefusedWhilePausedOrBroken(t *testing.T) {
 	}
 	if g.state().FindCode(q.Code) < 0 {
 		t.Fatal("the question must stay while paused")
+	}
+}
+
+// TestDoctorRequest: root answers /doctor with what Env.Doctor returns,
+// cleaned, at most once a minute; the normal run goes on (code6x/pullgate#50).
+func TestDoctorRequest(t *testing.T) {
+	f := newFixture(t, ``, "")
+	f.applyNew("one")
+	calls := 0
+	f.env.Doctor = func(context.Context) string {
+		calls++
+		return "PROBLEM  unit pullgate-listen.service: <b>down</b>\nok       3 checks\n1 problem(s). Fix them."
+	}
+	f.requestKind(spool.RequestDoctor)
+	f.run()
+	ms := f.outbox()
+	if calls != 1 || len(ms) != 1 || ms[0].Kind != spool.KindNotice || !strings.Contains(ms[0].Text, "Doctor of "+f.env.Cfg.Name) ||
+		!strings.Contains(ms[0].Text, "<pre>PROBLEM  unit pullgate-listen.service: &lt;b&gt;down&lt;/b&gt;") {
+		t.Fatalf("one doctor notice, escaped: %d %+v", calls, ms)
+	}
+	// A second one within a minute is dropped and runs nothing.
+	f.requestKind(spool.RequestDoctor)
+	f.run()
+	if calls != 1 || len(f.outbox()) != 0 {
+		t.Fatal("a second /doctor within a minute must run nothing and get no answer")
+	}
+	// It works while paused.
+	f.now = f.now.Add(2 * time.Minute)
+	if err := f.env.Dir.Pause("paused by the owner"); err != nil {
+		t.Fatal(err)
+	}
+	f.requestKind(spool.RequestDoctor)
+	f.run()
+	if calls != 2 || !contains(f.outbox(), "Doctor of") {
+		t.Fatal("/doctor must work while paused")
+	}
+	// The limit holds while paused too: the run saves doctor_at.
+	f.requestKind(spool.RequestDoctor)
+	f.requestKind(spool.RequestStatus)
+	f.run()
+	if calls != 2 {
+		t.Fatal("a second /doctor within a minute while paused must run nothing")
+	}
+	f.outbox()
+	// Without a doctor (not pullgate run), it says how to run it as root.
+	f.now = f.now.Add(2 * time.Minute)
+	f.env.Doctor = nil
+	f.requestKind(spool.RequestDoctor)
+	f.run()
+	if !contains(f.outbox(), "pullgate doctor "+f.env.Cfg.Name) {
+		t.Fatal("without a doctor, the reply names the root command")
+	}
+}
+
+// TestDoctorRequestNeedsTheRightFile: a doctor file with other content, or
+// of another user, runs nothing.
+func TestDoctorRequestNeedsTheRightFile(t *testing.T) {
+	f := newFixture(t, ``, "")
+	f.applyNew("one")
+	calls := 0
+	f.env.Doctor = func(context.Context) string { calls++; return "" }
+	f.requestKind(spool.RequestDoctor)
+	if err := os.WriteFile(filepath.Join(f.env.Spool.CheckDir(), spool.RequestDoctor), []byte("doctor all\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.run()
+	if calls != 0 {
+		t.Fatal("a doctor file with other content must run nothing")
 	}
 }

@@ -642,6 +642,25 @@ if printf '%s\n' "$doctor_out" | grep '^note' | grep -v '^note *telegram: not ch
 	err "pullgate doctor printed a note (above); on this host every check must be ok"
 fi
 
+step "11. /doctor from Telegram: root runs the checks in the run unit"
+python3 -I -c 'import json, sys, urllib.request
+urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:%s/test/say" % sys.argv[1], data=json.dumps({"text": sys.argv[2]}).encode(), method="POST"), timeout=5)' "$port" "/doctor $name"
+if ! wait_text "Doctor of $name" 90; then
+	journalctl --no-pager -o cat -u "pullgate-run@$name.service" -u pullgate-listen.service | tail -n 40 || true
+	die "no /doctor answer reached the fake Telegram"
+fi
+doctor_tg="$(grep -F "Doctor of $name" "$texts")"
+printf '%s\n' "$doctor_tg"
+printf '%s\n' "$doctor_tg" | grep -q -F 'All checks passed.' || err "/doctor did not say: All checks passed (the checks fail in the run unit)"
+printf '%s\n' "$doctor_tg" | grep -q -F 'PROBLEM' && err "/doctor printed a PROBLEM line"
+h="$(hostname)"
+if [ -n "$h" ] && printf '%s\n' "$doctor_tg" | grep -q -i -F -- "$h"; then
+	err "the /doctor answer holds the host name"
+fi
+if printf '%s\n' "$doctor_tg" | grep -q -E '127\.0\.0\.1|loop-test-token|/home/|/tmp/'; then
+	err "the /doctor answer holds an address, the token or a path outside pullgate"
+fi
+
 if [ "$fail" -ne 0 ]; then
 	exit 1
 fi

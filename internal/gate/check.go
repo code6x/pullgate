@@ -1,6 +1,7 @@
 package gate
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -28,7 +29,7 @@ func (e *Env) takeChecks() spool.Requests {
 		e.Log.Error("read the check requests", "err", err)
 	}
 	if r.Any() {
-		e.Log.Info("requests taken", "check", r.Check, "status", r.Status, "pause", r.Pause, "resume", r.Resume, "ask-again", r.AskAgain)
+		e.Log.Info("requests taken", "check", r.Check, "status", r.Status, "pause", r.Pause, "resume", r.Resume, "ask-again", r.AskAgain, "doctor", r.Doctor)
 	}
 	return r
 }
@@ -150,6 +151,25 @@ func (e *Env) statusRequest(st *state.State) {
 	var b strings.Builder
 	e.statusText(&b, st)
 	e.notice("Status:\n" + message.Output(b.String(), 30))
+}
+
+// doctorRequest answers /doctor with the checks of pullgate doctor that
+// need no secret, at most once a minute (code6x/pullgate#50). Root runs
+// them; the request holds nothing from the message.
+func (e *Env) doctorRequest(ctx context.Context, st *state.State) {
+	now := e.now()
+	if d := now.Sub(st.DoctorAt); d < CheckInterval && d > -CheckInterval {
+		e.Log.Warn("doctor request dropped: the last one was less than a minute ago")
+		return
+	}
+	st.DoctorAt = now
+	if e.Doctor == nil {
+		e.notice("Doctor of " + e.Cfg.Name + ": not available here. Run as root: <code>pullgate doctor " + e.Cfg.Name + "</code>")
+		return
+	}
+	out := e.Doctor(ctx)
+	e.Log.Info("doctor request answered")
+	e.notice("Doctor of " + e.Cfg.Name + " (the checks that need no secret; for all, run as root <code>pullgate doctor " + e.Cfg.Name + "</code>):\n" + message.Output(out, 40))
 }
 
 // limitCheck enforces CheckInterval. It returns CheckLimited when the

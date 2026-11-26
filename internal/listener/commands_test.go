@@ -208,3 +208,70 @@ func TestNoOldAskAgainInTexts(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestDoctorCommand: /doctor asks root for the checks of every instance,
+// /doctor NAME for one; the request holds nothing from the message
+// (code6x/pullgate#50).
+func TestDoctorCommand(t *testing.T) {
+	f, d2 := newL2(t)
+	f.say(owner, chat, "/doctor", false)
+	r1, _, _ := f.d.TakeRequests(os.Geteuid())
+	r2, _, _ := d2.TakeRequests(os.Geteuid())
+	if r1 != (spool.Requests{Doctor: 1}) || r2 != (spool.Requests{Doctor: 1}) {
+		t.Fatalf("/doctor: %+v %+v", r1, r2)
+	}
+	f.now = f.now.Add(2 * RequestGap)
+	f.say(owner, chat, "/doctor "+inst2, false)
+	r1, _, _ = f.d.TakeRequests(os.Geteuid())
+	r2, _, _ = d2.TakeRequests(os.Geteuid())
+	if r1.Any() || r2 != (spool.Requests{Doctor: 1}) {
+		t.Fatalf("/doctor NAME: %+v %+v", r1, r2)
+	}
+	ms := f.tg.Messages()
+	if len(ms) != 2 || !strings.Contains(ms[0].Text, "Asking for the checks of pullgate doctor on <b>"+inst+", "+inst2+"</b>") {
+		t.Fatalf("replies: %+v", ms)
+	}
+	// A bad name, more words: the usage text, no request.
+	for _, bad := range []string{"/doctor nope", "/doctor " + inst + " x"} {
+		f.say(owner, chat, bad, false)
+	}
+	if f.d.HasCheck() || d2.HasCheck() {
+		t.Fatal("a bad /doctor writes no request")
+	}
+	if ms := f.tg.Messages(); len(ms) != 4 || !strings.Contains(ms[3].Text, "<code>/doctor</code> or <code>/doctor NAME</code>") {
+		t.Fatalf("want the usage text: %+v", ms)
+	}
+	// The same within RequestGap is not written again.
+	f.say(owner, chat, "/doctor "+inst2, false)
+	if d2.HasCheck() {
+		t.Fatal("a second /doctor within a minute must not write")
+	}
+}
+
+func TestDoctorNotForOthers(t *testing.T) {
+	f := newL(t)
+	for _, m := range []struct {
+		from, chat int64
+		edited     bool
+	}{{999, chat, false}, {owner, 999, false}, {999, 999, false}, {owner, chat, true}} {
+		for _, text := range []string{"/doctor", "/doctor " + inst} {
+			f.say(m.from, m.chat, text, m.edited)
+		}
+	}
+	if f.d.HasCheck() || len(f.tg.Messages()) != 0 {
+		t.Fatal("others get no reply and write no request")
+	}
+}
+
+// TestDoctorInHelpAndMenu: /doctor is in /help and in the menu.
+func TestDoctorInHelpAndMenu(t *testing.T) {
+	f := newL(t)
+	if !strings.Contains(f.l.helpText(), "<code>/doctor</code> or <code>/doctor NAME</code>") {
+		t.Fatal("/help must list /doctor")
+	}
+	f.l.setMenu(context.Background())
+	got, _ := f.tg.Menu(chat)
+	if !slices.ContainsFunc(got, func(c telegram.BotCommand) bool { return c.Command == "doctor" }) {
+		t.Fatalf("the menu must hold doctor: %+v", got)
+	}
+}
