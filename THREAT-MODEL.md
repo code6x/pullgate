@@ -832,6 +832,11 @@ Windows export refuses backslashes, device names, alternate data
 streams, and characters used in shortened aliases. The Windows Git
 helper handles local repositories under the protected root and SSH
 with pinned host keys. The caller must supply Git from an administrator-controlled install.
+pullgate checks the ACLs of `cmd\git.exe`, `usr\bin\ssh.exe` and the
+folders above them. It trusts the ACLs of the rest of the Git install
+(`mingw64\bin`, `usr\bin` and their DLLs), which SYSTEM also runs. The
+default Program Files ACL lets only administrators write there; an
+administrator who widens it gives SYSTEM code to whoever can write.
 
 The Windows config rejects pre-approval commands and automatic apply.
 The token reader accepts only a DPAPI blob from a protected file.
