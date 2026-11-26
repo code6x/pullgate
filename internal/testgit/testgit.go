@@ -44,8 +44,13 @@ type Remote struct {
 // New makes an empty bare repo with branch main, and a work tree.
 func New(t testing.TB) *Remote {
 	t.Helper()
+	return NewAt(t, t.TempDir())
+}
+
+// NewAt makes a remote and work tree in the given directory.
+func NewAt(t testing.TB, d string) *Remote {
+	t.Helper()
 	NeedGit(t)
-	d := t.TempDir()
 	r := &Remote{t: t, Bare: filepath.Join(d, "remote.git"), Work: filepath.Join(d, "work")}
 	r.git(d, "init", "--quiet", "--bare", "--initial-branch=main", r.Bare)
 	r.git(d, "init", "--quiet", "--initial-branch=main", r.Work)

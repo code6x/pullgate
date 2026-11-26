@@ -97,6 +97,15 @@ jobs:
             tar --owner=0 --group=0 --numeric-owner --mode=go-w --mtime="$mtime" \
               -C "$stage" -cf - pullgate LICENSE README.md | gzip -9n > "dist/${name}.tar.gz"
           done
+          name="pullgate_${VERSION}_windows_amd64"
+          stage="${RUNNER_TEMP}/${name}"
+          mkdir -p "$stage"
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
+            go build -trimpath -ldflags "-w -X main.version=${VERSION}" \
+            -o "${stage}/pullgate.exe" ./cmd/pullgate
+          cp LICENSE README.md install.ps1 "$stage/"
+          tar --owner=0 --group=0 --numeric-owner --mode=go-w --mtime="$mtime" \
+            -C "$stage" -cf - pullgate.exe LICENSE README.md install.ps1 | gzip -9n > "dist/${name}.tar.gz"
           cd dist
           sha256sum -- *.tar.gz > SHA256SUMS
           cat SHA256SUMS
@@ -147,7 +156,7 @@ jobs:
           subject-path: dist/*.tar.gz
       # The attestation is also a file of the release. With this file,
       # gh attestation verify --bundle needs no GitHub login. One bundle
-      # covers both tarballs.
+      # covers every tarball.
       - name: Save the attestation bundle
         env:
           BUNDLE: ${{ steps.attest.outputs.bundle-path }}

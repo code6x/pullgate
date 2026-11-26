@@ -67,6 +67,7 @@ type Listener struct {
 	Now      func() time.Time
 	Poll     time.Duration // how often the outboxes are read
 	LongPoll int           // getUpdates timeout in seconds
+	NoUpdate bool          // this host updates pullgate outside the listener
 
 	mu        sync.Mutex
 	st        State
@@ -531,7 +532,9 @@ func (l *Listener) helpText() string {
 	}
 	lines := []string{"<b>pullgate</b> commands:"}
 	for _, c := range commands {
-		lines = append(lines, c.Help...)
+		if !l.NoUpdate || c.Do != doUpdate {
+			lines = append(lines, c.Help...)
+		}
 	}
 	return strings.Join(append(lines,
 		"",
@@ -562,7 +565,11 @@ func (l *Listener) command(ctx context.Context, m *telegram.Message) {
 		return
 	}
 	if why == doUpdate {
-		l.update(ctx, m)
+		if l.NoUpdate {
+			l.sendReply(ctx, m, "Update the Windows agent on the host using the release installer.")
+		} else {
+			l.update(ctx, m)
+		}
 		return
 	}
 	if c != nil && why == c.Do && why != doCheck {

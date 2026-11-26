@@ -8,42 +8,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
-	"syscall"
 
 	"github.com/code6x/pullgate/internal/config"
 	"github.com/code6x/pullgate/internal/message"
 	"github.com/code6x/pullgate/internal/spool"
 	"github.com/code6x/pullgate/internal/state"
 )
-
-// takeAuto reads and removes the auto approval: a root-owned regular file.
-func (e *Env) takeAuto() (*spool.Approval, error) {
-	p := e.Dir.AutoFile()
-	f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0) //nolint:gosec // root's own state directory
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		_ = os.Remove(p)
-		return nil, fmt.Errorf("read the auto approval: %w", err)
-	}
-	defer func() { _ = f.Close() }()
-	_ = os.Remove(p)
-	fi, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	st, ok := fi.Sys().(*syscall.Stat_t)
-	if !fi.Mode().IsRegular() || !ok || st.Uid != e.UID || fi.Mode().Perm()&0o077 != 0 {
-		return nil, errors.New("the auto approval is not a private file of root; ignored")
-	}
-	b, err := io.ReadAll(io.LimitReader(f, 64))
-	if err != nil {
-		return nil, err
-	}
-	return &spool.Approval{Code: strings.TrimSpace(string(b)), Action: "apply"}, nil
-}
 
 // Apply is one "pullgate apply" (DESIGN.md sections 9 and 10).
 func (e *Env) Apply(ctx context.Context) (Result, error) {
@@ -387,7 +357,7 @@ const maxReport = 64 << 10
 // made (made), not a link, at most maxReport bytes. A file that cannot be read is logged and
 // shown as a short note; it never stops the report of the apply.
 func (e *Env) readReport(path string, made os.FileInfo) string {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0) //nolint:gosec // root made this file in its own trees directory
+	f, err := os.OpenFile(path, reportReadFlags, 0) //nolint:gosec // root made this file in its own trees directory
 	if errors.Is(err, fs.ErrNotExist) {
 		return "" // apply removed it: no report
 	}
