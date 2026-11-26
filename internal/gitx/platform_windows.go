@@ -22,7 +22,20 @@ func (g *Git) checkCommand() error {
 	if !SafePath(g.WindowsGit) || !strings.EqualFold(filepath.Base(g.WindowsGit), "git.exe") {
 		return errors.New("invalid Git for Windows executable. Fix: configure an absolute path to git.exe in a protected Git installation")
 	}
-	return g.checkDir(g.Home)
+	if err := g.checkDir(g.Home); err != nil {
+		return err
+	}
+	for _, path := range []string{g.Key, g.KnownHosts} {
+		if path != "" {
+			if err := winsecure.CheckManaged(g.WindowsRoot, path, false); err != nil {
+				return err
+			}
+		}
+	}
+	if g.Key != "" {
+		return winsecure.CheckSystemPath(g.sshExecutable(), false)
+	}
+	return nil
 }
 
 func (g *Git) checkDir(path string) error {
@@ -45,9 +58,31 @@ func (g *Git) makeRepoDir() error { return winsecure.Mkdir(g.Dir) }
 
 func (g *Git) checkNewRepo() error { return g.checkTree(g.Dir) }
 
-func (g *Git) sshAllowed() bool { return false }
+func (g *Git) sshAllowed() bool {
+	return SafePath(g.Key) && SafePath(g.KnownHosts)
+}
 
-func (g *Git) fetchURL(_, local string) string { return filepath.ToSlash(local) }
+func (g *Git) sshExecutable() string {
+	return filepath.Join(filepath.Dir(filepath.Dir(g.WindowsGit)), "usr", "bin", "ssh.exe")
+}
+
+func (g *Git) sshCommand() string {
+	return shellQuote(filepath.ToSlash(g.sshExecutable())) + " -F /dev/null -i " + shellQuote(filepath.ToSlash(g.Key)) +
+		" -o IdentitiesOnly=yes -o IdentityAgent=none" +
+		" -o UserKnownHostsFile=" + shellQuote(filepath.ToSlash(g.KnownHosts)) +
+		" -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes -o BatchMode=yes"
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+func (g *Git) fetchURL(url, local string) string {
+	if local != "" {
+		return filepath.ToSlash(local)
+	}
+	return url
+}
 
 func (g *Git) command(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, g.WindowsGit, append(g.baseArgs(), args...)...) //nolint:gosec // path comes from protected host config
@@ -60,6 +95,9 @@ func (g *Git) command(ctx context.Context, args ...string) *exec.Cmd {
 		"GIT_ASKPASS=",
 		"SSH_ASKPASS=",
 		"LC_ALL=C",
+	}
+	if g.Key != "" {
+		cmd.Env = append(cmd.Env, "GIT_SSH_VARIANT=ssh", "GIT_SSH_COMMAND="+g.sshCommand())
 	}
 	cmd.Dir = g.Home
 	cmd.WaitDelay = 5 * time.Second
@@ -76,7 +114,10 @@ func LocalPath(url string) (string, error) {
 	if SafePath(p) {
 		return p, nil
 	}
-	return "", fmt.Errorf("invalid local repo path %q. Fix: choose a clean absolute Windows drive path under the protected root", url)
+	if strings.HasPrefix(url, "ssh://") {
+		return "", nil
+	}
+	return "", fmt.Errorf("invalid repo URL %q. Fix: use ssh:// or an absolute Windows drive path under the protected root", url)
 }
 
 func checkExportPath(path, mode string) error {

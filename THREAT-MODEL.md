@@ -821,7 +821,7 @@ untrusted local user cannot replace or redirect parent directories.
 Machine-scope DPAPI protects a token blob taken off the machine. Any
 account on the machine that obtains the blob may decrypt it. The ACL
 therefore protects the blob from other users. SYSTEM and Administrators
-are trusted. The current Windows helpers do not start a gate or listener.
+are trusted.
 
 Windows state reads reject a file with a wider ACL or multiple hard
 links. The Windows state layer assumes the caller has validated the
@@ -830,9 +830,24 @@ stop the operation before it applies a commit.
 
 Windows export refuses backslashes, device names, alternate data
 streams, and characters used in shortened aliases. The Windows Git
-helper currently handles local repositories under the protected root.
+helper handles local repositories under the protected root and SSH
+with pinned host keys.
 The caller must supply Git from an administrator-controlled install.
 
 The Windows config rejects pre-approval commands and automatic apply.
 The token reader accepts only a DPAPI blob from a protected file.
 Plaintext tokens are refused.
+
+The Windows agent and its listener run as SYSTEM, in one Task Scheduler
+task. Unlike the Linux listener, the Windows listener is part of the
+trusted gate. Code execution in that process gives SYSTEM access. A
+stolen bot token alone still cannot send a tap as the configured owner
+or select a SHA outside the gate's open question.
+
+The Windows agent verifies the system paths that contain ProgramData
+and Git. Ordinary users may have read access to system paths and may
+create their own children in ProgramData. The ACL check rejects grants
+that allow them to replace existing protected entries. An apply or
+health script must be under the protected root. The Windows config
+rejects pre-approval commands. The approval still names one full SHA
+from the gate's own state.

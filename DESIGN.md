@@ -1607,7 +1607,7 @@ Both run as root, on an instance that has a record `NAME.recipe`
 
 ## Windows file and token protections
 
-Windows support is under development. The Windows file checks use a
+The Windows file checks use a
 handle opened without following the final reparse point. Managed files
 and directories require a SYSTEM or Administrators owner and a DACL
 that grants access only to those two SIDs. Files must have one hard link.
@@ -1630,3 +1630,18 @@ paths that could name a device, an alternate stream, or a short alias.
 The Windows config accepts PowerShell scripts as apply and health
 commands. It rejects auto mode, check and summary. Windows needs a tap
 to apply, and it has no separate sandbox user for check and summary.
+
+The Windows entry point runs one long-lived Task Scheduler task at boot,
+as SYSTEM. Task Scheduler can start the existing console binary at boot
+and restart it after failure without a Windows Service Control Manager
+wrapper. The agent runs the listener beside a loop per instance. The
+loops use the same state, spool and approval code as Linux. They poll the
+spool every two seconds and fetch every minute, or on a check request.
+The agent lock prevents two listener loops from sharing a token.
+
+The Windows apply and health scripts run through Windows PowerShell
+with no profile, no interactive prompts, and `-File`. The script path
+and each argument go in their own argv slot. The process starts
+suspended and joins a Job Object before it can run. Closing the job
+stops its children. Git uses the all-users Git for Windows installation
+and pinned SSH keys, or a protected local repository.

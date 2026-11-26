@@ -94,6 +94,10 @@ func Check(path string, directory bool) error {
 }
 
 func check(path string, directory bool) error {
+	return checkWithPolicy(path, directory, checkDescriptor)
+}
+
+func checkWithPolicy(path string, directory bool, validate func(*windows.SECURITY_DESCRIPTOR) error) error {
 	name, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return err
@@ -105,15 +109,15 @@ func check(path string, directory bool) error {
 		return err
 	}
 	defer func() { _ = windows.CloseHandle(h) }()
-	return checkHandle(h, directory)
+	return checkHandle(h, directory, validate)
 }
 
 // CheckFileHandle checks the ACL and type of an already opened file.
 func CheckFileHandle(file *os.File) error {
-	return checkHandle(windows.Handle(file.Fd()), false)
+	return checkHandle(windows.Handle(file.Fd()), false, checkDescriptor)
 }
 
-func checkHandle(h windows.Handle, directory bool) error {
+func checkHandle(h windows.Handle, directory bool, validate func(*windows.SECURITY_DESCRIPTOR) error) error {
 	var info windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
 		return err
@@ -131,7 +135,7 @@ func checkHandle(h windows.Handle, directory bool) error {
 	if err != nil {
 		return err
 	}
-	return checkDescriptor(sd)
+	return validate(sd)
 }
 
 func privileged(sid *windows.SID) bool {
@@ -139,8 +143,12 @@ func privileged(sid *windows.SID) bool {
 }
 
 func checkDescriptor(sd *windows.SECURITY_DESCRIPTOR) error {
+	return checkAccess(sd, privileged, 0, false)
+}
+
+func checkAccess(sd *windows.SECURITY_DESCRIPTOR, trusted func(*windows.SID) bool, allowed uint32, ignoreInheritOnly bool) error {
 	owner, _, err := sd.Owner()
-	if err != nil || !privileged(owner) {
+	if err != nil || !trusted(owner) {
 		return errors.New("untrusted owner")
 	}
 	acl, _, err := sd.DACL()
@@ -157,7 +165,7 @@ func checkDescriptor(sd *windows.SECURITY_DESCRIPTOR) error {
 			continue
 		case windows.ACCESS_ALLOWED_ACE_TYPE:
 			sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart)) //nolint:gosec // GetAce returns the Windows layout with an inline SID
-			if privileged(sid) {
+			if trusted(sid) || (ignoreInheritOnly && (ace.Header.AceFlags&windows.INHERIT_ONLY_ACE != 0 || uint32(ace.Mask)&^allowed == 0)) {
 				continue
 			}
 		}

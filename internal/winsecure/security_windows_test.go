@@ -83,3 +83,9 @@ func TestRelativeParts(t *testing.T) {
 		}
 	}
 }
+
+func TestWindowsProgramRoot(t *testing.T) {
+	if _, err := ProgramRoot(); err != nil {
+		t.Fatal(err)
+	}
+}
