@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -43,7 +44,7 @@ func relativeParts(root, path string) ([]string, error) {
 		for _, part := range strings.Split(p[3:], `\`) {
 			if strings.HasSuffix(part, ".") || strings.HasSuffix(part, " ") ||
 				strings.ContainsFunc(part, func(r rune) bool { return r < 32 }) ||
-				strings.ContainsAny(part, `/:*?"<>|`) || !filepath.IsLocal(part) {
+				strings.ContainsAny(part, `/:*?"<>|`) || !filepath.IsLocal(part) || reservedDevice(part) {
 				return nil, invalid
 			}
 		}
@@ -56,6 +57,24 @@ func relativeParts(root, path string) ([]string, error) {
 		return nil, nil
 	}
 	return strings.Split(rel, `\`), nil
+}
+
+// Windows recognizes device names even before some file extensions and
+// with spaces before the extension. IsLocal can vary by Windows version.
+func reservedDevice(part string) bool {
+	base, _, _ := strings.Cut(part, ".")
+	base = strings.ToUpper(strings.TrimRight(base, " "))
+	switch base {
+	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$":
+		return true
+	}
+	for _, prefix := range []string{"COM", "LPT"} {
+		suffix, ok := strings.CutPrefix(base, prefix)
+		if ok && utf8.RuneCountInString(suffix) == 1 && strings.Contains("0123456789¹²³", suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 // Check checks a file or directory under already trusted parents. The caller
