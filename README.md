@@ -416,6 +416,29 @@ and does no pairing. It prints the owner ID, the chat ID and the
 instances that it keeps, and only adds the new names to `listener.toml`.
 A `listener.toml` that fails the checks of the listener is refused.
 
+**Update a recipe** (DESIGN.md section 21), as root:
+
+```
+pullgate recipe update NAME (--version X.Y.Z | --url URL) [--reinstall] [--gh PATH]
+pullgate recipe use NAME X.Y.Z
+```
+
+`recipe update` fetches the new version with the same checks as the
+first install, writes `NAME.toml` again from the new template with the
+same values (repo, key, host keys, check user, host; the `mode` stays),
+keeps the old one as `NAME.toml.bak-…`, and writes the record. It goes
+**forward only**: an older version is refused, and the same one needs
+`--reinstall`. The folder of the version before is kept until the next
+update. The recipe's `setup` runs only at the bootstrap.
+
+When an `apply` must run code of the new version before the switch (for
+example the new playbook first), use the split form from the `apply`
+itself: `pullgate recipe fetch URL` (the last line it prints is the new
+folder), run what you need from there, then `pullgate recipe use NAME
+X.Y.Z`. Both are safe while the `apply` holds the instance lock; the new
+config counts from the next run. `recipe use` of the version in use does
+nothing, so an `apply` that runs again does not fail.
+
 **Test a recipe in your own CI.** Two options make an end-to-end test
 possible with no network:
 

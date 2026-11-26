@@ -981,12 +981,18 @@ and on `main`) is the path a user takes, as root on the throwaway runner:
    the README cannot drift from what CI runs.
 2. A local bare repo is the remote. A fake Telegram on `127.0.0.1`
    (`test/units/faketg.py --tap`) records each message and taps Apply on
-   each question as the owner.
+   each question as the owner. The instance is a recipe, on a fake
+   release server on `127.0.0.1` with a fake gh: `pullgate bootstrap
+   --recipe` sets it all up, with no setup block before it and no
+   `systemctl enable` after it (section 20).
 3. A good commit: `pullgate run` under `pullgate-run@.service` asks (with
    `check` and `summary` as the check user), the listener (user
    `pullgate`) sends the question and writes the approval,
    `pullgate-apply@.service` applies it, and `pullgate status` shows it as
    applied.
+   Then a commit moves the recipe to a new version: the recipe's `apply`
+   runs `pullgate recipe fetch` and `pullgate recipe use` (section 21),
+   and `pullgate status` shows the new version.
 4. It restarts the listener and checks that it polls again.
 5. A commit whose apply fails: the rollback runs, and its notice reaches
    the fake Telegram.
@@ -1410,7 +1416,7 @@ as root:
    checked again. Else the error
    says to move it away.
 
-Section 20 sets an instance up from a recipe.
+Section 20 sets an instance up from a recipe; section 21 updates it.
 
 ## 20. Bootstrap from a recipe (`pullgate bootstrap --recipe`)
 
@@ -1491,3 +1497,55 @@ template. The order:
    key kept and the new names added to `instances`, so the listener does
    not ask for an instance that is not set up. Then doctor and the
    enable (section 17 step 5).
+
+## 21. Updates of a recipe (`pullgate recipe update`, `pullgate recipe use`)
+
+```
+pullgate recipe update NAME (--version X.Y.Z | --url URL) [--reinstall] [--gh PATH] [--dir DIR]
+pullgate recipe use NAME X.Y.Z [--dir DIR]
+```
+
+Both run as root, on an instance that has a record `NAME.recipe`
+(section 20); without one, the error says to run `bootstrap --recipe`.
+
+- **The new version.** `--version X.Y.Z` makes the URL from the record:
+  the same release folder with `vX.Y.Z`, and the same file name with the
+  old version replaced by the new one. `--url URL` gives it whole. It
+  must be a recipe URL (section 19) of the same `OWNER/REPO` as the
+  record; another project needs `bootstrap --recipe --replace-config`.
+- **Forward only.** A version older than the record's is refused, by
+  both commands and by `bootstrap --recipe`. The same version is refused
+  by `update` unless `--reinstall`; for `use` it is nothing to do (exit
+  0), so an `apply` that runs again does not fail. Nothing is written
+  when it is refused.
+- **`update`** fetches the new version with every check of section 19
+  (the `--bundle` and `--signer-workflow` of the record).
+- **`use`** downloads nothing: the version folder must have been
+  unpacked by `recipe fetch`. It must pass the checks of a folder that is
+  there already (section 19 step 7) against its own record of the
+  unpack, which also names the URL it came from and the `--bundle` and
+  `--signer-workflow` of the fetch (they must be those of the instance
+  record); `requires` is checked again. A version has no leading zeros
+  (`1.2.3`, not `01.2.3`), so one version has one folder.
+- **The config** is made again from the new template (section 20 step
+  3), before anything is written, with the same local values: the repo
+  URL, branch, deploy key, known hosts and check user of `NAME.toml`, the
+  `@HOST@` and the recipe instance of the record. The `mode` of
+  `NAME.toml` is kept (the owner may have set it). The old `NAME.toml` is
+  kept as `NAME.toml.bak-YYYYMMDD-HHMMSS`. Then the record is written
+  again. The recipe's `setup` does not run: it runs only at the
+  bootstrap.
+- **Folders.** The folder of the version before is kept. A version
+  folder of the same recipe that is older than that one is removed when
+  no record in `/etc/pullgate` names it (by its repo and version, or its
+  folder) and no `/etc/pullgate/*.toml` holds its path. When a record or
+  a config cannot be read, no folder is removed.
+- **From an `apply`.** Both take no instance lock, so an instance's own
+  `apply` may call them while it holds the lock: for example `recipe fetch
+  URL` (it prints the folder last), then a run of the new version's
+  playbook from that folder, then `recipe use NAME X.Y.Z`. The new config
+  counts from the next run; the `apply` that runs now is the old one.
+  A rollback does not undo a `recipe use`: the config stays on the new
+  version, and forward only keeps it there. A recipe's `apply` must be
+  able to roll back with the new version's scripts.
+

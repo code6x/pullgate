@@ -761,6 +761,14 @@ instance names. The recipe's `setup` runs as root with only `PATH`,
 `LC_ALL`, `PULLGATE_INSTANCE` and `PULLGATE_RECIPE_DIR`: never the token.
 A failed `setup` writes no config and enables no unit.
 
+An update (`recipe update`, `recipe use`) goes forward only, so an
+attacker cannot bring back an older signed version with a known bug;
+`update` has every check of the first install, and `use` takes only a
+root folder that matches its own record of the unpack, with the same
+template checks. Both keep the repo, key, host keys, check user and mode
+of `NAME.toml`, and only for a recipe of the same `OWNER/REPO` as the
+record. A rollback does not undo a `recipe use` (forward only).
+
 *Left.* The recipe's `apply`, `check`, `health` and `setup` are its own
 code, and `setup` runs as root once, at the setup. A template may still
 pick the programs, the limits (for example `allow_older`) and the watch

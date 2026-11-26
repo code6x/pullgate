@@ -80,7 +80,8 @@ type Options struct {
 	ReplaceConfig bool   // --replace-config: write the recipe's NAME.toml over the one there, with a backup
 	Host          string // the value of @HOST@; "" is the host name (tests set it)
 
-	local map[string]*local
+	local    map[string]*local
+	keepMode bool // recipe update: the mode of the config stays
 }
 
 // DefaultAPI is the Bot API of Telegram.

@@ -51,6 +51,11 @@ commands:
                  [--dir DIR]   download a recipe from a GitHub release,
                  check its SHA-256 and build attestation, and unpack it,
                  as root; the last line is its folder
+  recipe update NAME (--version X.Y.Z | --url URL) [--reinstall] [--gh PATH]
+                 move an instance to a newer version of its recipe, with
+                 the checks of the first install, as root (forward only)
+  recipe use NAME X.Y.Z   switch an instance to a version that recipe
+                 fetch unpacked; it counts from the next run
   doctor [NAME] [--telegram] [--config FILE] [--unit-dir DIR]
                  check the setup of the host, as root: one line per check,
                  and exit 1 on any problem. --telegram also checks the bot
@@ -227,8 +232,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		return 0
 	case "recipe":
+		if len(rest) >= 3 && (rest[1] == "update" || rest[1] == "use") {
+			return recipeUpdate(ctx, log, rest[1:], *configDir, euid, stdout, stderr)
+		}
 		if len(rest) < 3 || rest[1] != "fetch" {
-			return usageErr(stderr, "give pullgate recipe fetch URL")
+			return usageErr(stderr, "give pullgate recipe fetch URL, recipe update NAME --version X.Y.Z, or recipe use NAME X.Y.Z")
 		}
 		rf := flag.NewFlagSet("recipe", flag.ContinueOnError)
 		rf.SetOutput(io.Discard)
@@ -306,6 +314,41 @@ func run(args []string, stdout, stderr io.Writer) int {
 	default:
 		return usageErr(stderr, fmt.Sprintf("unknown command %q", cmd))
 	}
+}
+
+// recipeUpdate is "pullgate recipe update NAME ..." and "pullgate recipe
+// use NAME X.Y.Z" (DESIGN.md section 21).
+func recipeUpdate(ctx context.Context, log *slog.Logger, args []string, configDir string, euid uint32, stdout, stderr io.Writer) int {
+	u := &bootstrap.Update{EtcDir: configDir, Name: args[1], Use: args[0] == "use", Out: stdout, Now: time.Now,
+		Fetcher: &recipe.Fetcher{Dir: recipe.DefaultDir, UID: 0, Out: stdout}}
+	flags := args[2:]
+	if u.Use {
+		if len(args) < 3 {
+			return usageErr(stderr, "give pullgate recipe use NAME X.Y.Z")
+		}
+		u.Version, flags = args[2], args[3:]
+	}
+	rf := flag.NewFlagSet("recipe", flag.ContinueOnError)
+	rf.SetOutput(io.Discard)
+	rf.StringVar(&u.Fetcher.Dir, "dir", u.Fetcher.Dir, "")
+	if !u.Use {
+		rf.StringVar(&u.Version, "version", "", "")
+		rf.StringVar(&u.URL, "url", "", "")
+		rf.BoolVar(&u.Reinstall, "reinstall", false, "")
+		rf.StringVar(&u.Fetcher.GH, "gh", "/usr/bin/gh", "")
+	}
+	if err := rf.Parse(flags); err != nil || rf.NArg() > 0 || (!u.Use && (u.Version == "") == (u.URL == "")) {
+		return usageErr(stderr, "usage: "+strings.ReplaceAll(bootstrap.UpdateUsage, "\n", " or "))
+	}
+	if euid != 0 {
+		log.Error("recipe", "err", "it must run as root: it writes "+configDir+" and "+u.Fetcher.Dir+". Fix: run it with sudo, or as root")
+		return 1
+	}
+	if err := u.Run(ctx); err != nil {
+		log.Error("recipe", "err", err)
+		return 1
+	}
+	return 0
 }
 
 func done(log *slog.Logger, res string, err error) int {
