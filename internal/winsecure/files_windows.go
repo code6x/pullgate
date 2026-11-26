@@ -4,6 +4,7 @@ package winsecure
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
@@ -104,6 +105,15 @@ func check(path string, directory bool) error {
 		return err
 	}
 	defer func() { _ = windows.CloseHandle(h) }()
+	return checkHandle(h, directory)
+}
+
+// CheckFileHandle checks the ACL and type of an already opened file.
+func CheckFileHandle(file *os.File) error {
+	return checkHandle(windows.Handle(file.Fd()), false)
+}
+
+func checkHandle(h windows.Handle, directory bool) error {
 	var info windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
 		return err
