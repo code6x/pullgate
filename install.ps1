@@ -93,7 +93,7 @@ try {
     $binary = Join-Path $stage 'pullgate.exe'
     $reported = & $binary version
     if ($LASTEXITCODE -ne 0 -or $reported -cne "pullgate $Version") {
-        throw 'The binary version does not match the requested release.'
+        throw 'The binary version does not match the requested release. Fix: download and verify the archive of that version again, then run install.ps1 from it.'
     }
     $old = Get-ScheduledTask -TaskName $taskName -TaskPath '\' -ErrorAction SilentlyContinue
     Stop-PullgateTask
