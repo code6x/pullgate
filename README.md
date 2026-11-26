@@ -409,7 +409,7 @@ It does all of `pullgate bootstrap` (Install, above), and:
    `PULLGATE_RECIPE_DIR`, before `NAME.toml` is written. If it fails, no
    config is written and no unit is enabled.
 5. It writes `/etc/pullgate/NAME.recipe`: the recipe, its version and its
-   SHA-256 (not for a kept config that differs from the recipe's). `pullgate status NAME` shows it in the line `recipe:`.
+   SHA-256 (not for a kept config that differs from the recipe's: then an old record is removed). `pullgate status NAME` shows it in the line `recipe:`.
 
 With `--add`, the host must be paired already: bootstrap reads no token
 and does no pairing. It prints the owner ID, the chat ID and the

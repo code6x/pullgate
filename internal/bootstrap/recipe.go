@@ -260,6 +260,12 @@ func (o *Options) recipeConfig(name string, rr *recipeRun) (bool, error) {
 		o.say("Instance %s: %s exists. The recipe's config differs from it (- now, + recipe):\n%s", name, p, Diff(string(old), string(b)))
 		if !o.ReplaceConfig {
 			o.say("Instance %s: %s is kept, and no recipe record is written: the instance does not run the recipe's config. To write it, run bootstrap again with --replace-config.", name, p)
+			// An old record would name a recipe that this config may not be.
+			if err := os.Remove(recipe.RecordPath(o.EtcDir, name)); err == nil {
+				o.say("Instance %s: removed the old %s.", name, recipe.RecordPath(o.EtcDir, name))
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return false, err
+			}
 			return false, nil
 		}
 		bak := p + ".bak-" + o.Now().Format("20060102-150405")

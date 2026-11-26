@@ -208,7 +208,9 @@ reask_after = "24h"       # default 0 (never); ask a skipped or expired tip once
 user = "pullgate"         # the user of the listener; owns the inbox
 ```
 
-Unknown keys are an error. An unknown mode or `on_failure` is an error. A
+Unknown keys are an error. Every key must be written in lower case
+(`a-z`, `0-9`, `_`; `Mode` is an error, in every config of pullgate:
+section 20). An unknown mode or `on_failure` is an error. A
 missing `apply` is an error. Every error names the file, the key and the fix.
 
 There is no default for `on_failure` in the example configs: each example
@@ -1476,7 +1478,8 @@ template. The order:
    `NAME.toml.bak-YYYYMMDD-HHMMSS` (root, 0600) and the new one written.
    A new config is in `ask` mode, also when the old one was `auto`.
 8. **The record**, only when `NAME.toml` is now the recipe's config (written,
-   or the same; not for a kept config that differs), in
+   or the same; not for a kept config that differs: then an old record
+   is removed, so status does not name a recipe the config may not be), in
    `/etc/pullgate/NAME.recipe` (root, 0644, TOML): the URL,
    `OWNER/REPO`, the version, the file, its SHA-256, the version folder,
    the instance of the manifest, the bundle and signer workflow flags,

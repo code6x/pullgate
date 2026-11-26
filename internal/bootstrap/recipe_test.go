@@ -296,6 +296,9 @@ func (f *recipeFx) keptConfig(repo string) string {
 func TestRecipeKeepsAConfigAndShowsTheDiff(t *testing.T) {
 	f := newRecipeFx(t, recipeFiles())
 	old := f.keptConfig(f.r.Bare)
+	if err := os.WriteFile(recipe.RecordPath(f.etc, "config-repo"), []byte("an old record\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := f.pair(); err != nil {
 		t.Fatalf("bootstrap: %v\n%s", err, f.out.String())
 	}
@@ -314,7 +317,7 @@ func TestRecipeKeepsAConfigAndShowsTheDiff(t *testing.T) {
 	}
 	// The instance does not run the recipe's config: no record.
 	if _, err := os.Lstat(recipe.RecordPath(f.etc, "config-repo")); err == nil {
-		t.Fatal("a record was written for a kept config")
+		t.Fatal("a record is there for a kept config")
 	}
 }
 
