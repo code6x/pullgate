@@ -58,3 +58,28 @@ func TestDPAPI(t *testing.T) {
 		t.Fatal("accepted an empty token")
 	}
 }
+
+func TestRelativeParts(t *testing.T) {
+	root := `C:\ProgramData\pullgate`
+	for _, path := range []string{
+		`C:\ProgramData\pullgate\state\state.json`,
+		root,
+	} {
+		if _, err := relativeParts(root, path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, path := range []string{
+		`D:\ProgramData\pullgate\state.json`,
+		`C:\ProgramData\pullgate-backup\state.json`,
+		`C:\ProgramData\pullgate\..\state.json`,
+		`C:\ProgramData\pullgate\state.json:stream`,
+		`C:\ProgramData\pullgate\state.\file`,
+		`C:\ProgramData\pullgate\NUL.txt`,
+		`\\example-host\share\state.json`,
+	} {
+		if _, err := relativeParts(root, path); err == nil {
+			t.Fatalf("accepted %q", path)
+		}
+	}
+}

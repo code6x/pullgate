@@ -24,11 +24,11 @@ func ProtectToken(token []byte) ([]byte, error) {
 	if err != nil {
 		return nil, errors.New("cannot protect the bot token with DPAPI. Fix: run token setup on this machine")
 	}
-	defer windows.LocalFree(windows.Handle(unsafe.Pointer(out.Data)))
+	defer func() { _, _ = windows.LocalFree(windows.Handle(unsafe.Pointer(out.Data))) }() //nolint:gosec // DPAPI allocates with LocalAlloc
 	if out.Size == 0 || out.Size > maxProtectedBytes || out.Data == nil {
 		return nil, errors.New("invalid protected bot token size. Fix: run token setup again")
 	}
-	return append([]byte(nil), unsafe.Slice(out.Data, out.Size)...), nil
+	return append([]byte(nil), unsafe.Slice(out.Data, out.Size)...), nil //nolint:gosec // DPAPI returns this pointer and length together
 }
 
 // UnprotectToken decrypts a token read from a file with a checked ACL.
@@ -41,11 +41,11 @@ func UnprotectToken(protected []byte) ([]byte, error) {
 	if err := windows.CryptUnprotectData(&in, nil, nil, 0, nil, windows.CRYPTPROTECT_UI_FORBIDDEN, &out); err != nil {
 		return nil, errors.New("cannot decrypt the bot token. Fix: run token setup on this machine")
 	}
-	defer windows.LocalFree(windows.Handle(unsafe.Pointer(out.Data)))
+	defer func() { _, _ = windows.LocalFree(windows.Handle(unsafe.Pointer(out.Data))) }() //nolint:gosec // DPAPI allocates with LocalAlloc
 	if out.Data == nil {
 		return nil, errors.New("missing decrypted bot token. Fix: run token setup again")
 	}
-	plain := unsafe.Slice(out.Data, out.Size)
+	plain := unsafe.Slice(out.Data, out.Size) //nolint:gosec // DPAPI returns this pointer and length together
 	defer clear(plain)
 	if len(plain) == 0 || len(plain) > maxTokenBytes {
 		return nil, errors.New("invalid bot token length. Fix: run token setup again")
