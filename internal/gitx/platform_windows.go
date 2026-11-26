@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -60,7 +61,8 @@ func (g *Git) makeRepoDir() error { return winsecure.Mkdir(g.Dir) }
 func (g *Git) checkNewRepo() error { return g.checkTree(g.Dir) }
 
 func (g *Git) sshAllowed() bool {
-	return SafePath(g.Key) && SafePath(g.KnownHosts)
+	return SafePath(g.Key) && SafePath(g.KnownHosts) &&
+		!strings.ContainsAny(g.Key, "%$") && !strings.ContainsAny(g.KnownHosts, "%$")
 }
 
 func (g *Git) sshExecutable() string {
@@ -70,7 +72,7 @@ func (g *Git) sshExecutable() string {
 func (g *Git) sshCommand() string {
 	return shellQuote(filepath.ToSlash(g.sshExecutable())) + " -F /dev/null -i " + shellQuote(filepath.ToSlash(g.Key)) +
 		" -o IdentitiesOnly=yes -o IdentityAgent=none" +
-		" -o UserKnownHostsFile=" + shellQuote(filepath.ToSlash(g.KnownHosts)) +
+		" -o " + shellQuote("UserKnownHostsFile="+strconv.Quote(filepath.ToSlash(g.KnownHosts))) +
 		" -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes -o BatchMode=yes"
 }
 

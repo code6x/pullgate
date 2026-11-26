@@ -18,7 +18,7 @@ func TestWindowsExportPath(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, path := range []string{"../escape", "dir/../escape", `dir\escape`, "file:stream", "NUL.txt", ".git", "git~1", "dir./file"} {
+	for _, path := range []string{"../escape", "dir/../escape", `dir\escape`, "file:stream", "NUL.txt", ".git", "git~1", "dir./file", "invalid\xff"} {
 		if err := checkExportPath(path, "100644"); err == nil {
 			t.Fatalf("accepted %q", path)
 		}
@@ -74,5 +74,24 @@ func TestWindowsFetchAndExport(t *testing.T) {
 	}
 	if content, err := os.ReadFile(filepath.Join(dest, "note.txt")); err != nil || string(content) != "expected file contents\n" {
 		t.Fatalf("wrong exported file: %v", err)
+	}
+}
+
+func TestWindowsSSHConfig(t *testing.T) {
+	g := &Git{WindowsGit: `C:\Program Files\Git\cmd\git.exe`, Key: `C:\ProgramData\pullgate\key`, KnownHosts: `C:\ProgramData\pullgate\known hosts`}
+	if !g.sshAllowed() || !strings.Contains(g.sshCommand(), `'UserKnownHostsFile="C:/ProgramData/pullgate/known hosts"'`) {
+		t.Fatal("known hosts path was not preserved")
+	}
+	g.Key += "%h"
+	if g.sshAllowed() {
+		t.Fatal("accepted an SSH key path with token expansion")
+	}
+	if _, err := LocalPath("ssh://example@example-host/config-repo.git"); err != nil {
+		t.Fatal(err)
+	}
+	for _, url := range []string{"ssh://example:placeholder@example-host/config-repo.git", "ssh://example-host/config-repo.git?q=example"} {
+		if _, err := LocalPath(url); err == nil {
+			t.Fatal("accepted credentials or a query in the repo URL")
+		}
 	}
 }

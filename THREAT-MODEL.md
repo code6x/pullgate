@@ -811,7 +811,7 @@ install script.
 - A bad change that the owner approves on purpose.
 - Signed commits (planned later).
 
-## Windows file and token protections
+## Windows
 
 The Windows file check rejects untrusted owners, missing or null DACLs,
 access grants to other SIDs, unknown ACE types, final reparse points and
@@ -831,8 +831,7 @@ stop the operation before it applies a commit.
 Windows export refuses backslashes, device names, alternate data
 streams, and characters used in shortened aliases. The Windows Git
 helper handles local repositories under the protected root and SSH
-with pinned host keys.
-The caller must supply Git from an administrator-controlled install.
+with pinned host keys. The caller must supply Git from an administrator-controlled install.
 
 The Windows config rejects pre-approval commands and automatic apply.
 The token reader accepts only a DPAPI blob from a protected file.

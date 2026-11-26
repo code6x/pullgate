@@ -72,6 +72,7 @@ func TestRelativeParts(t *testing.T) {
 	for _, path := range []string{
 		`D:\ProgramData\pullgate\state.json`,
 		`C:\ProgramData\pullgate-backup\state.json`,
+		`C:\ProgramData\PULLGATE\state.json`,
 		`C:\ProgramData\pullgate\..\state.json`,
 		`C:\ProgramData\pullgate\state.json:stream`,
 		`C:\ProgramData\pullgate\state.\file`,

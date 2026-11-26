@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -16,7 +17,10 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/sys/windows"
+
 	"github.com/code6x/pullgate/internal/gate"
+	"github.com/code6x/pullgate/internal/listener"
 	"github.com/code6x/pullgate/internal/state"
 	"github.com/code6x/pullgate/internal/telegram/faketg"
 	"github.com/code6x/pullgate/internal/testgit"
@@ -37,6 +41,7 @@ func TestWindowsEndToEnd(t *testing.T) {
 	remote := testgit.NewAt(t, root)
 	remote.Commit("first", map[string]string{"policy.txt": "first\n"})
 	second := remote.Commit("second", map[string]string{"policy.txt": "second\n"})
+	protectRemoteOwner(t, remote.Bare)
 	result := filepath.Join(root, "applied.txt")
 	apply := filepath.Join(root, "apply.ps1")
 	script := `param([string]$Result)
@@ -81,14 +86,18 @@ $policy = [System.IO.File]::ReadAllText((Join-Path $Env:PULLGATE_TREE 'policy.tx
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
 	var logs bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&logs, nil))
-	finished := make(chan error, 1)
-	go func() { finished <- runAgent(ctx, root, git, log, io.Discard) }()
+	finished := make(chan struct{})
+	var agentErr error
+	go func() {
+		agentErr = runAgent(ctx, root, git, log, io.Discard)
+		close(finished)
+	}()
 	t.Cleanup(func() {
 		cancel()
 		select {
-		case err := <-finished:
-			if err != nil {
-				t.Errorf("agent stopped: %v", err)
+		case <-finished:
+			if agentErr != nil {
+				t.Errorf("agent stopped: %v", agentErr)
 			}
 		case <-time.After(10 * time.Second):
 			t.Fatal("agent did not stop")
@@ -109,6 +118,8 @@ $policy = [System.IO.File]::ReadAllText((Join-Path $Env:PULLGATE_TREE 'policy.tx
 			select {
 			case <-ctx.Done():
 				t.Fatalf("timed out waiting for %s", forWhat)
+			case <-finished:
+				t.Fatalf("agent stopped while waiting for %s: %v", forWhat, agentErr)
 			case <-ticker.C:
 			}
 		}
@@ -125,9 +136,14 @@ $policy = [System.IO.File]::ReadAllText((Join-Path $Env:PULLGATE_TREE 'policy.tx
 	})
 	tg.Tap(owner+1, owner, ask.ID, ask.Buttons[0].CallbackData)
 	wait("the refused tap", func() bool { return len(tg.CallbackAnswers()) != 0 })
+	if tg.CallbackAnswers()[0] != listener.Closed {
+		t.Fatal("the listener did not refuse the other user's tap")
+	}
 	if _, err := os.Stat(result); !os.IsNotExist(err) {
 		t.Fatal("apply ran before the owner tapped")
 	}
+	remote.Commit("third", map[string]string{"policy.txt": "third\n"})
+	protectRemoteOwner(t, remote.Bare)
 	tg.Tap(owner, owner, ask.ID, ask.Buttons[0].CallbackData)
 	wait("the PowerShell apply", func() bool {
 		b, err := os.ReadFile(result)
@@ -144,4 +160,23 @@ $policy = [System.IO.File]::ReadAllText((Join-Path $Env:PULLGATE_TREE 'policy.tx
 		}
 		return strings.Contains(status.String(), "applied:     "+second)
 	})
+}
+
+func protectRemoteOwner(t *testing.T, repo string) {
+	t.Helper()
+	admins, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Git receive-pack can create objects owned by the operator instead of
+	// Administrators. Match the setup of an administrator-managed local repo.
+	err = filepath.WalkDir(repo, func(path string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		return windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION, admins, nil, nil, nil)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 }

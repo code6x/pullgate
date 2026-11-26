@@ -59,7 +59,7 @@ func runAgent(ctx context.Context, root, git string, log *slog.Logger, out io.Wr
 	if err != nil {
 		return err
 	}
-	l := &listener.Listener{Cfg: c, Log: log, TG: telegram.New(c.APIURL, token)}
+	l := &listener.Listener{Cfg: c, Log: log, TG: telegram.New(c.APIURL, token), NoUpdate: true}
 	if err := winsecure.Check(c.StateFile, false); err != nil && !errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
 		return err
 	}
@@ -79,6 +79,12 @@ func runAgent(ctx context.Context, root, git string, log *slog.Logger, out io.Wr
 		}
 		if err := e.Spool.Ensure(e.UID, e.Owners); err != nil {
 			return err
+		}
+		e.Doctor = func(_ context.Context) string {
+			if _, err := loadGate(root, name, git, log, io.Discard); err != nil {
+				return "FAIL: check the protected instance config and script on the host with pullgate doctor."
+			}
+			return "OK: the instance config and PowerShell scripts pass the ACL checks."
 		}
 		gates = append(gates, e)
 	}

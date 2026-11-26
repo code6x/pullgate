@@ -68,8 +68,8 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./internal/winsecure ./internal/state ./internal/gitx ./internal/config ./internal/spool ./internal/gate ./cmd/pullgate
       - run: go test ./internal/winsecure ./internal/state ./internal/gitx ./internal/config ./internal/spool ./internal/gate ./cmd/pullgate
-      - run: go test -tags e2e ./cmd/pullgate
       - run: ./test/windows/task.ps1
+      - run: go test -tags e2e ./cmd/pullgate
 
   e2e:
     name: end-to-end test

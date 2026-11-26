@@ -95,6 +95,9 @@ func runInJob(ctx context.Context, prog string, args, env []string, dir string, 
 		<-finished
 	}
 	copyErr := <-drained
+	if err == nil {
+		err = ctx.Err()
+	}
 	if err != nil {
 		return err
 	}

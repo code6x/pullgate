@@ -102,6 +102,9 @@ func (l *Listener) setMenu(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, MenuTimeout)
 	defer cancel()
 	want := menu()
+	if l.NoUpdate {
+		want = slices.DeleteFunc(want, func(c telegram.BotCommand) bool { return c.Command == "update" })
+	}
 	have, err := l.TG.GetMyCommands(ctx, l.Cfg.ChatID)
 	if err != nil {
 		l.Log.Warn("read the command menu of the chat; the menu is not set. pullgate tries again at the next start. Fix: if it says \"chat not found\", send /help to the bot once from the chat", "err", err)

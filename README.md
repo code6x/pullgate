@@ -14,7 +14,7 @@ the host applies it, with a health check and a rollback or a hold.
 - **No code from the new commit runs before Apply.** Optional `check` and
   `summary` commands read the commit as data, as an unprivileged user.
 - **Only the listener holds the bot token.** It runs as its own user and
-  opens no port.
+  opens no port on either platform. On Windows it runs inside the SYSTEM agent.
 - **Forward only** by default. A force push or an older commit is refused.
 - **Root never runs git in a directory another user can write.**
 
@@ -709,6 +709,10 @@ For SSH, put the read-only deploy key and the pinned known hosts file in
 the protected directory. Set each file's owner to SYSTEM or Administrators
 and let its ACL inherit from the directory. For a local repository, put
 the bare repo under the same protected directory and omit the SSH flags.
+After writing to a local bare repo, check that Git-created files and
+directories still belong to SYSTEM or Administrators and inherit the
+protected ACL. A file owned by the signed-in user makes the fetch fail
+even when that user is an administrator.
 
 ```powershell
 $root = Join-Path $env:ProgramData 'pullgate'

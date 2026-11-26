@@ -48,12 +48,14 @@ func relativeParts(root, path string) ([]string, error) {
 			}
 		}
 	}
-	rel, err := filepath.Rel(root, path)
-	if err != nil || !filepath.IsLocal(rel) {
-		return nil, invalid
-	}
-	if rel == "." {
+	if path == root {
 		return nil, nil
+	}
+	// Keep the original component spelling. NTFS can make a directory
+	// case-sensitive, even though filepath.Rel compares paths without case.
+	rel, inside := strings.CutPrefix(path, root+`\`)
+	if !inside {
+		return nil, invalid
 	}
 	return strings.Split(rel, `\`), nil
 }
@@ -61,7 +63,7 @@ func relativeParts(root, path string) ([]string, error) {
 // ValidPathPart reports whether a name represents a single ordinary
 // Windows file or directory name.
 func ValidPathPart(part string) bool {
-	return part != "" && !strings.HasSuffix(part, ".") && !strings.HasSuffix(part, " ") &&
+	return part != "" && utf8.ValidString(part) && !strings.HasSuffix(part, ".") && !strings.HasSuffix(part, " ") &&
 		!strings.ContainsFunc(part, func(r rune) bool { return r < 32 }) &&
 		!strings.ContainsAny(part, `\/:*?"<>|`) && filepath.IsLocal(part) && !reservedDevice(part)
 }
