@@ -692,7 +692,7 @@ $gh = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'GitHub CLI\gh.ex
 if ($LASTEXITCODE -ne 0) { throw 'Release verification failed.' }
 tar.exe -xf $archive install.ps1
 if ($LASTEXITCODE -ne 0) { throw 'Could not extract the installer.' }
-.\install.ps1 -Version $version
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Version $version
 ```
 
 The installer checks the checksum and attestation itself. It installs the
@@ -746,7 +746,8 @@ the install commands again with the new version. Wait for any apply to
 finish first. The installer replaces the executable and restarts a task
 that was running. The config and state stay in ProgramData.
 
-To remove the boot task and stop the agent, run `.\install.ps1 -Remove`.
+To remove the boot task and stop the agent, run
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Remove`.
 The protected data, including the token and executable, stays in
 `%ProgramData%\pullgate`. An administrator can delete that directory
 after saving any data they want to keep.
