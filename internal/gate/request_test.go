@@ -175,7 +175,7 @@ func TestAskAgainOnlyExpiredOrLost(t *testing.T) {
 		f.outbox()
 		f.requestKind(spool.RequestAskAgain)
 		if r := f.run(); r != Sent {
-			t.Fatalf("/ask-again on an expired question: %s", r)
+			t.Fatalf("/ask_again on an expired question: %s", r)
 		}
 	})
 	t.Run("lost", func(t *testing.T) {
@@ -186,7 +186,7 @@ func TestAskAgainOnlyExpiredOrLost(t *testing.T) {
 		old := f.ask() // as if it never reached the chat
 		f.requestKind(spool.RequestAskAgain)
 		if r := f.run(); r != Sent {
-			t.Fatalf("/ask-again on an open question: %s", r)
+			t.Fatalf("/ask_again on an open question: %s", r)
 		}
 		if f.ask().Code == old.Code {
 			t.Fatal("the new question needs a new code")
@@ -212,7 +212,7 @@ func TestAskAgainOnlyExpiredOrLost(t *testing.T) {
 			}
 			f.requestKind(spool.RequestAskAgain)
 			if r := f.run(); r != Nothing {
-				t.Fatalf("/ask-again on %s: %s", mark, r)
+				t.Fatalf("/ask_again on %s: %s", mark, r)
 			}
 			if !contains(f.outbox(), "Not asked again") {
 				t.Fatal("no reply")
@@ -273,7 +273,7 @@ func TestAskAgainRefusedWhilePausedOrBroken(t *testing.T) {
 	f.requestKind(spool.RequestAskAgain)
 	f.run()
 	if !contains(f.outbox(), "failed commit of the broken state") {
-		t.Fatal("/ask-again must refuse the broken failed commit")
+		t.Fatal("/ask_again must refuse the broken failed commit")
 	}
 	g := newFixture(t, ``, "")
 	g.applyNew("one")
@@ -284,7 +284,7 @@ func TestAskAgainRefusedWhilePausedOrBroken(t *testing.T) {
 	g.requestKind(spool.RequestAskAgain)
 	g.run()
 	if !contains(g.outbox(), "is paused or off") {
-		t.Fatal("/ask-again while paused must be refused")
+		t.Fatal("/ask_again while paused must be refused")
 	}
 	if g.state().FindCode(q.Code) < 0 {
 		t.Fatal("the question must stay while paused")

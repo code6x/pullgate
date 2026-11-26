@@ -138,6 +138,7 @@ func (l *Listener) Run(ctx context.Context) error {
 	if err := l.TG.DeleteWebhook(ctx); err != nil {
 		return fmt.Errorf("%w. Fix: check the bot token and the network", err)
 	}
+	l.setMenu(ctx)
 	poll := l.Poll
 	if poll == 0 {
 		poll = 2 * time.Second
@@ -445,25 +446,6 @@ func (l *Listener) check(cq *telegram.CallbackQuery) (*Question, string, string)
 	return q, action, ""
 }
 
-// checkCommand asks for a run now (DESIGN.md section 9).
-const checkCommand = "/check"
-
-// helpCommand lists what the bot can do.
-const helpCommand = "/help"
-
-// updateCommand asks root to look for a new release of pullgate (DESIGN.md
-// section 15).
-const updateCommand = "/update"
-
-// statusCommand and pauseCommand ask root for the status, or to pause an
-// instance (code6x/pullgate#32).
-const (
-	statusCommand   = "/status"
-	pauseCommand    = "/pause"
-	resumeCommand   = "/resume"    // code6x/pullgate#33
-	askAgainCommand = "/ask-again" // code6x/pullgate#33
-)
-
 // RequestGap is the least time between two /status or two /pause for the
 // same instance: root answers each at most once a minute.
 const RequestGap = time.Minute
@@ -477,7 +459,8 @@ func firstWord(s string) string {
 
 // request writes a status or pause request. Like /check, the file holds
 // no data from the message: root reads its own state and acts.
-func (l *Listener) request(ctx context.Context, m *telegram.Message, kind string) {
+func (l *Listener) request(ctx context.Context, m *telegram.Message, c *botCommand) {
+	kind := c.Do
 	f := strings.Fields(m.Text)
 	var names []string
 	switch {
@@ -489,7 +472,7 @@ func (l *Listener) request(ctx context.Context, m *telegram.Message, kind string
 		l.Log.Info("message ignored", "reason", "bad "+kind+" arguments", "from", fromID(m))
 		use := "<code>/status</code> or <code>/status NAME</code>"
 		if kind != spool.RequestStatus {
-			use = "<code>/" + kind + " NAME</code>"
+			use = "<code>/" + c.Name + " NAME</code>"
 		}
 		l.sendReply(ctx, m, "Use "+use+". NAME is one of: "+html.EscapeString(strings.Join(l.Cfg.Instances, ", "))+".")
 		return
@@ -545,18 +528,13 @@ func (l *Listener) helpText() string {
 	for _, n := range l.Cfg.Instances {
 		names = append(names, "<b>"+html.EscapeString(n)+"</b>")
 	}
-	return strings.Join([]string{
-		"<b>pullgate</b> commands:",
-		"<code>/check</code>: look for a new commit now, on every instance",
-		"<code>/check NAME</code>: the same, on one instance",
-		"<code>/status</code> or <code>/status NAME</code>: the mode, the applied commit, the open question, paused or not",
-		"<code>/pause NAME</code>: stop the instance",
-		"<code>/resume NAME</code>: go on after a <code>/pause</code>; any other pause needs root",
-		"<code>/ask-again NAME</code>: ask again about a question that expired or was lost",
-		"<code>/update</code>: look for a new release of pullgate; a question asks before it is installed",
-		"<code>/help</code>: this list",
+	lines := []string{"<b>pullgate</b> commands:"}
+	for _, c := range commands {
+		lines = append(lines, c.Help...)
+	}
+	return strings.Join(append(lines,
 		"",
-		"Instances: " + strings.Join(names, ", "),
+		"Instances: "+strings.Join(names, ", "),
 		"",
 		"A question has two buttons. <b>Apply</b> applies that one commit. <b>Skip</b> skips it; a newer commit is asked again (and the same one once more after <code>reask_after</code>, if the host config sets it).",
 		"",
@@ -564,14 +542,14 @@ func (l *Listener) helpText() string {
 		"<code>pullgate status NAME</code>: the mode, the applied commit, the open question, paused or not",
 		"<code>pullgate status NAME --pause</code> and <code>--resume</code>: stop and start the instance",
 		"<code>pullgate status NAME --ask-again</code>: ask again about the newest commit of the branch",
-	}, "\n")
+	), "\n")
 }
 
 // command handles a message. Only "/check" or "/check NAME" of the owner,
 // in the chat, unedited, counts. The text of a message is never logged.
 func (l *Listener) command(ctx context.Context, m *telegram.Message) {
-	names, why, help := l.checkNames(m)
-	if why == "help" {
+	names, why, help, c := l.checkNames(m)
+	if why == doHelp {
 		now := l.now()
 		if d := now.Sub(l.lastHelp); d < HintGap && d > -HintGap {
 			l.Log.Info("message ignored", "reason", "a second /help within a minute", "from", fromID(m))
@@ -582,12 +560,12 @@ func (l *Listener) command(ctx context.Context, m *telegram.Message) {
 		l.sendReply(ctx, m, l.helpText())
 		return
 	}
-	if why == "update" {
+	if why == doUpdate {
 		l.update(ctx, m)
 		return
 	}
-	if why == spool.RequestStatus || why == spool.RequestPause || why == spool.RequestResume || why == spool.RequestAskAgain {
-		l.request(ctx, m, why)
+	if c != nil && why == c.Do && why != doCheck {
+		l.request(ctx, m, c)
 		return
 	}
 	if names == nil {
@@ -641,37 +619,36 @@ func (l *Listener) command(ctx context.Context, m *telegram.Message) {
 }
 
 // checkNames returns the instances that a message asks to check, or nil,
-// why not, and whether the owner should get the usage text.
-func (l *Listener) checkNames(m *telegram.Message) ([]string, string, bool) {
+// why not, and whether the owner should get the usage text. For a command
+// other than /check, why is its Do and the command is returned too.
+func (l *Listener) checkNames(m *telegram.Message) ([]string, string, bool, *botCommand) {
 	switch {
 	case m.From == nil || m.From.ID != l.Cfg.OwnerID:
-		return nil, "not the owner", false
+		return nil, "not the owner", false, nil
 	case m.Chat.ID != l.Cfg.ChatID:
-		return nil, "not the configured chat", false
+		return nil, "not the configured chat", false, nil
 	case m.EditDate != 0:
-		return nil, "an edited message", false
-	case m.Text == helpCommand:
-		return nil, "help", false
-	case m.Text == updateCommand:
-		return nil, "update", false
-	case firstWord(m.Text) == statusCommand:
-		return nil, spool.RequestStatus, false
-	case firstWord(m.Text) == pauseCommand:
-		return nil, spool.RequestPause, false
-	case firstWord(m.Text) == resumeCommand:
-		return nil, spool.RequestResume, false
-	case firstWord(m.Text) == askAgainCommand:
-		return nil, spool.RequestAskAgain, false
-	case !strings.HasPrefix(m.Text, checkCommand):
-		return nil, "not a command", false
-	case m.Text == checkCommand:
-		return slices.Clone(l.Cfg.Instances), "", false
+		return nil, "an edited message", false, nil
 	}
-	name, ok := strings.CutPrefix(m.Text, checkCommand+" ")
+	c := lookup(m.Text)
+	if c == nil && strings.HasPrefix(m.Text, "/check") {
+		// "/check@otherbot", "/checkx": the owner gets the usage text.
+		c = lookup("/check")
+	}
+	switch {
+	case c == nil || (c.Bare && m.Text != "/"+c.Name):
+		return nil, "not a command", false, nil
+	case c.Do != doCheck:
+		return nil, c.Do, false, c
+	case m.Text == "/"+c.Name:
+		return slices.Clone(l.Cfg.Instances), "", false, c
+	}
+	// Exactly "/check NAME": one space, no other words, no new line.
+	name, ok := strings.CutPrefix(m.Text, "/"+c.Name+" ")
 	if !ok || !slices.Contains(l.Cfg.Instances, name) {
-		return nil, "not /check or /check NAME of a known instance", true
+		return nil, "not /check or /check NAME of a known instance", true, c
 	}
-	return []string{name}, "", false
+	return []string{name}, "", false, c
 }
 
 func fromID(m *telegram.Message) int64 {

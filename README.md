@@ -197,6 +197,19 @@ the host. Any other text from you (not a command) gets one short reply:
 "Not a command. Send /help for the list.", at most once a minute.
 Messages from other users, or in other chats, get no answer.
 
+When you type `/` in the chat with the bot, Telegram shows a menu of these
+commands. The listener sets this menu at each start, only for your chat
+(`chat_id`), and only when it differs. A menu that you set by hand in
+BotFather for other chats is not changed. If Telegram refuses (for example
+"chat not found" when you never wrote to the bot), the listener logs it
+once and goes on; send `/help` once and restart `pullgate-listen.service`
+to get the menu. A tap on a menu entry sends the bare command: a command
+that needs NAME, such as `/pause`, then answers with the list of
+instances.
+
+The command to ask again is `/ask_again` (Telegram allows no `-` in a
+command). The old `/ask-again` still works.
+
 ## Check now: `/check`
 
 The timer runs every 5 minutes. After a push you do not have to wait: send
@@ -222,7 +235,7 @@ usual Apply question, or "No new commit (the applied commit is …)", or
 - Without `pullgate-check@NAME.path`, the request waits for the next timer
   run.
 
-## Status and pause: `/status`, `/pause`, `/resume`, `/ask-again`
+## Status and pause: `/status`, `/pause`, `/resume`, `/ask_again`
 
 - `/status` (all instances) or `/status NAME`: the mode, the applied
   commit, the last tip, the open question, paused or not and why, broken
@@ -236,7 +249,7 @@ usual Apply question, or "No new commit (the applied commit is …)", or
   token can do that too: if you suspect the token, pause as root. Any other pause (one
   that pullgate set itself after a cut-off apply, or one that root set)
   stays: run `pullgate status NAME --resume` as root.
-- `/ask-again NAME`: asks again about the newest commit, but only when its
+- `/ask_again NAME`: asks again about the newest commit, but only when its
   question expired or was lost. A commit that was skipped, failed, held or
   refused is not asked again from Telegram; root can, with
   `pullgate status NAME --ask-again`.

@@ -3,6 +3,7 @@ package faketg
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -42,6 +43,16 @@ type Server struct {
 	Refuse int
 	// NoChat makes getChat fail, as for a chat the bot cannot reach.
 	NoChat bool
+	// Menus holds the command menu of each chat scope, by chat ID.
+	Menus map[int64][]telegram.BotCommand
+	// SetMenus counts the setMyCommands calls.
+	SetMenus int
+	// MenuScopes lists the scope of each getMyCommands and setMyCommands
+	// call, as "type:chat_id".
+	MenuScopes []string
+	// RefuseMenu makes getMyCommands and setMyCommands fail with this
+	// description (for example "Bad Request: chat not found").
+	RefuseMenu string
 }
 
 // New starts a fake server for token.
@@ -75,6 +86,8 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, map[string]any{"ok": true, "result": map[string]any{"id": num("chat_id"), "type": "private"}})
+	case "getMyCommands", "setMyCommands":
+		s.menu(w, method, req)
 	case "deleteWebhook":
 		writeJSON(w, map[string]any{"ok": true, "result": true})
 	case "getUpdates":
@@ -181,6 +194,63 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, map[string]any{"ok": false, "error_code": 404, "description": "Not Found"})
 	}
+}
+
+func (s *Server) menu(w http.ResponseWriter, method string, req map[string]any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sc, _ := req["scope"].(map[string]any)
+	typ, _ := sc["type"].(string)
+	id, _ := sc["chat_id"].(float64)
+	s.MenuScopes = append(s.MenuScopes, fmt.Sprintf("%s:%d", typ, int64(id)))
+	if s.RefuseMenu != "" {
+		writeJSON(w, map[string]any{"ok": false, "error_code": 400, "description": s.RefuseMenu})
+		return
+	}
+	if typ != "chat" {
+		// pullgate sets the menu of the owner's chat only.
+		writeJSON(w, map[string]any{"ok": false, "error_code": 400, "description": "Bad Request: the fake takes only a chat scope"})
+		return
+	}
+	if s.Menus == nil {
+		s.Menus = map[int64][]telegram.BotCommand{}
+	}
+	if method == "getMyCommands" {
+		out := s.Menus[int64(id)]
+		if out == nil {
+			out = []telegram.BotCommand{}
+		}
+		writeJSON(w, map[string]any{"ok": true, "result": out})
+		return
+	}
+	var cmds []telegram.BotCommand
+	b, _ := json.Marshal(req["commands"])
+	_ = json.Unmarshal(b, &cmds)
+	s.Menus[int64(id)] = cmds
+	s.SetMenus++
+	writeJSON(w, map[string]any{"ok": true, "result": true})
+}
+
+// Menu returns the command menu of chat and the number of setMyCommands
+// calls so far.
+func (s *Server) Menu(chat int64) ([]telegram.BotCommand, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]telegram.BotCommand(nil), s.Menus[chat]...), s.SetMenus
+}
+
+// Scopes returns the scopes of all menu calls.
+func (s *Server) Scopes() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.MenuScopes...)
+}
+
+// SetRefuseMenu makes the menu calls fail with desc ("" to stop).
+func (s *Server) SetRefuseMenu(desc string) {
+	s.mu.Lock()
+	s.RefuseMenu = desc
+	s.mu.Unlock()
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

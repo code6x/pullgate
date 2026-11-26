@@ -218,3 +218,28 @@ func (c *Client) GetChat(ctx context.Context, chat int64) (*Chat, error) {
 	}
 	return &ch, nil
 }
+
+// BotCommand is one entry of the command menu that Telegram shows when the
+// owner types "/".
+type BotCommand struct {
+	Command     string `json:"command"`
+	Description string `json:"description"`
+}
+
+func chatScope(chat int64) map[string]any {
+	return map[string]any{"type": "chat", "chat_id": chat}
+}
+
+// GetMyCommands returns the command menu of the bot for one chat.
+func (c *Client) GetMyCommands(ctx context.Context, chat int64) ([]BotCommand, error) {
+	var cmds []BotCommand
+	if err := c.call(ctx, "getMyCommands", map[string]any{"scope": chatScope(chat)}, &cmds); err != nil {
+		return nil, err
+	}
+	return cmds, nil
+}
+
+// SetMyCommands sets the command menu of the bot for one chat only.
+func (c *Client) SetMyCommands(ctx context.Context, chat int64, cmds []BotCommand) error {
+	return c.call(ctx, "setMyCommands", map[string]any{"commands": cmds, "scope": chatScope(chat)}, nil)
+}
