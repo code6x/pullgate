@@ -112,7 +112,7 @@ func (d Dir) ResumeTelegram(_ uint32) (bool, error) {
 	}
 	info := fileDispositionInfo{DeleteFile: true}
 	if err := windows.SetFileInformationByHandle(h, windows.FileDispositionInfo,
-		(*byte)(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
+		(*byte)(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil { //nolint:gosec // documented Win32 disposition structure
 		return false, fmt.Errorf("remove the pause file: %w. Fix: check the ACL of the state directory, or run pullgate status NAME --resume as an administrator", err)
 	}
 	return true, nil
