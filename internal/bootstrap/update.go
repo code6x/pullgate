@@ -12,6 +12,7 @@ import (
 
 	"github.com/code6x/pullgate/internal/config"
 	"github.com/code6x/pullgate/internal/recipe"
+	"github.com/code6x/pullgate/internal/state"
 )
 
 // Update is "pullgate recipe update" and "pullgate recipe use"
@@ -97,11 +98,19 @@ func (u *Update) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	old, err := os.ReadFile(c.Path)
+	if err != nil {
+		return err
+	}
 	if _, err := o.recipeConfig(u.Name, rr); err != nil {
 		return err
 	}
 	if err := o.writeRecord(u.Name, rr); err != nil {
-		return err
+		// The config and the record must name the same version.
+		if rerr := state.WriteFileAtomic(c.Path, old, 0o600); rerr != nil {
+			return fmt.Errorf("%w; and %s could not be put back: %w. Fix: copy the newest %s.bak-* back to %s, then run this again", err, c.Path, rerr, c.Path, c.Path)
+		}
+		return fmt.Errorf("%w. %s was put back. Fix: check the disk, then run this again", err, c.Path)
 	}
 	say(u.Out, "Instance %s: now on version %s of %s (it counts from the next run). The folder of %s is kept.", u.Name, src.Version, rec.Repo, rec.Version)
 	u.prune(src, rec.Version)

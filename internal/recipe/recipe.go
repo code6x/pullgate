@@ -461,7 +461,7 @@ type record struct {
 	Bundle   string            `json:"bundle,omitempty"`
 	Workflow string            `json:"signer_workflow,omitempty"`
 	SHA256   string            `json:"sha256"`
-	Files  map[string]string `json:"files"` // path: SHA-256
+	Files    map[string]string `json:"files"` // path: SHA-256
 }
 
 // unpack unpacks the tarball into Dir/OWNER/REPO/X.Y.Z: in a new

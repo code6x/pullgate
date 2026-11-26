@@ -515,7 +515,9 @@ git -C "$work" add recipe-version
 sha3="$(commit 'a = 1' 'move the recipe to 1.0.1')"
 run_until_tip "$sha3"
 i=0
-until [ "$(cat "$out/applied-sha" 2>/dev/null)" = "$sha3" ]; do
+# pullgate status shows it applied only after the whole apply returned:
+# after recipe fetch and recipe use.
+until [ "$(applied_sha)" = "$sha3" ]; do
 	i=$((i + 1))
 	[ "$i" -lt 90 ] || {
 		journalctl --no-pager -o cat -u "pullgate-apply@$name.service" || true
