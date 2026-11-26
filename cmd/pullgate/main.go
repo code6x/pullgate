@@ -55,11 +55,15 @@ commands:
                  check the setup of the host, as root: one line per check,
                  and exit 1 on any problem. --telegram also checks the bot
                  token and the chat with Telegram
-  bootstrap [--token-stdin] --instance NAME --repo URL [--branch B]
-                 [--apply PROGRAM] [--known-hosts FILE] [--instance ...]
-                 set up a new host, as root: the bot token (with no echo),
+  bootstrap [--token-stdin] [--add] [--recipe URL [--gh PATH] [--bundle NAME]
+                 [--signer-workflow PATH] [--replace-config]]
+                 --instance NAME --repo URL [--branch B] [--apply PROGRAM]
+                 [--known-hosts FILE] [--recipe-instance NAME] [--instance ...]
+                 set up a host, as root: the bot token (with no echo),
                  the pairing with the owner's chat by a one-time code, the
-                 deploy key and the host key of each instance
+                 deploy key and the host key of each instance. --recipe
+                 sets the instances up from a checked recipe; --add adds
+                 them to a paired host, with no token and no pairing
   version`
 
 func main() {
@@ -152,6 +156,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return usageErr(stderr, err.Error())
 		}
 		o.EtcDir, o.Out, o.Err = *configDir, stdout, stderr
+		o.Fetcher.UID = 0
 		o.Setup = &bootstrap.Setup{
 			StateDir: *stateDir, SpoolDir: *spoolDir, UnitDir: "/etc/systemd/system", UID: 0,
 			Units: pullgate.Units(), Enable: pullgate.Enable,
@@ -227,7 +232,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		rf := flag.NewFlagSet("recipe", flag.ContinueOnError)
 		rf.SetOutput(io.Discard)
-		f := &recipe.Fetcher{Dir: "/usr/local/lib/pullgate/recipes", UID: 0, Out: stdout}
+		f := &recipe.Fetcher{Dir: recipe.DefaultDir, UID: 0, Out: stdout}
 		rf.StringVar(&f.GH, "gh", "/usr/bin/gh", "")
 		rf.StringVar(&f.Bundle, "bundle", "", "")
 		rf.StringVar(&f.Workflow, "signer-workflow", "", "")

@@ -34,6 +34,7 @@ import (
 
 	"github.com/code6x/pullgate/internal/config"
 	"github.com/code6x/pullgate/internal/gitx"
+	"github.com/code6x/pullgate/internal/recipe"
 	"github.com/code6x/pullgate/internal/safedir"
 	"github.com/code6x/pullgate/internal/state"
 	"github.com/code6x/pullgate/internal/telegram"
@@ -44,6 +45,8 @@ type Instance struct {
 	Name, URL, Branch string
 	KnownHosts        string // a file with the host keys, for a git host other than GitHub
 	Apply             string // the apply program, for a new config
+	From              string // --recipe-instance: the instance of the recipe's manifest
+	branchSet         bool   // --branch was given
 }
 
 // Options are the inputs of a bootstrap. Parse makes them from the
@@ -68,15 +71,26 @@ type Options struct {
 	// runs doctor and enables the units at the end. cmd/pullgate always
 	// sets it; nil leaves both steps out (the tests of the other steps).
 	Setup *Setup
+
+	// Recipe is --recipe URL: the instances come from a checked recipe
+	// (DESIGN.md section 20). Fetcher downloads it.
+	Recipe        string
+	Fetcher       *recipe.Fetcher
+	Add           bool   // --add: the host is paired; no token, no pairing
+	ReplaceConfig bool   // --replace-config: write the recipe's NAME.toml over the one there, with a backup
+	Host          string // the value of @HOST@; "" is the host name (tests set it)
+
+	local map[string]*local
 }
 
 // DefaultAPI is the Bot API of Telegram.
 const DefaultAPI = "https://api.telegram.org"
 
 // Usage is the help text of the command.
-const Usage = `pullgate bootstrap [--token-stdin] [--api-url URL]
+const Usage = `pullgate bootstrap [--token-stdin] [--api-url URL] [--add]
+        [--recipe URL [--gh PATH] [--bundle NAME] [--signer-workflow PATH] [--replace-config]]
         --instance NAME --repo URL [--branch B] [--apply PROGRAM] [--known-hosts FILE]
-        [--instance NAME2 ...]`
+        [--recipe-instance NAME] [--instance NAME2 ...]`
 
 // Parse reads the arguments after "bootstrap". There is no flag for the
 // owner or the chat ID, on purpose.
@@ -89,12 +103,20 @@ func Parse(args []string) (*Options, error) {
 		PairTTL:       10 * time.Minute, RemoteWait: 30 * time.Minute, RemoteEvery: 10 * time.Second,
 		PollSeconds: 25,
 		Stdin:       os.Stdin, Out: io.Discard, Err: io.Discard, Now: time.Now,
+		Fetcher: &recipe.Fetcher{Dir: recipe.DefaultDir, GH: "/usr/bin/gh"},
 	}
 	var cur *Instance
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		if a == "--token-stdin" {
+		switch a {
+		case "--token-stdin":
 			o.TokenStdin = true
+			continue
+		case "--add":
+			o.Add = true
+			continue
+		case "--replace-config":
+			o.ReplaceConfig = true
 			continue
 		}
 		if i+1 >= len(args) {
@@ -105,10 +127,18 @@ func Parse(args []string) (*Options, error) {
 		switch a {
 		case "--api-url":
 			o.APIURL = v
+		case "--recipe":
+			o.Recipe = v
+		case "--gh":
+			o.Fetcher.GH = v
+		case "--bundle":
+			o.Fetcher.Bundle = v
+		case "--signer-workflow":
+			o.Fetcher.Workflow = v
 		case "--instance":
 			o.Instances = append(o.Instances, Instance{Name: v, Branch: "main"})
 			cur = &o.Instances[len(o.Instances)-1]
-		case "--repo", "--branch", "--apply", "--known-hosts":
+		case "--repo", "--branch", "--apply", "--known-hosts", "--recipe-instance":
 			if cur == nil {
 				return nil, fmt.Errorf("%s comes before any --instance. Fix: give --instance NAME first", a)
 			}
@@ -116,7 +146,9 @@ func Parse(args []string) (*Options, error) {
 			case "--repo":
 				cur.URL = v
 			case "--branch":
-				cur.Branch = v
+				cur.Branch, cur.branchSet = v, true
+			case "--recipe-instance":
+				cur.From = v
 			case "--apply":
 				cur.Apply = v
 			default:
@@ -150,6 +182,17 @@ func (o *Options) check() error {
 	if o.APIURL != DefaultAPI && !strings.HasPrefix(o.APIURL, "http://127.0.0.1:") {
 		return fmt.Errorf("--api-url %q: bootstrap talks only to %s, or to a test server on http://127.0.0.1:PORT. Another server would see the token and could plant the owner ID", o.APIURL, DefaultAPI)
 	}
+	if o.Add && (o.TokenStdin || o.APIURL != DefaultAPI) {
+		return errors.New("--add keeps the token and the Bot API of listener.toml: it takes no --token-stdin and no --api-url. Fix: leave them out, or run bootstrap without --add to pair again")
+	}
+	if o.Recipe == "" && (o.ReplaceConfig || o.Fetcher.Bundle != "" || o.Fetcher.Workflow != "" || o.Fetcher.GH != "/usr/bin/gh") {
+		return errors.New("--replace-config, --gh, --bundle and --signer-workflow go with --recipe URL. Fix: give --recipe, or leave them out")
+	}
+	if o.Recipe != "" {
+		if _, err := recipe.ParseURL(o.Recipe); err != nil {
+			return fmt.Errorf("--recipe: %w", err)
+		}
+	}
 	// On a new host the setup makes the config directory: then only the
 	// directories above it are checked here.
 	etc := o.EtcDir
@@ -172,10 +215,16 @@ func (o *Options) check() error {
 		if !gitx.ValidBranch(in.Branch) {
 			return fmt.Errorf("--instance %s --branch %q: not a plain branch name", in.Name, in.Branch)
 		}
+		if o.Recipe != "" && in.Apply != "" {
+			return fmt.Errorf("--instance %s --apply: the recipe's template names the apply program. Fix: leave --apply out with --recipe", in.Name)
+		}
+		if o.Recipe == "" && in.From != "" {
+			return fmt.Errorf("--instance %s --recipe-instance goes with --recipe URL. Fix: give --recipe, or leave it out", in.Name)
+		}
 		if in.Apply != "" && !filepath.IsAbs(in.Apply) {
 			return fmt.Errorf("--instance %s --apply %q: not an absolute path. Fix: give the full path of the apply program", in.Name, in.Apply)
 		}
-		if _, err := os.Lstat(o.instanceConfig(in.Name)); errors.Is(err, os.ErrNotExist) && in.Apply == "" {
+		if _, err := os.Lstat(o.instanceConfig(in.Name)); errors.Is(err, os.ErrNotExist) && in.Apply == "" && o.Recipe == "" {
 			return fmt.Errorf("--instance %s: %s does not exist, and --apply is missing. Fix: give --apply /path/of/the/apply/program", in.Name, o.instanceConfig(in.Name))
 		}
 		if local != "" {
@@ -189,6 +238,16 @@ func (o *Options) check() error {
 			return fmt.Errorf("--instance %s: pullgate knows the host keys of github.com only. Fix: run ssh-keyscan %s > FILE, compare the fingerprints with the ones your git host publishes, and give --known-hosts FILE", in.Name, host)
 		}
 	}
+	if o.Add {
+		l, err := o.loadPaired()
+		if err != nil {
+			return err
+		}
+		o.say("--add: the host is paired. Kept from %s: owner_id %d, chat_id %d, the instances %s.", o.listenerPath(), l.OwnerID, l.ChatID, strings.Join(l.Instances, ", "))
+	}
+	if o.Recipe != "" {
+		return o.locals()
+	}
 	return nil
 }
 
@@ -198,6 +257,13 @@ func (o *Options) instanceConfig(name string) string { return filepath.Join(o.Et
 func Run(ctx context.Context, o *Options) error {
 	if err := o.check(); err != nil {
 		return err
+	}
+	var rr *recipeRun
+	if o.Recipe != "" {
+		var err error
+		if rr, err = o.fetchRecipe(ctx); err != nil {
+			return err
+		}
 	}
 	if o.Setup != nil {
 		if err := o.users(ctx); err != nil {
@@ -214,6 +280,55 @@ func Run(ctx context.Context, o *Options) error {
 	if err != nil {
 		return err
 	}
+	if !o.Add {
+		if err := o.pairAndWrite(ctx, gid); err != nil {
+			return err
+		}
+	}
+	for _, in := range o.Instances {
+		if err := o.instance(ctx, in, rr); err != nil {
+			return err
+		}
+		if o.Setup != nil {
+			if err := o.instanceDirs(in.Name); err != nil {
+				return err
+			}
+		}
+	}
+	if rr != nil {
+		for _, in := range o.Instances {
+			if err := o.runSetup(ctx, in.Name, rr); err != nil {
+				return err
+			}
+		}
+		for _, in := range o.Instances {
+			if err := o.recipeConfig(in.Name, rr); err != nil {
+				return err
+			}
+			if err := o.writeRecord(in.Name, rr); err != nil {
+				return err
+			}
+		}
+	}
+	if o.Add {
+		// Last: the listener asks for a new instance only once it is set up.
+		if err := o.addInstances(gid); err != nil {
+			return err
+		}
+	}
+	if o.Setup == nil {
+		return nil
+	}
+	if err := o.enable(ctx); err != nil {
+		return err
+	}
+	o.say("Done. The first question comes when the timer runs, or at once with: systemctl start pullgate-run@%s.service", o.Instances[0].Name)
+	return nil
+}
+
+// pairAndWrite reads the token, pairs the chat, and writes bot-token and
+// listener.toml.
+func (o *Options) pairAndWrite(ctx context.Context, gid int) error {
 	token, err := o.readToken(ctx)
 	if err != nil {
 		return err
@@ -239,23 +354,6 @@ func Run(ctx context.Context, o *Options) error {
 	}
 	o.say("Paired. Wrote %s and %s.", filepath.Join(o.EtcDir, "bot-token"), filepath.Join(o.EtcDir, "listener.toml"))
 	_, _ = tg.SendMessage(ctx, chat, "✅ pullgate bootstrap: this chat is paired. Questions of the instances come here.", nil, 0)
-	for _, in := range o.Instances {
-		if err := o.instance(ctx, in); err != nil {
-			return err
-		}
-		if o.Setup != nil {
-			if err := o.instanceDirs(in.Name); err != nil {
-				return err
-			}
-		}
-	}
-	if o.Setup == nil {
-		return nil
-	}
-	if err := o.enable(ctx); err != nil {
-		return err
-	}
-	o.say("Done. The first question comes when the timer runs, or at once with: systemctl start pullgate-run@%s.service", o.Instances[0].Name)
 	return nil
 }
 
@@ -504,7 +602,10 @@ func Fingerprints(text string) ([]string, error) {
 
 // instance makes the deploy key and the known hosts file, writes a
 // minimal config if there is none, and waits until git can read the repo.
-func (o *Options) instance(ctx context.Context, in Instance) error {
+func (o *Options) instance(ctx context.Context, in Instance, rr *recipeRun) error {
+	if rr != nil {
+		return o.recipeInstance(ctx, in, rr)
+	}
 	if _, err := os.Lstat(o.instanceConfig(in.Name)); err == nil {
 		// A kept config: probe with its own repo, key and known hosts.
 		c, err := config.Load(o.EtcDir, in.Name, uint32(os.Geteuid())) //nolint:gosec // a uid fits in uint32
@@ -530,6 +631,23 @@ func (o *Options) instance(ctx context.Context, in Instance) error {
 		return err
 	}
 	return o.waitRemote(ctx, in, key, kh)
+}
+
+// recipeInstance is instance for --recipe: the config comes from the
+// template. A kept config keeps its repo, key and known hosts.
+func (o *Options) recipeInstance(ctx context.Context, in Instance, rr *recipeRun) error {
+	l := o.local[in.Name]
+	if l.kept == nil && l.key != "" {
+		if err := o.deployKey(ctx, in.Name, l.key); err != nil {
+			return err
+		}
+		if err := o.knownHosts(in, l.knownHosts); err != nil {
+			return err
+		}
+	}
+	// NAME.toml is written after the setup of the recipe: a failed setup
+	// leaves the config that was there, or none.
+	return o.waitRemote(ctx, Instance{Name: in.Name, URL: l.url, Branch: l.branch}, l.key, l.knownHosts)
 }
 
 func (o *Options) deployKey(ctx context.Context, name, key string) error {

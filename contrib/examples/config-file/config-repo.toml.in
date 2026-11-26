@@ -1,0 +1,28 @@
+# Example 1 as a recipe: the template of /etc/pullgate/@NAME@.toml.
+# pullgate fills the placeholders, and writes mode = "ask", deploy_key,
+# known_hosts and check_user itself: a template may not set them.
+# A failed apply runs apply again with the last good commit. That is safe
+# here: apply only copies one file and reloads.
+on_failure = "rollback"
+host = "@HOST@"
+
+[repo]
+url = "@REPO_URL@"
+branch = "@BRANCH@"
+
+[commands]
+# check and summary run as check_user and only read the tree as data.
+check = ["@RECIPE_DIR@/check.sh"]
+summary = ["@RECIPE_DIR@/summary.sh"]
+apply = ["@RECIPE_DIR@/apply.sh"]
+health = ["@RECIPE_DIR@/health.sh"]
+
+[watch]
+paths = ["policy.toml"]
+
+[limits]
+questions_per_day = 10
+settle = "30m"            # ask only when the branch has not changed for 30 minutes
+reask_after = "24h"       # ask a skipped or expired commit once more after a day
+approval_ttl = "12h"
+max_failed_tries = 1

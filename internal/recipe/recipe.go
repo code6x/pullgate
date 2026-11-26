@@ -49,6 +49,9 @@ const (
 // ManifestName is the manifest at the root of the tarball.
 const ManifestName = "pullgate-recipe.toml"
 
+// DefaultDir is the folder of the recipes.
+const DefaultDir = "/usr/local/lib/pullgate/recipes"
+
 // RecordName is the record of the unpack, in the version folder.
 const RecordName = ".pullgate-recipe.json"
 
@@ -117,6 +120,9 @@ func ParseManifest(b []byte) (*Manifest, error) {
 	md, err := toml.Decode(string(b), &m)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w. Fix: correct the recipe", ManifestName, err)
+	}
+	if err := config.ExactKeys(md); err != nil {
+		return nil, fmt.Errorf("%s: %w", ManifestName, err)
 	}
 	if u := md.Undecoded(); len(u) > 0 {
 		return nil, fmt.Errorf("%s: unknown key %q. Fix: the recipe is for a newer pullgate, or wrong", ManifestName, u[0].String())
@@ -191,8 +197,13 @@ type Fetcher struct {
 	Bundle   string // the bundle name; "" is FILE with .tar.gz replaced by .sigstore.json
 	Workflow string // the signer workflow; "" is DefaultWorkflow
 	Look     LookPath
-	Out      io.Writer
-	Client   *http.Client
+	// Check, when set, runs on the unpacked recipe before it is used: in
+	// the temporary folder before the rename, or in a version folder that
+	// is there already. An error removes the new folder. Bootstrap checks
+	// the config templates here, so a bad template writes nothing.
+	Check  func(dir string, m *Manifest) error
+	Out    io.Writer
+	Client *http.Client
 	// GHTimeout caps gh attestation verify (it gets the Sigstore trusted
 	// root online); 0 is 5 minutes.
 	GHTimeout time.Duration
@@ -461,6 +472,9 @@ func (f *Fetcher) unpack(src Source, tarball []byte, sum string) (string, *Manif
 		if err == nil {
 			err = m.CheckRequires(f.look())
 		}
+		if err == nil && f.Check != nil {
+			err = f.Check(final, m)
+		}
 		if err != nil {
 			return "", nil, err
 		}
@@ -491,6 +505,11 @@ func (f *Fetcher) unpack(src Source, tarball []byte, sum string) (string, *Manif
 	}
 	if err := m.CheckRequires(f.look()); err != nil {
 		return "", nil, err
+	}
+	if f.Check != nil {
+		if err := f.Check(tmp, m); err != nil {
+			return "", nil, err
+		}
 	}
 	b, _ := json.MarshalIndent(rec, "", "  ")
 	if err := os.WriteFile(filepath.Join(tmp, RecordName), b, 0o644); err != nil { //nolint:gosec // the record is not secret, like the recipe files
