@@ -203,7 +203,8 @@ commands. The listener sets this menu at each start, only for your chat
 BotFather for other chats is not changed. If Telegram refuses (for example
 "chat not found" when you never wrote to the bot), the listener logs it
 once and goes on; send `/help` once and restart `pullgate-listen.service`
-to get the menu. A tap on a menu entry sends the bare command: a command
+to get the menu. If `chat_id` is a group, every member of the group sees
+the menu, but only your taps and commands count. A tap on a menu entry sends the bare command: a command
 that needs NAME, such as `/pause`, then answers with the list of
 instances.
 

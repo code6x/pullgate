@@ -641,7 +641,8 @@ to 256 characters, and that there are at most 100. At start, after
 `deleteWebhook`, the listener calls `getMyCommands` with the scope
 `{"type": "chat", "chat_id": chat_id}` and, only when the list differs,
 `setMyCommands` with the same scope. It sets no menu for any other scope,
-so a menu set by hand in BotFather for other chats stays. Both calls have
+so a menu set by hand in BotFather for other chats stays. In a group
+chat, every member sees the menu; only the owner's commands count. Both calls have
 a 30 second limit. A failure (also "chat not found") is logged once and
 never stops the listener; the next start tries again. The menu shows only
 names and fixed texts; it holds no instance name and nothing of the host.
