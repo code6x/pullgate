@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/code6x/pullgate/internal/message"
 )
 
 // The limits of the notes in a message (code6x/pullgate#70).
@@ -117,10 +119,17 @@ func parseNotes(text, installed, newV string) (notes, bool) {
 				continue
 			}
 			if !head {
-				add(v.v, "<b>"+v.v+"</b>")
+				if !add(v.v, "<b>"+v.v+"</b>") {
+					full = true
+					continue
+				}
 				head = true
 			}
-			add(s.name+":", html.EscapeString(s.name)+":")
+			name := message.Clean(s.name)
+			if !add(name+":", html.EscapeString(name)+":") {
+				full = true
+				continue
+			}
 			for _, e := range s.entries {
 				if full || !add("• "+e, "• "+html.EscapeString(e)) {
 					full = true
@@ -144,7 +153,9 @@ func cleanEntry(e string) string {
 	e = rePRLink.ReplaceAllString(e, "(#$1)")
 	e = reMDLink.ReplaceAllString(e, "$1")
 	e = strings.ReplaceAll(e, "**", "")
-	e = strings.Join(strings.Fields(e), " ")
+	// Control and invisible characters (bidi, zero-width) become "?", as
+	// in every text from outside (DESIGN.md section 12).
+	e = message.Clean(strings.Join(strings.Fields(e), " "))
 	if utf8.RuneCountInString(e) > NotesEntry {
 		r := []rune(e)
 		e = string(r[:NotesEntry-1]) + "…"

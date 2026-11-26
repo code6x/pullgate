@@ -116,6 +116,43 @@ func TestNotesCut(t *testing.T) {
 	}
 }
 
+// TestNotesCleanInvisible: control and invisible characters in an entry
+// become "?".
+func TestNotesCleanInvisible(t *testing.T) {
+	text := "## [0.6.0](x)\n\n### Features\n\n* a\u202eb\u200bc\x1bd\x00e ([#1](x))\n"
+	n, ok := parseNotes(text, "0.5.0", "0.6.0")
+	if !ok || len(n.Lines) != 3 || n.Lines[2] != "• a?b?c?d?e (#1)" {
+		t.Fatalf("got %q", n.Lines)
+	}
+}
+
+// TestNotesNoHeadingWithoutEntry: when the limit is near, a heading or a
+// version line is not added alone, and no entry comes under another
+// heading.
+func TestNotesNoHeadingWithoutEntry(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("## [0.6.0](x)\n\n### Features\n\n")
+	for range 6 {
+		b.WriteString("* " + strings.Repeat("z", 199) + "\n")
+	}
+	b.WriteString("\n### Bug Fixes\n\n* x\n")
+	n, ok := parseNotes(b.String(), "0.5.0", "0.6.0")
+	if !ok {
+		t.Fatal("no notes")
+	}
+	for i, l := range n.Lines {
+		if l == "• x" && (i == 0 || n.Lines[i-1] != "Bug Fixes:") {
+			t.Fatalf("an entry under the wrong heading: %q", n.Lines)
+		}
+		if strings.HasSuffix(l, ":") && (i+1 >= len(n.Lines) || !strings.HasPrefix(n.Lines[i+1], "• ")) {
+			t.Fatalf("a heading with no entry: %q", n.Lines)
+		}
+	}
+	if n.Lines[len(n.Lines)-1] != "… and 1 more" && n.Lines[len(n.Lines)-1] != "… and 2 more" {
+		t.Fatalf("want the cut line: %q", n.Lines)
+	}
+}
+
 func TestNotesBroken(t *testing.T) {
 	for name, text := range map[string]string{
 		"empty":            "",

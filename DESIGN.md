@@ -1114,8 +1114,10 @@ than the installed one, up to the new one (for 0.4.0 → 0.6.0: 0.5.0 and
 0.6.0). It shows only `Features`, `Bug Fixes` and `Security`: a version
 line, the heading, one line per entry, with its text and the pull request
 (`#67`); links, commit ids and the `, closes …` part are removed, and an
-entry is cut at 200 characters. All of it is HTML-escaped. At most 12
-lines and 1200 characters, then "… and N more". When the file has no
+entry is cut at 200 characters. Control and invisible characters
+become `?` (section 12), and all of it is HTML-escaped. At most 12 lines
+and 1200 characters under the title line "What changed", then "… and N
+more"; a version line or a heading is never shown without an entry. When the file has no
 section for the new version, there are no notes. The text of the release
 on GitHub (its body) is never shown: it is not signed and can change after
 the release.
