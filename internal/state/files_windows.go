@@ -98,11 +98,11 @@ func (d Dir) ResumeTelegram(_ uint32) (bool, error) {
 	}
 	h, err := windows.CreateFile(name, windows.GENERIC_READ|windows.DELETE,
 		windows.FILE_SHARE_READ, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
-	if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
+	if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
 		return false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("open the pause file: %w. Fix: wait until no other pullgate command uses this instance, then send /resume again", err)
+		return false, fmt.Errorf("open the pause file: %w. Fix: if another pullgate command uses this instance, wait for it and send /resume again; else check the ACL of the state directory", err)
 	}
 	f := os.NewFile(uintptr(h), d.PauseFile())
 	defer func() { _ = f.Close() }()
