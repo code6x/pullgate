@@ -125,3 +125,10 @@ func (r *Release) Publish(version, file string, tarball []byte) string {
 	r.files[p+strings.TrimSuffix(file, ".tar.gz")+".sigstore.json"] = []byte("{}")
 	return r.srv.URL + p + file
 }
+
+// Replace sets the file name of the release vVERSION to body.
+func (r *Release) Replace(version, name, body string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.files["/"+Owner+"/"+Repo+"/releases/download/v"+version+"/"+name] = []byte(body)
+}

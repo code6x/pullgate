@@ -79,7 +79,7 @@ func (s Source) Tag() string { return "v" + s.Version }
 // Slug is OWNER/REPO.
 func (s Source) Slug() string { return s.Owner + "/" + s.Repo }
 
-var urlRE = regexp.MustCompile(`^(https://github\.com|http://127\.0\.0\.1:[0-9]{1,5})/([A-Za-z0-9_.-]{1,100})/([A-Za-z0-9_.-]{1,100})/releases/download/v([0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9})/([A-Za-z0-9][A-Za-z0-9_.+-]{0,200}\.tar\.gz)$`)
+var urlRE = regexp.MustCompile(`^(https://github\.com|http://127\.0\.0\.1:[0-9]{1,5})/([A-Za-z0-9_.-]{1,100})/([A-Za-z0-9_.-]{1,100})/releases/download/v((?:0|[1-9][0-9]{0,8})\.(?:0|[1-9][0-9]{0,8})\.(?:0|[1-9][0-9]{0,8}))/([A-Za-z0-9][A-Za-z0-9_.+-]{0,200}\.tar\.gz)$`)
 
 // ParseURL checks a recipe URL: https://github.com/OWNER/REPO/releases/download/vX.Y.Z/FILE.tar.gz,
 // or the same path on a test server http://127.0.0.1:PORT.
@@ -108,7 +108,7 @@ type Manifest struct {
 
 var (
 	progRE     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$`)
-	versionRE  = regexp.MustCompile(`^[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}$`)
+	versionRE  = regexp.MustCompile(`^(?:0|[1-9][0-9]{0,8})\.(?:0|[1-9][0-9]{0,8})\.(?:0|[1-9][0-9]{0,8})$`) // no leading zeros: one version, one name
 	workflowRE = regexp.MustCompile(`^\.github/workflows/[A-Za-z0-9_-][A-Za-z0-9_.-]*\.ya?ml$`)
 	relRE      = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.+-]*(/[A-Za-z0-9_][A-Za-z0-9_.+-]*)*$`)
 )
@@ -217,7 +217,11 @@ type Result struct {
 	Manifest *Manifest
 }
 
-func (f *Fetcher) say(format string, a ...any) { _, _ = fmt.Fprintf(f.Out, format+"\n", a...) }
+func (f *Fetcher) say(format string, a ...any) {
+	if f.Out != nil {
+		_, _ = fmt.Fprintf(f.Out, format+"\n", a...)
+	}
+}
 
 func (f *Fetcher) client(test bool) *http.Client {
 	if f.Client != nil {
@@ -453,8 +457,11 @@ func (f *Fetcher) verify(ctx context.Context, src Source, tarball, bundle []byte
 
 // record is the record of an unpack: the tarball and each file.
 type record struct {
-	SHA256 string            `json:"sha256"`
-	Files  map[string]string `json:"files"` // path: SHA-256
+	URL      string            `json:"url,omitempty"` // the URL it was fetched from
+	Bundle   string            `json:"bundle,omitempty"`
+	Workflow string            `json:"signer_workflow,omitempty"`
+	SHA256   string            `json:"sha256"`
+	Files    map[string]string `json:"files"` // path: SHA-256
 }
 
 // unpack unpacks the tarball into Dir/OWNER/REPO/X.Y.Z: in a new
@@ -495,7 +502,7 @@ func (f *Fetcher) unpack(src Source, tarball []byte, sum string) (string, *Manif
 			_ = os.RemoveAll(tmp)
 		}
 	}()
-	rec := record{SHA256: sum, Files: map[string]string{}}
+	rec := record{URL: src.URL, Bundle: f.Bundle, Workflow: f.Workflow, SHA256: sum, Files: map[string]string{}}
 	if err := extract(tarball, tmp, rec.Files); err != nil {
 		return "", nil, err
 	}
@@ -526,6 +533,63 @@ func (f *Fetcher) unpack(src Source, tarball []byte, sum string) (string, *Manif
 	}
 	ok = true
 	return final, m, nil
+}
+
+// Open uses a version folder that "recipe fetch" unpacked before, with no
+// download: the folder of OWNER/REPO at version must pass the checks of a
+// folder that is there already (section 19 step 7), against its own
+// record, and the Check hook.
+func (f *Fetcher) Open(owner, repo, version string) (*Result, error) {
+	if !versionRE.MatchString(version) {
+		return nil, fmt.Errorf("%q is not a version X.Y.Z", version)
+	}
+	repoDir := filepath.Join(f.Dir, owner, repo)
+	final := filepath.Join(repoDir, version)
+	fix := ". Fix: fetch it first with pullgate recipe fetch URL"
+	if _, err := os.Lstat(final); err != nil {
+		return nil, fmt.Errorf("%s is not there: version %s of %s/%s was not fetched%s", final, version, owner, repo, fix)
+	}
+	if err := safedir.CheckParents(repoDir, f.UID); err != nil {
+		return nil, fmt.Errorf("the recipes folder is not safe: %w", err)
+	}
+	if err := safedir.CheckTree(final, f.UID); err != nil {
+		return nil, fmt.Errorf("%s is not safe: %w. Fix: move it away, then fetch it again", final, err)
+	}
+	b, err := os.ReadFile(filepath.Join(final, RecordName)) //nolint:gosec // in the checked folder
+	var rec record
+	if err == nil {
+		err = json.Unmarshal(b, &rec)
+	}
+	if err != nil || rec.URL == "" {
+		return nil, fmt.Errorf("%s has no good record of its unpack. Fix: move it away, then fetch it again with pullgate recipe fetch URL", final)
+	}
+	if rec.Bundle != f.Bundle || rec.Workflow != f.Workflow {
+		return nil, fmt.Errorf("%s was fetched with --bundle %q and --signer-workflow %q, but the instance uses %q and %q. Fix: fetch it with the flags of the instance (move the folder away first)", final, rec.Bundle, rec.Workflow, f.Bundle, f.Workflow)
+	}
+	src, err := ParseURL(rec.URL)
+	if err != nil || src.Owner != owner || src.Repo != repo || src.Version != version {
+		return nil, fmt.Errorf("the record of %s names another recipe (%s). Fix: move the folder away, then fetch it again", final, rec.URL)
+	}
+	m, err := f.checkExisting(final, rec.SHA256)
+	if err == nil {
+		err = m.CheckRequires(f.look())
+	}
+	if err == nil && f.Check != nil {
+		err = f.Check(final, m)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &Result{Source: src, SHA256: rec.SHA256, Dir: final, Manifest: m}, nil
+}
+
+// ValidVersion says whether v is X.Y.Z.
+func ValidVersion(v string) bool { return versionRE.MatchString(v) }
+
+// Older says whether version a is older than version b (both X.Y.Z).
+func Older(a, b string) bool {
+	x, y := strings.Split(a, "."), strings.Split(b, ".")
+	return !atLeast(x, y)
 }
 
 func (f *Fetcher) look() LookPath {

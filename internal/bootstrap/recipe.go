@@ -96,6 +96,13 @@ func (o *Options) locals() error {
 			}
 		}
 		o.local[in.Name] = l
+		// Forward only: a recipe older than the one of the record is
+		// refused here too.
+		if r, err := recipe.ReadInstanceRecord(recipe.RecordPath(o.EtcDir, in.Name)); err == nil {
+			if src, err := recipe.ParseURL(o.Recipe); err == nil && src.Slug() == r.Repo && recipe.Older(src.Version, r.Version) {
+				return fmt.Errorf("--instance %s runs version %s of %s; %s is older. Updates go forward only. Nothing was written. Fix: give a newer version", in.Name, r.Version, r.Repo, src.Version)
+			}
+		}
 	}
 	return nil
 }
@@ -134,7 +141,19 @@ func (o *Options) fetchRecipe(ctx context.Context) (*recipeRun, error) {
 	}
 	f := *o.Fetcher
 	f.Out = o.Out
-	f.Check = func(dir string, m *recipe.Manifest) error {
+	f.Check = o.checkTemplates(rr)
+	res, err := f.Fetch(ctx, o.Recipe)
+	if err != nil {
+		return nil, err
+	}
+	rr.res = res
+	return rr, nil
+}
+
+// checkTemplates is the Check hook of the fetch: it makes the config of
+// each instance from its template, in the unpacked folder dir.
+func (o *Options) checkTemplates(rr *recipeRun) func(dir string, m *recipe.Manifest) error {
+	return func(dir string, m *recipe.Manifest) error {
 		for _, in := range o.Instances {
 			ri, err := pick(m, in)
 			if err != nil {
@@ -152,12 +171,6 @@ func (o *Options) fetchRecipe(ctx context.Context) (*recipeRun, error) {
 		}
 		return nil
 	}
-	res, err := f.Fetch(ctx, o.Recipe)
-	if err != nil {
-		return nil, err
-	}
-	rr.res = res
-	return rr, nil
 }
 
 // render makes NAME.toml from a template: it fills the placeholders,
@@ -222,6 +235,9 @@ func (o *Options) render(name string, l *local, tpl []byte, rr *recipeRun, ri *r
 		return nil, bad("it sets [repo] url or branch to another value than @REPO_URL@ and @BRANCH@")
 	}
 	t["mode"] = config.ModeAsk
+	if o.keepMode && l.kept != nil {
+		t["mode"] = l.kept.Mode // an update keeps the mode that the owner set
+	}
 	repo["url"], repo["branch"] = l.url, l.branch
 	if l.key != "" {
 		repo["deploy_key"] = l.key

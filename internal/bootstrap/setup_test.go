@@ -113,8 +113,8 @@ func TestSetupMakesUsersDirectoriesUnitsAndEnables(t *testing.T) {
 			t.Fatalf("unit %s: %q %v", n, b, err)
 		}
 	}
-	want := [][]string{{"daemon-reload"}, {"enable", "--now", "pullgate-listen.service", "pullgate-run@config-repo.timer"}, {"restart", "pullgate-listen.service"}}
-	if len(f.calls) != 3 || !slices.Equal(f.calls[0], want[0]) || !slices.Equal(f.calls[1], want[1]) || !slices.Equal(f.calls[2], want[2]) {
+	want := [][]string{{"daemon-reload"}, {"enable", "pullgate-listen.service"}, {"enable", "--now", "pullgate-run@config-repo.timer"}, {"restart", "pullgate-listen.service"}}
+	if !slices.EqualFunc(f.calls, want, slices.Equal[[]string]) {
 		t.Fatalf("systemctl calls: %v", f.calls)
 	}
 	if !slices.Equal(f.doctors, []bool{true, false}) {
