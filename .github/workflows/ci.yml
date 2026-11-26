@@ -69,13 +69,7 @@ jobs:
       - run: go vet ./internal/winsecure ./internal/state ./internal/gitx ./internal/config ./internal/spool ./internal/gate ./cmd/pullgate
       - run: go test ./internal/winsecure ./internal/state ./internal/gitx ./internal/config ./internal/spool ./internal/gate ./cmd/pullgate
       - run: go test -tags e2e ./cmd/pullgate
-      - name: Parse the Windows installer
-        run: |
-          $tokens = $null
-          $errors = $null
-          [void][System.Management.Automation.Language.Parser]::ParseFile(
-              (Join-Path $PWD 'install.ps1'), [ref]$tokens, [ref]$errors)
-          if ($errors.Count) { throw ($errors | Out-String) }
+      - run: ./test/windows/task.ps1
 
   e2e:
     name: end-to-end test

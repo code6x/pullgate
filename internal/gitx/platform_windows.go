@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -109,15 +110,20 @@ func SafePath(p string) bool {
 	return len(volume) == 2 && volume[1] == ':' && filepath.IsAbs(p) && filepath.Clean(p) == p
 }
 
-func LocalPath(url string) (string, error) {
-	p := filepath.FromSlash(url)
+func LocalPath(repoURL string) (string, error) {
+	p := filepath.FromSlash(repoURL)
 	if SafePath(p) {
 		return p, nil
 	}
-	if strings.HasPrefix(url, "ssh://") {
-		return "", nil
+	if strings.HasPrefix(repoURL, "ssh://") {
+		u, err := url.Parse(repoURL)
+		if err == nil && u.Hostname() != "" && u.Path != "" && u.RawQuery == "" && u.Fragment == "" {
+			if _, password := u.User.Password(); !password {
+				return "", nil
+			}
+		}
 	}
-	return "", fmt.Errorf("invalid repo URL %q. Fix: use ssh:// or an absolute Windows drive path under the protected root", url)
+	return "", errors.New("invalid repo URL. Fix: use an ssh:// URL with no password, query or fragment, or an absolute Windows drive path under the protected root")
 }
 
 func checkExportPath(path, mode string) error {

@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
@@ -138,7 +139,23 @@ func gitExecutable() (string, error) {
 }
 
 func doctorWindows(root string, names []string, out io.Writer) error {
-	_, err := gitExecutable()
+	for _, path := range []string{"state", "spool"} {
+		if err := winsecure.CheckManaged(root, filepath.Join(root, path), true); err != nil {
+			return err
+		}
+	}
+	system, err := windows.GetSystemDirectory()
+	if err != nil {
+		return fmt.Errorf("find Task Scheduler: %w. Fix: check the Windows installation", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	task := exec.CommandContext(ctx, filepath.Join(system, "schtasks.exe"), "/Query", "/TN", `\pullgate`) //nolint:gosec // built-in Windows utility and fixed arguments
+	if err := task.Run(); err != nil {
+		return fmt.Errorf("cannot find the pullgate boot task: %w. Fix: run install.ps1 as an administrator", err)
+	}
+	_, _ = fmt.Fprintln(out, "OK protected data directories and boot task")
+	_, err = gitExecutable()
 	if err != nil {
 		return err
 	}

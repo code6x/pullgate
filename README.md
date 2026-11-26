@@ -687,7 +687,8 @@ the installer inside it.
 $version = 'X.Y.Z'
 $archive = "pullgate_${version}_windows_amd64.tar.gz"
 $bundle = "pullgate_${version}.sigstore.json"
-gh attestation verify $archive --bundle $bundle --repo code6x/pullgate --cert-identity 'https://github.com/code6x/pullgate/.github/workflows/release.yml@refs/heads/main' --deny-self-hosted-runners
+$gh = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'GitHub CLI\gh.exe'
+& $gh attestation verify $archive --bundle $bundle --repo code6x/pullgate --cert-identity 'https://github.com/code6x/pullgate/.github/workflows/release.yml@refs/heads/main' --deny-self-hosted-runners
 if ($LASTEXITCODE -ne 0) { throw 'Release verification failed.' }
 tar.exe -xf $archive install.ps1
 if ($LASTEXITCODE -ne 0) { throw 'Could not extract the installer.' }

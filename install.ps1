@@ -20,6 +20,18 @@ $root = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'pullg
 $installed = Join-Path $root 'pullgate.exe'
 $repo = 'code6x/pullgate'
 
+function Register-PullgateTask {
+    param([string]$Executable, [string]$Directory, [string]$Name)
+    $action = New-ScheduledTaskAction -Execute $Executable -Argument 'agent' -WorkingDirectory $Directory
+    $trigger = New-ScheduledTaskTrigger -AtStartup
+    $principal = New-ScheduledTaskPrincipal -UserId 'S-1-5-18' -LogonType ServiceAccount -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) `
+        -RestartCount 10 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable `
+        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    Register-ScheduledTask -TaskName $Name -TaskPath '\' -Action $action -Trigger $trigger `
+        -Principal $principal -Settings $settings -Force | Out-Null
+}
+
 function Stop-PullgateTask {
     $task = Get-ScheduledTask -TaskName $taskName -TaskPath '\' -ErrorAction SilentlyContinue
     if ($task -and $task.State -eq 'Running') {
@@ -88,14 +100,7 @@ try {
     & $binary install-binary
     if ($LASTEXITCODE -ne 0) { throw 'The protected binary did not install. Read the pullgate error above and retry.' }
 
-    $action = New-ScheduledTaskAction -Execute $installed -Argument 'agent' -WorkingDirectory $root
-    $trigger = New-ScheduledTaskTrigger -AtStartup
-    $principal = New-ScheduledTaskPrincipal -UserId 'S-1-5-18' -LogonType ServiceAccount -RunLevel Highest
-    $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) `
-        -RestartCount 10 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable `
-        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-    Register-ScheduledTask -TaskName $taskName -TaskPath '\' -Action $action -Trigger $trigger `
-        -Principal $principal -Settings $settings -Force | Out-Null
+    Register-PullgateTask -Executable $installed -Directory $root -Name $taskName
 
     if (-not $old -or $old.State -eq 'Disabled') {
         Disable-ScheduledTask -TaskName $taskName -TaskPath '\' | Out-Null

@@ -171,7 +171,7 @@ func (g *Git) Fetch(ctx context.Context, url, branch string) (string, error) {
 			return "", fmt.Errorf("the local repo %s is not safe for root: %w", local, err)
 		}
 	} else if !g.sshAllowed() {
-		return "", errors.New("an ssh url needs deploy_key and known_hosts, as absolute paths of A-Za-z0-9._/- only. Fix: set them in [repo] of the config")
+		return "", errors.New("an ssh url needs safe absolute paths for deploy_key and known_hosts. Fix: set both in [repo] of the config")
 	}
 	if !ValidBranch(branch) {
 		return "", fmt.Errorf("the branch name %q is not allowed. Fix: set [repo] branch to a plain branch name", branch)
