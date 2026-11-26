@@ -130,8 +130,9 @@ pullgate bootstrap --instance config-repo --repo git@github.com:example/config-r
    can read the branch.
    It also makes the state and the spool of each instance, as a run does.
 5. **Doctor, then the units.** It runs `pullgate doctor` (below). Only when
-   doctor finds no problem, it runs `systemctl enable --now` for
-   `pullgate-listen.service`, `pullgate-apply@NAME.path`,
+   doctor finds no problem, it enables `pullgate-listen.service` and
+   restarts it (one start, so it reads the new `listener.toml`), and runs
+   `systemctl enable --now` for `pullgate-apply@NAME.path`,
    `pullgate-run@NAME.timer`, `pullgate-check@NAME.path` (for `/check`)
    and `pullgate-update.timer` and `pullgate-update.path` (release notices
    and `/update`). A problem enables nothing: fix it, and run bootstrap
