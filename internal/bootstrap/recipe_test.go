@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BurntSushi/toml"
 
@@ -186,6 +187,7 @@ func TestRecipeDeny(t *testing.T) {
 		{"no apply", tpl("host = \"@HOST@\"\n"), nil, "", "apply"},
 		{"host with a quote", recipeFiles(), nil, "example\"host", "a quote"},
 		{"host with a newline", recipeFiles(), nil, "example\nmode = \"auto\"", "a newline"},
+		{"host with a placeholder", recipeFiles(), nil, "example-@BRANCH@", "looks like a placeholder"},
 		{"apply with a recipe", recipeFiles(), []string{"--apply", "/bin/true"}, "", "leave --apply out"},
 		{"no such recipe instance", recipeFiles(), []string{"--recipe-instance", "other"}, "", "has no instance \"other\""},
 		{"missing program", func() map[string]string {
@@ -302,13 +304,41 @@ func TestRecipeKeepsAConfigAndShowsTheDiff(t *testing.T) {
 		t.Fatalf("the config changed:\n%s", b)
 	}
 	out := f.out.String()
-	for _, w := range []string{"  - mode = \"auto\"", "  + mode = \"ask\"", "  + host = \"example-host\"", "is kept. To write the recipe's config, run bootstrap again with --replace-config"} {
+	for _, w := range []string{"  - mode = \"auto\"", "  + mode = \"ask\"", "  + host = \"example-host\"", "no recipe record is written", "To write it, run bootstrap again with --replace-config"} {
 		if !strings.Contains(out, w) {
 			t.Fatalf("output lacks %q:\n%s", w, out)
 		}
 	}
 	if !slices.Contains(f.added, "pullgate-check-old") {
 		t.Fatalf("users: %v", f.added)
+	}
+	// The instance does not run the recipe's config: no record.
+	if _, err := os.Lstat(recipe.RecordPath(f.etc, "config-repo")); err == nil {
+		t.Fatal("a record was written for a kept config")
+	}
+}
+
+func TestRecipeAgainShowsNoDiff(t *testing.T) {
+	f := newRecipeFx(t, recipeFiles())
+	if err := f.pair(); err != nil {
+		t.Fatalf("bootstrap: %v\n%s", err, f.out.String())
+	}
+	g := newRecipeFx(t, recipeFiles())
+	g.o.Now = func() time.Time { return time.Now().Add(48 * time.Hour) }
+	b1, _ := os.ReadFile(f.o.instanceConfig("config-repo"))
+	if err := os.WriteFile(g.o.instanceConfig("config-repo"), b1, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The same recipe, the same values, another day: the same file.
+	g.o.Fetcher.Dir, g.r = f.o.Fetcher.Dir, f.r
+	g.o.Instances[0].URL = f.r.Bare
+	g.o.Recipe = f.url
+	g.o.Fetcher.GH = f.rel.GH
+	if err := g.pair(); err != nil {
+		t.Fatalf("bootstrap again: %v\n%s", err, g.out.String())
+	}
+	if !strings.Contains(g.out.String(), "is the same as the recipe's config") {
+		t.Fatalf("output:\n%s", g.out.String())
 	}
 }
 

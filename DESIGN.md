@@ -1438,8 +1438,8 @@ template. The order:
    `@HOST@` (the host name), `@REPO_URL@`, `@BRANCH@` and `@RECIPE_DIR@`
    (the version folder), filled in one pass. For a kept config,
    `@REPO_URL@` and `@BRANCH@` are its own. Another `@WORD@` is refused,
-   and so is a value with `"`, `'`, `\`, a newline or another control
-   character. The filled template must be TOML with every key in lower
+   and so is a value with `"`, `'`, `\`, a newline, another control
+   character, or a `@WORD@`. The filled template must be TOML with every key in lower
    case (`a-z`, `0-9`, `_`: the TOML decoder matches keys without case,
    so `Mode` would set `mode`; every config of pullgate refuses such a
    key). It must not set `mode`, `[repo] deploy_key`, `[repo]
@@ -1469,12 +1469,15 @@ template. The order:
    is enabled; the instance is off, or keeps the config it had. The error
    says so.
 7. **`NAME.toml`**, only after every setup passed. If there is none, the
-   template's config is written (root, 0600). If there is one and it
-   differs, the diff is printed (`-` the file, `+` the recipe) and the
+   template's config is written (root, 0600). The header names the
+   recipe and holds no date, so the same recipe with the same values
+   makes the same file. If there is one and it differs, the diff is printed (`-` the file, `+` the recipe) and the
    file is kept; with `--replace-config`, the old one is copied to
    `NAME.toml.bak-YYYYMMDD-HHMMSS` (root, 0600) and the new one written.
    A new config is in `ask` mode, also when the old one was `auto`.
-8. **The record** `/etc/pullgate/NAME.recipe` (root, 0644, TOML): the URL,
+8. **The record**, only when `NAME.toml` is now the recipe's config (written,
+   or the same; not for a kept config that differs), in
+   `/etc/pullgate/NAME.recipe` (root, 0644, TOML): the URL,
    `OWNER/REPO`, the version, the file, its SHA-256, the version folder,
    the instance of the manifest, the bundle and signer workflow flags,
    the value of `@HOST@` and the time. `pullgate status NAME` and

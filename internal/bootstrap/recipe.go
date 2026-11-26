@@ -56,6 +56,9 @@ func checkValue(key, v string) error {
 			return fmt.Errorf("the value of %s (%q) holds a quote, a backslash, a newline or a control character, which pullgate does not put in a config. Nothing was written. Fix: give a value without them", key, v)
 		}
 	}
+	if m := placeholderRE.FindString(v); m != "" {
+		return fmt.Errorf("the value of %s (%q) holds %s, which looks like a placeholder. Nothing was written. Fix: give a value without it", key, v, m)
+	}
 	return nil
 }
 
@@ -228,8 +231,10 @@ func (o *Options) render(name string, l *local, tpl []byte, rr *recipeRun, ri *r
 	}
 	cmds["check_user"] = l.checkUser
 	var b bytes.Buffer
-	fmt.Fprintf(&b, "# Written by pullgate bootstrap on %s from the recipe %s %s (%s, instance %s).\n# pullgate owns mode, [repo] and check_user: no other config tool may write them.\n",
-		o.Now().Format("2006-01-02"), rr.src.Slug(), rr.src.Tag(), rr.src.File, ri.Name)
+	// No date: the same recipe makes the same file, so a run again shows
+	// no diff.
+	fmt.Fprintf(&b, "# Written by pullgate bootstrap from the recipe %s %s (%s, instance %s).\n# pullgate owns mode, [repo] and check_user: no other config tool may write them.\n",
+		rr.src.Slug(), rr.src.Tag(), rr.src.File, ri.Name)
 	if err := toml.NewEncoder(&b).Encode(t); err != nil {
 		return nil, bad("%v", err)
 	}
@@ -241,34 +246,35 @@ func (o *Options) render(name string, l *local, tpl []byte, rr *recipeRun, ri *r
 
 // recipeConfig writes NAME.toml from the template. A config that is there
 // already is kept, and the diff is shown; with --replace-config it is
-// replaced, and a backup kept.
-func (o *Options) recipeConfig(name string, rr *recipeRun) error {
+// replaced, and a backup kept. It says whether NAME.toml is now the
+// recipe's config.
+func (o *Options) recipeConfig(name string, rr *recipeRun) (bool, error) {
 	p := o.instanceConfig(name)
 	b := rr.configs[name]
 	old, err := os.ReadFile(p) //nolint:gosec // root's own config folder
 	if err == nil {
 		if bytes.Equal(old, b) {
 			o.say("Instance %s: %s is the same as the recipe's config.", name, p)
-			return nil
+			return true, nil
 		}
 		o.say("Instance %s: %s exists. The recipe's config differs from it (- now, + recipe):\n%s", name, p, Diff(string(old), string(b)))
 		if !o.ReplaceConfig {
-			o.say("Instance %s: %s is kept. To write the recipe's config, run bootstrap again with --replace-config.", name, p)
-			return nil
+			o.say("Instance %s: %s is kept, and no recipe record is written: the instance does not run the recipe's config. To write it, run bootstrap again with --replace-config.", name, p)
+			return false, nil
 		}
 		bak := p + ".bak-" + o.Now().Format("20060102-150405")
 		if err := state.WriteFileAtomic(bak, old, 0o600); err != nil {
-			return err
+			return false, err
 		}
 		o.say("Instance %s: the old config is kept as %s.", name, bak)
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
+		return false, err
 	}
 	if err := state.WriteFileAtomic(p, b, 0o600); err != nil {
-		return err
+		return false, err
 	}
 	o.say("Instance %s: wrote %s from the recipe (mode = \"ask\").", name, p)
-	return nil
+	return true, nil
 }
 
 // runSetup runs the recipe's setup of an instance, as root, in the
@@ -291,7 +297,7 @@ func (o *Options) runSetup(ctx context.Context, name string, rr *recipeRun) erro
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = 5 * time.Second
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("instance %s: the setup of the recipe failed: %w. No unit was enabled: the instance is off. Fix: read its output above, fix the cause, then run pullgate bootstrap again", name, err)
+		return fmt.Errorf("instance %s: the setup of the recipe failed: %w. No config was written and no unit was enabled: the instance is off, or runs on with the config it had. Fix: read its output above, fix the cause, then run pullgate bootstrap again", name, err)
 	}
 	return nil
 }

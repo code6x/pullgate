@@ -302,8 +302,12 @@ func Run(ctx context.Context, o *Options) error {
 			}
 		}
 		for _, in := range o.Instances {
-			if err := o.recipeConfig(in.Name, rr); err != nil {
+			ok, err := o.recipeConfig(in.Name, rr)
+			if err != nil {
 				return err
+			}
+			if !ok {
+				continue
 			}
 			if err := o.writeRecord(in.Name, rr); err != nil {
 				return err
