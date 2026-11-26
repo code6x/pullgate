@@ -1626,3 +1626,7 @@ The Windows Git runner takes an absolute Git for Windows executable
 from a trusted installation. It checks the protected clone and local
 remote before invoking Git. The Windows export rejects symlinks and
 paths that could name a device, an alternate stream, or a short alias.
+
+The Windows config accepts PowerShell scripts as apply and health
+commands. It rejects auto mode, check and summary. Windows needs a tap
+to apply, and it has no separate sandbox user for check and summary.

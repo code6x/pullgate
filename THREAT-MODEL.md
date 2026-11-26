@@ -832,3 +832,7 @@ Windows export refuses backslashes, device names, alternate data
 streams, and characters used in shortened aliases. The Windows Git
 helper currently handles local repositories under the protected root.
 The caller must supply Git from an administrator-controlled install.
+
+The Windows config rejects pre-approval commands and automatic apply.
+The token reader accepts only a DPAPI blob from a protected file.
+Plaintext tokens are refused.
