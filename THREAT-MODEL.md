@@ -827,3 +827,8 @@ Windows state reads reject a file with a wider ACL or multiple hard
 links. The Windows state layer assumes the caller has validated the
 ancestors of the state directory. A failed lock or failed write must
 stop the operation before it applies a commit.
+
+Windows export refuses backslashes, device names, alternate data
+streams, and characters used in shortened aliases. The Windows Git
+helper currently handles local repositories under the protected root.
+The caller must supply Git from an administrator-controlled install.

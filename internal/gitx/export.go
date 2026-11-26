@@ -9,11 +9,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
-
-	"github.com/code6x/pullgate/internal/safedir"
 )
 
 // Limits cap the size of an exported tree.
@@ -131,7 +128,7 @@ func (g *Git) Export(ctx context.Context, sha, dest string, lim Limits, gid int)
 	var total int64
 	var blobs []entry
 	for _, e := range es {
-		if err := CheckPath(e.path); err != nil {
+		if err := checkExportPath(e.path, e.mode); err != nil {
 			return nil, &HostileError{Msg: err.Error()}
 		}
 		switch {
@@ -147,7 +144,7 @@ func (g *Git) Export(ctx context.Context, sha, dest string, lim Limits, gid int)
 	if lim.MaxBytes > 0 && total > lim.MaxBytes {
 		return nil, hostile("the commit has %d bytes of files, more than max_tree_bytes = %d. Fix: raise [limits] max_tree_bytes in the config", total, lim.MaxBytes)
 	}
-	if err := safedir.CheckParents(filepath.Dir(dest), g.UID); err != nil {
+	if err := g.checkDir(filepath.Dir(dest)); err != nil {
 		return nil, fmt.Errorf("export refused: %w", err)
 	}
 	if _, err := os.Lstat(dest); err == nil {
@@ -179,8 +176,11 @@ func (g *Git) writeBlobs(ctx context.Context, dest string, blobs []entry) ([]Sym
 	if len(blobs) == 0 {
 		return nil, nil
 	}
-	if err := safedir.CheckTree(g.Dir, g.UID); err != nil {
+	if err := g.checkTree(g.Dir); err != nil {
 		return nil, fmt.Errorf("git refused: %w", err)
+	}
+	if err := g.checkCommand(); err != nil {
+		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, g.timeout())
 	defer cancel()
@@ -317,39 +317,6 @@ func mkParents(dest, path string, made map[string]bool) (string, error) {
 		return "", fmt.Errorf("write %q: parent not made by this export", path)
 	}
 	return full, nil
-}
-
-// seal makes every directory of the tree read-only (0555), and the top
-// directory 0750 with group gid.
-func seal(dest string, gid int) error {
-	var dirs []string
-	err := filepath.WalkDir(dest, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() && p != dest {
-			dirs = append(dirs, p)
-		}
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("seal the tree: %w", err)
-	}
-	sort.Sort(sort.Reverse(sort.StringSlice(dirs)))
-	for _, d := range dirs {
-		if err := os.Chmod(d, 0o555); err != nil {
-			return fmt.Errorf("seal the tree: %w", err)
-		}
-	}
-	if gid >= 0 && gid != os.Getegid() {
-		if err := os.Lchown(dest, -1, gid); err != nil {
-			return fmt.Errorf("seal the tree: %w", err)
-		}
-	}
-	if err := os.Chmod(dest, 0o750); err != nil {
-		return fmt.Errorf("seal the tree: %w", err)
-	}
-	return nil
 }
 
 // RemoveTree removes an exported tree, whose directories are read-only.

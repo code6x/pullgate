@@ -1621,3 +1621,8 @@ and flush a private temporary file, then replace the old state using
 a write-through move on the same volume. New state paths get an ACL
 at creation. The Linux state paths continue to use Unix modes and
 `flock`.
+
+The Windows Git runner takes an absolute Git for Windows executable
+from a trusted installation. It checks the protected clone and local
+remote before invoking Git. The Windows export rejects symlinks and
+paths that could name a device, an alternate stream, or a short alias.

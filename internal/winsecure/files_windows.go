@@ -42,9 +42,7 @@ func relativeParts(root, path string) ([]string, error) {
 			return nil, invalid
 		}
 		for _, part := range strings.Split(p[3:], `\`) {
-			if strings.HasSuffix(part, ".") || strings.HasSuffix(part, " ") ||
-				strings.ContainsFunc(part, func(r rune) bool { return r < 32 }) ||
-				strings.ContainsAny(part, `/:*?"<>|`) || !filepath.IsLocal(part) || reservedDevice(part) {
+			if !ValidPathPart(part) {
 				return nil, invalid
 			}
 		}
@@ -57,6 +55,14 @@ func relativeParts(root, path string) ([]string, error) {
 		return nil, nil
 	}
 	return strings.Split(rel, `\`), nil
+}
+
+// ValidPathPart reports whether a name represents a single ordinary
+// Windows file or directory name.
+func ValidPathPart(part string) bool {
+	return part != "" && !strings.HasSuffix(part, ".") && !strings.HasSuffix(part, " ") &&
+		!strings.ContainsFunc(part, func(r rune) bool { return r < 32 }) &&
+		!strings.ContainsAny(part, `\/:*?"<>|`) && filepath.IsLocal(part) && !reservedDevice(part)
 }
 
 // Windows recognizes device names even before some file extensions and
