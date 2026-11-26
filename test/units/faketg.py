@@ -6,7 +6,7 @@ to LOG, one per line. It never prints a request path, so the test token
 never shows.
 
 Without --tap it answers every method with "ok" and gives no updates
-(first-run.sh).
+(first-run.sh). getMyCommands gives the menu that setMyCommands set.
 
 With --tap TEXTS (full-loop.sh) it also:
 - appends the text of each sendMessage to TEXTS, as one JSON string per
@@ -85,6 +85,14 @@ class Handler(BaseHTTPRequestHandler):
                 f.write(method + "\n")
         if method == "getMe":
             result = {"id": 1, "is_bot": True, "username": "example_bot"}
+        elif method == "getMyCommands":
+            # The menu of the chat scope; pullgate sets only that one.
+            with lock:
+                result = list(state.get("menu", []))
+        elif method == "setMyCommands":
+            with lock:
+                state["menu"] = list(req.get("commands") or [])
+            result = True
         elif method == "getUpdates":
             result = self.updates(int(req.get("offset") or 0))
         elif method == "sendMessage":

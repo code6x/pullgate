@@ -393,7 +393,7 @@ func TestHelp(t *testing.T) {
 	if len(ms) != 1 || ms[0].Chat != chat || ms[0].ReplyTo == 0 {
 		t.Fatalf("want one reply: %+v", ms)
 	}
-	for _, want := range []string{"<code>/check</code>", "<code>/check NAME</code>", "<code>/help</code>", "<b>" + inst + "</b>", "<b>" + inst2 + "</b>", "Apply", "Skip", "--pause", "--resume", "--ask-again", "<code>/status</code>", "<code>/pause NAME</code>", "<code>/resume NAME</code>", "<code>/ask-again NAME</code>"} {
+	for _, want := range []string{"<code>/check</code>", "<code>/check NAME</code>", "<code>/help</code>", "<b>" + inst + "</b>", "<b>" + inst2 + "</b>", "Apply", "Skip", "--pause", "--resume", "--ask-again", "<code>/status</code>", "<code>/pause NAME</code>", "<code>/resume NAME</code>", "<code>/ask_again NAME</code>"} {
 		if !strings.Contains(ms[0].Text, want) {
 			t.Errorf("the help must hold %q:\n%s", want, ms[0].Text)
 		}

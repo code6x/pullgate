@@ -94,7 +94,7 @@ func (e *Env) resumeRequest(st *state.State) {
 	e.notice(text)
 }
 
-// askAgainRequest acts on /ask-again: it asks again only about a question
+// askAgainRequest acts on /ask_again: it asks again only about a question
 // that expired or was lost (an open one), never about a commit that was
 // skipped, failed, held, refused or failed its check (code6x/pullgate#33).
 func (e *Env) askAgainRequest(st *state.State) {
@@ -119,7 +119,7 @@ func (e *Env) askAgainRequest(st *state.State) {
 			return
 		}
 		if q != nil && !q.Auto {
-			e.edit(q.ID, "This question for "+code(q.SHA)+" is closed: the owner sent /ask-again. The next question has a new code.")
+			e.edit(q.ID, "This question for "+code(q.SHA)+" is closed: the owner sent /ask_again. The next question has a new code.")
 		}
 		e.Log.Info("ask again from Telegram: open question", "sha", tip)
 		e.notice("Asking again about " + code(tip) + ".")
@@ -134,7 +134,7 @@ func (e *Env) askAgainRequest(st *state.State) {
 		if m.Mark == state.MarkSkipped && e.reaskOn() {
 			hint = " It is asked once more " + e.Cfg.Limits.ReaskAfter.String() + " after the Skip (reask_after)."
 		}
-		e.notice("Not asked again: " + code(tip) + " was " + m.Mark + ". /ask-again asks only about a question that expired or was lost. To ask anyway, run as root: <code>pullgate status " + e.Cfg.Name + " --ask-again</code>" + hint)
+		e.notice("Not asked again: " + code(tip) + " was " + m.Mark + ". /ask_again asks only about a question that expired or was lost. To ask anyway, run as root: <code>pullgate status " + e.Cfg.Name + " --ask-again</code>" + hint)
 	}
 }
 

@@ -575,7 +575,7 @@ nothing):
 - Then the normal run goes on, so a stream of `/status` never stops the
   fetches. After a `/pause`, the run ends as paused.
 
-**`/resume NAME` and `/ask-again NAME`** (code6x/pullgate#33) go the same
+**`/resume NAME` and `/ask_again NAME`** (code6x/pullgate#33) go the same
 way, with request files `resume` and `ask-again`. They are limited, so
 that they cannot undo a safety stop:
 
@@ -617,7 +617,7 @@ usage text, which lists the instances and never repeats the message.
 
 **`/help`.** When the text is exactly `/help`, from `owner_id`, in
 `chat_id`, not edited, the listener replies with a fixed list: the
-commands (`/check`, `/check NAME`, `/update`, `/help`), the instance names from
+commands (every entry of the command table, below), the instance names from
 `instances`, what Apply and Skip do, and the root commands for the host
 (`pullgate status NAME`, `--pause`, `--resume`, `--ask-again`), at most
 once per minute. The
@@ -631,6 +631,30 @@ edited message, gets no answer, so the bot does not tell strangers that it
 exists. The listener
 never logs the text of a message: only why it was ignored and the sender
 ID.
+
+**One command table, and the menu** (code6x/pullgate#69). The command
+handling, the `/help` list and the menu that Telegram shows when the owner
+types `/` come from one table in `internal/listener/commands.go`, so they
+cannot drift apart. A test checks that each name matches
+`^[a-z0-9_]{1,32}$` (Telegram's rule), each menu text is plain text of 1
+to 256 characters, and that there are at most 100. At start, after
+`deleteWebhook`, the listener calls `getMyCommands` with the scope
+`{"type": "chat", "chat_id": chat_id}` and, only when the list differs,
+`setMyCommands` with the same scope. It sets no menu for any other scope,
+so a menu set by hand in BotFather for other chats stays. In a group
+chat, every member sees the menu; only the owner's commands count. Both calls have
+a 30 second limit. A failure (also "chat not found") is logged once and
+never stops the listener; the next start tries again. The menu shows only
+names and fixed texts; it holds no instance name and nothing of the host.
+A tap on a menu entry sends the bare command, so the text of a command
+that needs NAME says so, and the bare command answers with the list of
+instances.
+
+The command to ask again is `/ask_again`, as Telegram allows no `-` in a
+command name. `/ask-again` stays as an alias that is never shown. The
+request file kind `ask-again`, the flag `--ask-again` and the state do not
+change, so a root and a listener of different versions work together
+during an update.
 
 **Root** (`pullgate apply NAME`) takes the lock (with a wait). If the pause
 file exists or `mode = "off"`, it removes the approvals, replies "ignored:

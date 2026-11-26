@@ -549,6 +549,9 @@ while [ "$i" -lt 30 ]; do
 done
 systemctl is-active --quiet pullgate-listen.service || err "the listener is not active after a restart"
 [ "$now" -gt $((before + 1)) ] || err "the listener does not poll Telegram after a restart"
+# The menu: set at the first start, not again after a restart (the same).
+[ "$(grep -c -x setMyCommands "$tglog" || true)" = 1 ] || err "the listener must set the command menu once, at its first start"
+[ "$(grep -c -x getMyCommands "$tglog" || true)" -ge 2 ] || err "the listener must read the command menu at each start"
 
 step "7. A commit whose apply fails: rollback"
 sha2="$(commit 'fail = true' 'a commit whose apply fails')"
