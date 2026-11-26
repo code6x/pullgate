@@ -214,8 +214,24 @@ func (o *Options) enable(ctx context.Context) error {
 			units = append(units, strings.ReplaceAll(e, "NAME", in.Name))
 		}
 	}
-	if _, err := s.Systemctl(ctx, append([]string{"enable", "--now"}, units...)...); err != nil {
-		return fmt.Errorf("systemctl enable --now %s: %w. Fix: see journalctl -xe, fix the unit, then run pullgate bootstrap again", strings.Join(units, " "), err)
+	// The listener is enabled, not started here: the restart below starts
+	// it once. A start and then a restart would kill the first listener in
+	// its first request, and it would log an error.
+	var now, later []string
+	for _, u := range units {
+		if u == "pullgate-listen.service" {
+			later = append(later, u)
+		} else {
+			now = append(now, u)
+		}
+	}
+	if len(later) > 0 {
+		if _, err := s.Systemctl(ctx, append([]string{"enable"}, later...)...); err != nil {
+			return fmt.Errorf("systemctl enable %s: %w. Fix: see journalctl -xe, fix the unit, then run pullgate bootstrap again", strings.Join(later, " "), err)
+		}
+	}
+	if _, err := s.Systemctl(ctx, append([]string{"enable", "--now"}, now...)...); err != nil {
+		return fmt.Errorf("systemctl enable --now %s: %w. Fix: see journalctl -xe, fix the unit, then run pullgate bootstrap again", strings.Join(now, " "), err)
 	}
 	// A listener that ran before has the old listener.toml: restart it.
 	if _, err := s.Systemctl(ctx, "restart", "pullgate-listen.service"); err != nil {

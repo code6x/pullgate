@@ -1307,8 +1307,10 @@ of `--apply` (section 20).
    enabled and run (`BeforeEnable`). Any problem: it enables nothing and
    fails with "pullgate doctor found N problem(s) … no unit was enabled".
    Else it runs `systemctl enable --now` for every unit of `pullgate units`
-   `enable` (NAME is each instance) and restarts `pullgate-listen.service`
-   (so it reads the new `listener.toml`), then doctor again with every check.
+   `enable` (NAME is each instance), but `systemctl enable` only for
+   `pullgate-listen.service`, and then restarts it (so it reads the new
+   `listener.toml`; one start, so no listener is killed in its first
+   request), then doctor again with every check.
    A problem then fails bootstrap with "the units are enabled, but …".
 
 **pullgate's own files.** `listener.toml`, `bot-token`, `NAME.key`,
