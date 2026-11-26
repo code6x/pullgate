@@ -846,7 +846,9 @@ or select a SHA outside the gate's open question.
 The Windows agent verifies the system paths that contain ProgramData
 and Git. Ordinary users may have read access to system paths and may
 create their own children in ProgramData. The ACL check rejects grants
-that allow them to replace existing protected entries. An apply or
+that allow them to replace existing protected entries. The system path
+check accepts hard-linked system files because NTFS enforces their ACL
+under every name. Managed gate files still require one link. An apply or
 health script must be under the protected root. The Windows config
 rejects pre-approval commands. The approval still names one full SHA
 from the gate's own state.

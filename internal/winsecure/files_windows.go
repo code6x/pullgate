@@ -96,10 +96,10 @@ func Check(path string, directory bool) error {
 }
 
 func check(path string, directory bool) error {
-	return checkWithPolicy(path, directory, checkDescriptor)
+	return checkWithPolicy(path, directory, true, checkDescriptor)
 }
 
-func checkWithPolicy(path string, directory bool, validate func(*windows.SECURITY_DESCRIPTOR) error) error {
+func checkWithPolicy(path string, directory, singleLink bool, validate func(*windows.SECURITY_DESCRIPTOR) error) error {
 	name, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return err
@@ -111,15 +111,15 @@ func checkWithPolicy(path string, directory bool, validate func(*windows.SECURIT
 		return err
 	}
 	defer func() { _ = windows.CloseHandle(h) }()
-	return checkHandle(h, directory, validate)
+	return checkHandle(h, directory, singleLink, validate)
 }
 
 // CheckFileHandle checks the ACL and type of an already opened file.
 func CheckFileHandle(file *os.File) error {
-	return checkHandle(windows.Handle(file.Fd()), false, checkDescriptor)
+	return checkHandle(windows.Handle(file.Fd()), false, true, checkDescriptor)
 }
 
-func checkHandle(h windows.Handle, directory bool, validate func(*windows.SECURITY_DESCRIPTOR) error) error {
+func checkHandle(h windows.Handle, directory, singleLink bool, validate func(*windows.SECURITY_DESCRIPTOR) error) error {
 	var info windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
 		return err
@@ -130,7 +130,7 @@ func checkHandle(h windows.Handle, directory bool, validate func(*windows.SECURI
 	if (info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0) != directory {
 		return errors.New("unexpected file type")
 	}
-	if !directory && info.NumberOfLinks != 1 {
+	if singleLink && !directory && info.NumberOfLinks != 1 {
 		return errors.New("file has multiple hard links")
 	}
 	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)

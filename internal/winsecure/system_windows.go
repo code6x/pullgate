@@ -39,7 +39,9 @@ func checkSystemPath(path string, directory, dataRoot bool) error {
 	}
 	for _, item := range pathChain(root, path) {
 		dir := item != path || directory
-		if err := checkWithPolicy(item, dir, func(sd *windows.SECURITY_DESCRIPTOR) error {
+		// Trusted system files may be hard-linked. NTFS applies the
+		// checked ACL to the file through every one of its names.
+		if err := checkWithPolicy(item, dir, false, func(sd *windows.SECURITY_DESCRIPTOR) error {
 			return checkSystemDescriptor(sd, item == root || (dataRoot && item == path))
 		}); err != nil {
 			return fmt.Errorf("check system path %s: %w. Fix: restore the Windows ACL or use an administrator-controlled installation", item, err)
