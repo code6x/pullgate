@@ -165,7 +165,7 @@ Bootstrap runs doctor itself. Run it again any time, as root:
 pullgate doctor
 ```
 
-**`pullgate doctor [NAME] [--telegram]`** prints one line per check: `ok`,
+**`pullgate doctor [NAME] [--telegram] [--github]`** prints one line per check: `ok`,
 `note` (worth a look, not a problem), or `PROBLEM` with the fix in the same
 line. It exits 1 on any problem. It checks that the units of this version
 are installed and enabled and that the listener runs; that the configs,
@@ -174,7 +174,8 @@ safe; the owners and modes of the state and the spool directories, as the
 kernel kept them; that the listener user can read the outbox (it tries it
 with a test file); and that git can read the branch with the deploy key.
 `--telegram` also asks Telegram whether the token works and the bot can
-reach your chat (it sends no message). Run it after the install, after an
+reach your chat (it sends no message). `--github` reads the repo and its
+deployments with the `[github]` token (GET only). Run it after the install, after an
 update, and whenever a question does not come. Before the first run, it
 notes the directories that the first run makes.
 
@@ -555,6 +556,78 @@ sections 5 and 11.
 for the tip is still open (for example its Telegram message was lost), it
 closes that question too: the next run sends a new question, and the Apply
 button of the old one no longer works.
+
+## GitHub deployments (optional)
+
+If the config repo is on GitHub, pullgate can post each apply to it as a
+**deployment**. The repo's **Deployments** page (on the right of the repo
+page, and at `https://github.com/OWNER/REPO/deployments`) then shows, for
+each host, which commit is live and since when, with the history:
+
+| on the host | on GitHub |
+|---|---|
+| the apply starts | a new deployment of the commit, `in_progress` |
+| applied | `success`: this commit is live; the one before becomes `inactive` |
+| failed, rolled back | `failure` on the new commit; the old commit gets a new deployment and `success` |
+| failed, the rollback failed too (broken) | `failure`, then `error` on the old commit |
+| failed, held | `failure` |
+| a fix forward passed or failed | `success` or `error` |
+| an apply that was cut off | `error`: "cut off: check the host" |
+
+It is off by default. A GitHub problem (GitHub down, a timeout, a refused
+token) never stops or changes a deploy: the posts wait in a root-only
+queue and go out with a later run, for up to 24 hours. Only a bad token
+file on the host stops the instance, like a bad deploy key.
+
+**1. Make a token.** On GitHub: Settings, Developer settings, Personal
+access tokens, **Fine-grained tokens**, Generate new token. Pick:
+
+- an **expiry date** (make a new token before it ends; pullgate tells you
+  once a day when GitHub refuses the token);
+- **Repository access: Only select repositories**, and only the config
+  repo;
+- **Repository permissions: Deployments: Read and write**, and nothing
+  else (GitHub adds Metadata: Read itself).
+
+**2. Put it on the host**, as root, with only the token in the file:
+
+```sh
+install -m 600 -o root -g root /dev/null /etc/pullgate/NAME.github-token
+cat > /etc/pullgate/NAME.github-token   # paste the token, then Enter and Ctrl-D
+```
+
+**3. Add the block** to `/etc/pullgate/NAME.toml`:
+
+```toml
+[github]
+repository = "owner/config-repo"                # the repo of [repo] url
+environment = "example-host"                    # one name for each host
+token_file = "/etc/pullgate/NAME.github-token"  # root, mode 0600
+# api_url = "https://api.github.com"            # the default; for GitHub Enterprise give its API url
+```
+
+- **One environment for each host.** Hosts that follow one repo often use
+  the same instance name, so the environment must be different for each
+  host, not for each instance. If two hosts shared one, a `success` on one host would make
+  the other host's deployment `inactive`, and GitHub would show the wrong
+  commit.
+- **Everyone who can read the repo sees the environment names**, and when
+  each apply happened, failed, became broken or was cut off. On a public
+  repo, use a name that does not name the host (for example `site-a`).
+- **Deployment events start workflows.** Each deployment and status sends a
+  `deployment` or `deployment_status` event. A GitHub Actions workflow with
+  `on: deployment` or `on: deployment_status` runs the workflow file of the
+  deployed commit, with the repo's secrets, and webhooks and apps get the
+  events too. Someone with the token could start them for any commit. So:
+  **no deployment workflows and no deployment webhooks on the config
+  repo.**
+
+**4. Check it**, as root: `pullgate doctor NAME --github` reads the repo
+and its deployments with the token (it writes nothing; write access is
+checked only by the first post). `pullgate status NAME` shows the last
+post and how many posts wait. A recipe never sets `[github]`, and
+`bootstrap --recipe`, `recipe update` and `recipe use` keep the block of
+the old `NAME.toml`. Linux only.
 
 ## Example 1: a config file and a service reload
 

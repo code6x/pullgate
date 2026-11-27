@@ -146,10 +146,12 @@ func (e *Env) Run(ctx context.Context) (Result, error) {
 	defer func() { _ = lock.Close() }()
 	// GitHub reports (DESIGN.md section 22): only with the lock, so no
 	// step of another process is half way; sent on every exit below.
-	e.ghOpen()
-	defer e.ghDone()
-	if st, err := e.Dir.Load(); err == nil {
-		e.ghCheck(st)
+	if e.Cfg.GitHub != nil {
+		e.ghOpen()
+		defer e.ghDone()
+		if st, err := e.Dir.Load(); err == nil {
+			e.ghCheck(st)
+		}
 	}
 	paused, off := e.Dir.Paused(), e.Cfg.Mode == config.ModeOff
 	if (paused || off) && !e.Spool.HasCheck() {
