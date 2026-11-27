@@ -109,9 +109,9 @@ func TestAnswers(t *testing.T) {
 			w.WriteHeader(201)
 			_, _ = io.WriteString(w, `{"id": 7}`)
 		}))
-		k := f.q.Start(RoleApply, shaA, "example-host", DescApplyStarted, f.now)
+		k := f.q.Start(RoleApply, shaA, Target{API: srv.URL, Repository: "owner/config-repo", Environment: "example-host"}, DescApplyStarted, f.now)
 		f.q.Status(k, Success, DescApplied, f.now)
-		k2 := f.q.Start(RoleApply, shaB, "example-host", DescApplyStarted, f.now)
+		k2 := f.q.Start(RoleApply, shaB, Target{API: srv.URL, Repository: "owner/config-repo", Environment: "example-host"}, DescApplyStarted, f.now)
 		s := f.sender()
 		s.C.API, s.C.HTTP = srv.URL, NewHTTPClient(nil)
 		if c.status {
@@ -154,7 +154,7 @@ func TestStatusBeforeItsCreateWasSentFindsItAfterARestart(t *testing.T) {
 		}
 		return 0, ""
 	}
-	k := f.q.Start(RoleApply, shaA, "example-host", DescApplyStarted, f.now)
+	k := f.q.Start(RoleApply, shaA, Target{API: f.srv.URL, Repository: "owner/config-repo", Environment: "example-host"}, DescApplyStarted, f.now)
 	f.q.Status(k, Success, DescApplied, f.now)
 	if err := f.q.Save(); err != nil {
 		t.Fatal(err)
@@ -179,7 +179,7 @@ func TestStatusBeforeItsCreateWasSentFindsItAfterARestart(t *testing.T) {
 func TestDroppedAfter24Hours(t *testing.T) {
 	f := newTfix(t)
 	f.srv.Answer = func(fakegh.Call) (int, string) { return 500, "" }
-	k := f.q.Start(RoleApply, shaA, "example-host", DescApplyStarted, f.now)
+	k := f.q.Start(RoleApply, shaA, Target{API: f.srv.URL, Repository: "owner/config-repo", Environment: "example-host"}, DescApplyStarted, f.now)
 	f.now = f.now.Add(23 * time.Hour)
 	f.q.Status(k, Success, DescApplied, f.now)
 	f.send()
@@ -188,7 +188,7 @@ func TestDroppedAfter24Hours(t *testing.T) {
 	}
 	f.now = f.now.Add(time.Hour)
 	f.srv.Answer = nil
-	k2 := f.q.Start(RoleApply, shaB, "example-host", DescApplyStarted, f.now)
+	k2 := f.q.Start(RoleApply, shaB, Target{API: f.srv.URL, Repository: "owner/config-repo", Environment: "example-host"}, DescApplyStarted, f.now)
 	f.send()
 	if len(f.q.Posts) != 0 || !f.q.find(k).Dropped || f.q.find(k2).ID == 0 {
 		t.Fatalf("after 24 hours the create and its statuses are dropped: %+v", f.q.Posts)
@@ -206,7 +206,7 @@ func TestDroppedAfter24Hours(t *testing.T) {
 func TestTokenRefusedOncePerDay(t *testing.T) {
 	f := newTfix(t)
 	f.srv.Answer = func(fakegh.Call) (int, string) { return 401, "" }
-	f.q.Start(RoleApply, shaA, "example-host", DescApplyStarted, f.now)
+	f.q.Start(RoleApply, shaA, Target{API: f.srv.URL, Repository: "owner/config-repo", Environment: "example-host"}, DescApplyStarted, f.now)
 	f.send()
 	f.now = f.now.Add(time.Hour)
 	f.send()
@@ -214,7 +214,7 @@ func TestTokenRefusedOncePerDay(t *testing.T) {
 		t.Fatalf("once a day, fixed text: %q\n%s", f.ref, f.log.String())
 	}
 	f.now = f.now.Add(24 * time.Hour)
-	f.q.Start(RoleApply, shaB, "example-host", DescApplyStarted, f.now)
+	f.q.Start(RoleApply, shaB, Target{API: f.srv.URL, Repository: "owner/config-repo", Environment: "example-host"}, DescApplyStarted, f.now)
 	f.send()
 	if len(f.ref) != 2 {
 		t.Fatal("the next day again")
@@ -224,7 +224,7 @@ func TestTokenRefusedOncePerDay(t *testing.T) {
 func TestSendStopsAtTheDeadline(t *testing.T) {
 	f := newTfix(t)
 	f.srv.Hang(t)
-	f.q.Start(RoleApply, shaA, "example-host", DescApplyStarted, f.now)
+	f.q.Start(RoleApply, shaA, Target{API: f.srv.URL, Repository: "owner/config-repo", Environment: "example-host"}, DescApplyStarted, f.now)
 	s := f.sender()
 	s.Deadline = time.Now().Add(300 * time.Millisecond)
 	start := time.Now()
@@ -243,7 +243,7 @@ func TestAnswerSizeLimit(t *testing.T) {
 	f.srv.Answer = func(fakegh.Call) (int, string) {
 		return 201, `{"id": 5, "x": "` + strings.Repeat("a", maxAnswer) + `"}`
 	}
-	f.q.Start(RoleApply, shaA, "example-host", DescApplyStarted, f.now)
+	f.q.Start(RoleApply, shaA, Target{API: f.srv.URL, Repository: "owner/config-repo", Environment: "example-host"}, DescApplyStarted, f.now)
 	f.send()
 	if len(f.q.Posts) != 0 || !f.q.Deployments[0].Dropped || f.q.Deployments[0].ID != 0 {
 		t.Fatalf("a too large answer is not read: %+v", f.q.Deployments[0])
@@ -324,7 +324,7 @@ func TestQueueModesUnderUmask022(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	q.Start(RoleApply, shaA, "example-host", DescApplyStarted, time.Now())
+	q.Start(RoleApply, shaA, Target{API: "http://127.0.0.1:1", Repository: "owner/config-repo", Environment: "example-host"}, DescApplyStarted, time.Now())
 	if err := q.Save(); err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +365,7 @@ func TestQueueModesUnderUmask022(t *testing.T) {
 
 func TestCreateAndStatusBodies(t *testing.T) {
 	f := newTfix(t)
-	k := f.q.Start(RoleApply, shaA, "example-host", DescApplyStarted, f.now)
+	k := f.q.Start(RoleApply, shaA, Target{API: f.srv.URL, Repository: "owner/config-repo", Environment: "example-host"}, DescApplyStarted, f.now)
 	f.q.Status(k, Failure, DescHeld, f.now)
 	f.send()
 	calls := f.srv.Calls()
@@ -405,28 +405,39 @@ func equal(a, b any) bool {
 
 func TestNewestSeesADroppedAttempt(t *testing.T) {
 	f := newTfix(t)
-	f.q.Start(RoleApply, shaA, "example-host", DescApplyStarted, f.now)
+	f.q.Start(RoleApply, shaA, Target{API: f.srv.URL, Repository: "owner/config-repo", Environment: "example-host"}, DescApplyStarted, f.now)
 	f.q.Status(1, Failure, DescHeld, f.now)
-	k := f.q.Start(RoleApply, shaA, "example-host", DescApplyStarted, f.now)
+	k := f.q.Start(RoleApply, shaA, Target{API: f.srv.URL, Repository: "owner/config-repo", Environment: "example-host"}, DescApplyStarted, f.now)
 	f.q.drop(f.q.find(k))
 	if d := f.q.Newest(RoleApply, shaA, false); d == nil || d.Key != k {
 		t.Fatalf("the newest attempt, also a dropped one: %+v", d)
 	}
 }
 
-func TestQueuedDeploymentKeepsItsEnvironment(t *testing.T) {
-	f := newTfix(t)
-	f.q.Start(RoleApply, shaA, "old-env", DescApplyStarted, f.now)
-	f.send() // the client has example-host
-	if c := f.srv.Calls(); len(c) == 0 || c[0].Body["environment"] != "old-env" {
-		t.Fatalf("%+v", c)
+// A deployment queued for another environment, repo or server (the
+// config changed) is never sent.
+func TestQueuedDeploymentIsNotMoved(t *testing.T) {
+	for _, to := range []Target{
+		{API: "", Repository: "owner/config-repo", Environment: "old-env"},
+		{API: "", Repository: "owner/old-repo", Environment: "example-host"},
+		{API: "http://127.0.0.1:1", Repository: "owner/config-repo", Environment: "example-host"},
+	} {
+		f := newTfix(t)
+		if to.API == "" {
+			to.API = f.srv.URL
+		}
+		f.q.Start(RoleApply, shaA, to, DescApplyStarted, f.now)
+		f.send() // the client has example-host, owner/config-repo, f.srv.URL
+		if len(f.srv.All()) != 0 || len(f.q.Posts) != 0 || !strings.Contains(f.log.String(), "changed since the post was queued") {
+			t.Fatalf("%+v: %v", to, f.srv.Steps())
+		}
 	}
 }
 
 func TestQueueIsBounded(t *testing.T) {
 	f := newTfix(t)
 	for i := 0; i < maxPosts; i++ {
-		f.q.Start(RoleApply, shaA, "example-host", DescApplyStarted, f.now)
+		f.q.Start(RoleApply, shaA, Target{API: f.srv.URL, Repository: "owner/config-repo", Environment: "example-host"}, DescApplyStarted, f.now)
 	}
 	if len(f.q.Posts) > maxPosts+1 {
 		t.Fatalf("%d posts", len(f.q.Posts))
@@ -453,5 +464,20 @@ func TestCutAnswerOfACreateIsTriedAgain(t *testing.T) {
 	c := &Client{API: srv.URL, Repository: "owner/config-repo", Token: "t", HTTP: NewHTTPClient(nil)}
 	if a := c.Post(context.Background(), &Deployment{SHA: shaA}, &Post{Create: true}); a.Kind != Retry {
 		t.Fatalf("%+v", a)
+	}
+}
+
+func TestHTTPEdges(t *testing.T) {
+	f := newTfix(t)
+	for _, c := range []struct {
+		code int
+		body string
+		kind Kind
+	}{{600, "", Drop}, {999, "", Drop}, {403, `{"message": "You have exceeded a secondary rate limit"}`, Retry}} {
+		f.srv.Answer = func(fakegh.Call) (int, string) { return c.code, c.body }
+		a := f.sender().C.Post(context.Background(), &Deployment{SHA: shaA}, &Post{Create: true})
+		if a.Kind != c.kind || a.Refused {
+			t.Fatalf("HTTP %d: %+v", c.code, a)
+		}
 	}
 }

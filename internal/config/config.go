@@ -503,7 +503,8 @@ func CheckAPIURL(s, def string) error {
 	case err != nil:
 		return fmt.Errorf("%q is not a url. Fix: use %s", s, def)
 	case u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.Fragment != "":
-		return fmt.Errorf("%q has user info, a query or a fragment. Fix: use %s", s, def)
+		// Not quoted: user info may hold a password.
+		return fmt.Errorf("the url has user info, a query or a fragment. Fix: use %s", def)
 	case u.Scheme == "https" && u.Hostname() != "":
 		return nil
 	case u.Scheme == "http" && u.Hostname() == "127.0.0.1" && u.Port() != "":

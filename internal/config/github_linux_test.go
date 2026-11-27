@@ -80,6 +80,9 @@ func TestGitHubBlockRefused(t *testing.T) {
 			t.Errorf("%s: no error", n)
 			continue
 		}
+		if strings.Contains(err.Error(), "u@") {
+			t.Errorf("%s: the error must not quote user info: %v", n, err)
+		}
 		if strings.Contains(n, "api") && !strings.Contains(err.Error(), DefaultGitHubAPI) {
 			t.Errorf("%s: the fix must name %s: %v", n, DefaultGitHubAPI, err)
 		}

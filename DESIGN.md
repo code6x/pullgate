@@ -1694,7 +1694,9 @@ command, never a host name.
 sets the modes itself and reads them back, as the apply unit has
 `UMask=0022`). Each deployment has a local key; its statuses name the key.
 The sender keeps the GitHub id of each key in the queue, and each
-deployment keeps the environment it was queued with. `state.json` does not
+deployment keeps the repo, the API url and the environment it was queued
+with: when `[github]` changes, its posts that wait are dropped, so an id is
+never sent to another repo or server. `state.json` does not
 change. At most 1000 posts wait: in a very long outage the oldest
 deployment is dropped first, so the file always stays small enough to be
 read.
@@ -1746,7 +1748,8 @@ gets a Telegram notice, "the GitHub token of instance NAME is refused: make
 a new one for REPO with Deployments: read and write". The answer is read up
 to 64 KiB, and only the deployment id is taken from it. A redirect is never
 followed: a renamed repo answers with one, and the log says "the repo
-moved". TLS 1.2 or newer, and no proxy, as in section 19. GitHub's answer
+moved". TLS 1.2 or newer, no proxy (as in section 19), and no idle connections
+(Go's client logs bytes that come on an idle one). GitHub's answer
 text is never logged or shown: `pullgate status` shows the HTTP code and a
 fixed reason, because `/status` sends it to Telegram. Apart from the
 token-refused notice, a GitHub problem never changes the apply, the health

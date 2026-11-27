@@ -262,8 +262,12 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 	if e.Cfg.OnFailure == config.OnFailureRollback && old != "" {
 		e.ghStatus(gk, ghdeploy.Failure, ghdeploy.DescRollbackStarts)
 		rk := e.ghStart("rollback", old)
+		applying := st.InProgress
 		st.InProgress = &state.InProgress{Phase: "rollback", SHA: sha, OldSHA: old, Started: e.now()}
 		if err := e.Dir.Save(st); err != nil {
+			// The rollback never runs: the save at the end of Apply keeps
+			// the apply phase, which the next start cuts off.
+			st.InProgress = applying
 			return "", err
 		}
 		e.ghSend() // the failure and the rollback's create go out before the rollback

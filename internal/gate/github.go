@@ -55,9 +55,14 @@ func (e *Env) ghStart(role, sha string) int64 {
 	if role == ghdeploy.RoleRollback {
 		desc = ghdeploy.DescRollbackStarted
 	}
-	k := e.gh.q.Start(role, sha, e.Cfg.GitHub.Environment, desc, e.now())
+	k := e.gh.q.Start(role, sha, e.ghTarget(), desc, e.now())
 	e.ghSave()
 	return k
+}
+
+func (e *Env) ghTarget() ghdeploy.Target {
+	g := e.Cfg.GitHub
+	return ghdeploy.Target{API: g.API(), Repository: g.Repository, Environment: g.Environment}
 }
 
 // ghStatus queues a status on the deployment key and saves the queue.

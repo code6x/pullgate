@@ -71,6 +71,9 @@ func (e *Env) Status(w io.Writer, f StatusFlags) error {
 			return err
 		}
 	}
+	if f.Resume {
+		e.ghSend() // so the status below shows the cut-off as sent
+	}
 	if closed != nil && !closed.Auto {
 		// After the save: the listener forgets the code only when root
 		// has forgotten it too.

@@ -37,6 +37,9 @@ func NewHTTPClient(roots *x509.CertPool) *http.Client {
 			TLSHandshakeTimeout:    CallTimeout,
 			ResponseHeaderTimeout:  CallTimeout,
 			MaxResponseHeaderBytes: 64 << 10,
+			// No idle connections: the transport logs bytes that come on
+			// an idle one, and those could echo the token.
+			DisableKeepAlives: true,
 		},
 		// A renamed repo answers with a redirect: never follow it.
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -95,13 +98,9 @@ func (c *Client) Post(ctx context.Context, d *Deployment, p *Post) Answer {
 	var body any
 	url := c.repoURL() + "/deployments"
 	if p.Create {
-		env := c.Environment
-		if d.Environment != "" {
-			env = d.Environment // the environment when it was queued
-		}
 		body = createBody{
 			Ref: d.SHA, Task: "deploy", AutoMerge: false, RequiredContexts: []string{},
-			Environment: env, Description: "pullgate " + d.Role,
+			Environment: d.Environment, Description: "pullgate " + d.Role,
 		}
 	} else {
 		url += "/" + strconv.FormatInt(d.ID, 10) + "/statuses"
@@ -133,11 +132,11 @@ func (c *Client) Post(ctx context.Context, d *Deployment, p *Post) Answer {
 		a.Kind, a.ID = Sent, r.ID
 	case code >= 300 && code < 400:
 		a.Kind, a.Reason = Drop, fmt.Sprintf("HTTP %d: the repo moved. Fix: set repository in [github] to its new name", code)
-	case code >= 500:
+	case code >= 500 && code <= 599:
 		a.Kind, a.Reason = Retry, fmt.Sprintf("HTTP %d: an error of GitHub", code)
 	case code == http.StatusTooManyRequests:
 		a.Kind, a.Reason = Retry, "HTTP 429: the rate limit of GitHub"
-	case code == http.StatusForbidden && (hdr.Get("X-Ratelimit-Remaining") == "0" || hdr.Get("Retry-After") != ""):
+	case code == http.StatusForbidden && (hdr.Get("X-Ratelimit-Remaining") == "0" || hdr.Get("Retry-After") != "" || bytes.Contains(bytes.ToLower(ans), []byte("rate limit"))):
 		a.Kind, a.Reason = Retry, "HTTP 403: the rate limit of GitHub"
 	case code == http.StatusUnauthorized || code == http.StatusForbidden:
 		a.Kind, a.Reason, a.Refused = Retry, fmt.Sprintf("HTTP %d: the token is refused", code), true
@@ -256,6 +255,13 @@ func (s *Sender) Send(ctx context.Context) {
 			q.drop(d)
 			changed = true
 			continue
+		case d.Repository != s.C.Repository || d.API != s.C.API || d.Environment != s.C.Environment:
+			// The config changed: never send it to another repo or server,
+			// where its id could name another deployment.
+			s.Log.Warn("github: [github] changed since the post was queued; dropped", "post", p.What(), "sha", d.SHA)
+			q.drop(d)
+			changed = true
+			continue
 		case !p.Create && d.ID == 0:
 			// Its create was never sent: it cannot be sent.
 			s.Log.Warn("github: a status without its deployment; dropped", "post", p.What(), "sha", d.SHA)
@@ -301,7 +307,8 @@ func (s *Sender) refused(now time.Time) {
 	q.RefusedNote = now
 	// Saved before the notice, so a crash never repeats it the same day.
 	if err := q.Save(); err != nil {
-		s.Log.Error("save the GitHub queue", "err", err)
+		s.Log.Error("save the GitHub queue; the token-refused notice waits", "err", err)
+		return
 	}
 	text := RefusedText(s.Instance, s.C.Repository)
 	s.Log.Error(text)

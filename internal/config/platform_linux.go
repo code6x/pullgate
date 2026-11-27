@@ -160,7 +160,7 @@ func (c *Instance) ReadGitHubToken(uid uint32) (string, error) {
 		return "", c.errf("[github] token_file", "read %s: %v. Fix: make it a regular file, owned by root, mode 0600, with only the token in it", g.TokenFile, err)
 	}
 	tok := strings.TrimSuffix(string(b), "\n")
-	bad := tok == ""
+	bad := tok == "" || len(b) > MaxGitHubToken // it grew after the check
 	for _, r := range tok {
 		if r <= ' ' || r >= 0x7f {
 			bad = true

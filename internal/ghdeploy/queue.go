@@ -78,6 +78,10 @@ type Deployment struct {
 	// Environment is the environment when the deployment was queued, so a
 	// change of the config does not move a queued deployment.
 	Environment string `json:"environment"`
+	// Repository and API are where it was queued: a queued deployment is
+	// never sent to another repo or server.
+	Repository string `json:"repository"`
+	API        string `json:"api"`
 	// Final is the last final status (success, failure or error) that was
 	// queued; "" while the deployment is open.
 	Final   string    `json:"final,omitempty"`
@@ -88,6 +92,11 @@ type Deployment struct {
 // Open reports whether the deployment was created (queued or sent) and
 // has no final status queued or sent.
 func (d *Deployment) Open() bool { return d.Final == "" && !d.Dropped }
+
+// Target is where a deployment goes.
+type Target struct {
+	API, Repository, Environment string
+}
 
 // Post is one GitHub API call that waits: the create of a deployment, or
 // one status on it.
@@ -192,7 +201,7 @@ func (q *Queue) find(key int64) *Deployment {
 
 // Start queues the create of a deployment for sha, and its in_progress
 // status. It returns the key of the deployment.
-func (q *Queue) Start(role, sha, env, desc string, now time.Time) int64 {
+func (q *Queue) Start(role, sha string, to Target, desc string, now time.Time) int64 {
 	// A bounded queue: a long outage drops the oldest posts first, so the
 	// file always stays below the size that Read takes.
 	for len(q.Posts) >= maxPosts {
@@ -200,7 +209,7 @@ func (q *Queue) Start(role, sha, env, desc string, now time.Time) int64 {
 	}
 	k := q.NextKey
 	q.NextKey++
-	q.Deployments = append(q.Deployments, &Deployment{Key: k, Role: role, SHA: sha, Environment: env, Queued: now})
+	q.Deployments = append(q.Deployments, &Deployment{Key: k, Role: role, SHA: sha, Environment: to.Environment, Repository: to.Repository, API: to.API, Queued: now})
 	q.Posts = append(q.Posts, &Post{Key: k, Create: true, Queued: now}, &Post{Key: k, State: InProgress, Description: desc, Queued: now})
 	q.prune()
 	return k

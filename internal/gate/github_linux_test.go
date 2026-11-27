@@ -293,7 +293,7 @@ func TestGitHubCrashBeforeTheStateSave(t *testing.T) {
 	a := f.applyNew("one")
 	b := f.commit("second", "two", nil)
 	q := f.queue()
-	q.Start(ghdeploy.RoleApply, b, "example-host", ghdeploy.DescApplyStarted, f.now)
+	q.Start(ghdeploy.RoleApply, b, ghdeploy.Target{API: f.srv.URL, Repository: "owner/config-repo", Environment: "example-host"}, ghdeploy.DescApplyStarted, f.now)
 	if err := q.Save(); err != nil {
 		t.Fatal(err)
 	}
@@ -312,9 +312,9 @@ func TestGitHubCrashBeforeTheRollbackSave(t *testing.T) {
 	a := f.applyNew("one")
 	b := f.commit("second", "two", nil)
 	q := f.queue()
-	k := q.Start(ghdeploy.RoleApply, b, "example-host", ghdeploy.DescApplyStarted, f.now)
+	k := q.Start(ghdeploy.RoleApply, b, ghdeploy.Target{API: f.srv.URL, Repository: "owner/config-repo", Environment: "example-host"}, ghdeploy.DescApplyStarted, f.now)
 	q.Status(k, ghdeploy.Failure, ghdeploy.DescRollbackStarts, f.now)
-	q.Start(ghdeploy.RoleRollback, a, "example-host", ghdeploy.DescRollbackStarted, f.now)
+	q.Start(ghdeploy.RoleRollback, a, ghdeploy.Target{API: f.srv.URL, Repository: "owner/config-repo", Environment: "example-host"}, ghdeploy.DescRollbackStarted, f.now)
 	if err := q.Save(); err != nil {
 		t.Fatal(err)
 	}
@@ -436,7 +436,7 @@ func TestGitHubCheckRunWaitingForTheLockIsNoCutOff(t *testing.T) {
 	}
 	// What an apply does before its command runs.
 	q := f.queue()
-	k := q.Start(ghdeploy.RoleApply, b, "example-host", ghdeploy.DescApplyStarted, f.now)
+	k := q.Start(ghdeploy.RoleApply, b, ghdeploy.Target{API: f.srv.URL, Repository: "owner/config-repo", Environment: "example-host"}, ghdeploy.DescApplyStarted, f.now)
 	if err := q.Save(); err != nil {
 		t.Fatal(err)
 	}
@@ -480,7 +480,7 @@ func TestGitHubBusyTimerRunChecksNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	q := f.queue()
-	q.Start(ghdeploy.RoleApply, b, "example-host", ghdeploy.DescApplyStarted, f.now)
+	q.Start(ghdeploy.RoleApply, b, ghdeploy.Target{API: f.srv.URL, Repository: "owner/config-repo", Environment: "example-host"}, ghdeploy.DescApplyStarted, f.now)
 	if err := q.Save(); err != nil {
 		t.Fatal(err)
 	}
@@ -521,7 +521,7 @@ func TestGitHubSendsWhenPausedOffHeldBrokenOrCutOff(t *testing.T) {
 			t.Fatal(err)
 		}
 		q := f.queue()
-		q.Start(ghdeploy.RoleApply, b, "example-host", ghdeploy.DescApplyStarted, f.now)
+		q.Start(ghdeploy.RoleApply, b, ghdeploy.Target{API: f.srv.URL, Repository: "owner/config-repo", Environment: "example-host"}, ghdeploy.DescApplyStarted, f.now)
 		if err := q.Save(); err != nil {
 			t.Fatal(err)
 		}
