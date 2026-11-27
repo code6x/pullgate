@@ -304,9 +304,11 @@ func (s *Sender) refused(now time.Time) {
 	if !q.RefusedNote.IsZero() && now.Sub(q.RefusedNote) < 24*time.Hour && !q.RefusedNote.After(now) {
 		return
 	}
+	prev := q.RefusedNote
 	q.RefusedNote = now
 	// Saved before the notice, so a crash never repeats it the same day.
 	if err := q.Save(); err != nil {
+		q.RefusedNote = prev // not sent: the next try sends it
 		s.Log.Error("save the GitHub queue; the token-refused notice waits", "err", err)
 		return
 	}

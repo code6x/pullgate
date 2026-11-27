@@ -831,7 +831,11 @@ an error, `pullgate status`, `state.json`, the queue or the environment of
 look for it everywhere). A recipe template cannot set `[github]`. Every
 description is fixed text. The client takes no proxy, no redirect and no
 TLS older than 1.2, reads at most 64 KiB of an answer and only the
-deployment id from it, and never logs or shows GitHub's answer text.
+deployment id from it, and never logs or shows GitHub's answer text. The
+queue holds no secret: the posts, the GitHub ids, and the repo, API url
+and environment that each deployment was queued with. When `[github]`
+changes, the posts that wait for the old values are dropped, so an id is
+never sent to another server. At most 1000 posts wait.
 
 *GitHub cannot change a deploy.* A post is a report in a root-only queue.
 GitHub down, slow, or answering with any error never changes the apply,

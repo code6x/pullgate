@@ -71,6 +71,7 @@ func TestGitHubBlockRefused(t *testing.T) {
 		"unclean token":     rep("/etc/pullgate/x.github-token", "/etc/pullgate/../x"),
 		"http api":          good + ghBlock + `api_url = "http://api.github.example"` + "\n",
 		"user info api":     good + ghBlock + `api_url = "https://u@api.github.com"` + "\n",
+		"bad user info api": good + ghBlock + `api_url = "https://u:p@api.github.com:bad"` + "\n",
 		"unknown key":       good + ghBlock + `token = "x"` + "\n",
 		"key in upper case": good + strings.Replace(ghBlock, "repository", "Repository", 1),
 	}
@@ -80,7 +81,7 @@ func TestGitHubBlockRefused(t *testing.T) {
 			t.Errorf("%s: no error", n)
 			continue
 		}
-		if strings.Contains(err.Error(), "u@") {
+		if strings.Contains(err.Error(), "u@") || strings.Contains(err.Error(), "u:p@") {
 			t.Errorf("%s: the error must not quote user info: %v", n, err)
 		}
 		if strings.Contains(n, "api") && !strings.Contains(err.Error(), DefaultGitHubAPI) {

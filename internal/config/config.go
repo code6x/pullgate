@@ -501,7 +501,8 @@ func CheckAPIURL(s, def string) error {
 	u, err := url.Parse(s)
 	switch {
 	case err != nil:
-		return fmt.Errorf("%q is not a url. Fix: use %s", s, def)
+		// Not quoted: the text may hold user info with a password.
+		return fmt.Errorf("the url cannot be read. Fix: use %s", def)
 	case u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.Fragment != "":
 		// Not quoted: user info may hold a password.
 		return fmt.Errorf("the url has user info, a query or a fragment. Fix: use %s", def)

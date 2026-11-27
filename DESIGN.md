@@ -1740,6 +1740,7 @@ tried again, and goes on after a post that is dropped.
 | answer | what happens |
 |---|---|
 | `201` | sent |
+| `201` on a create whose answer is cut off | tried again (GitHub may then show one more deployment, with no status) |
 | no answer, a timeout, `5xx`, `429`, `401`, `403`, `404` on a create | tried again by the next process, for up to 24 hours after the post was queued |
 | `404` on a status, `409`, `422`, `3xx`, `202`, any other code | dropped at once with a log line, with the statuses that depend on it |
 
