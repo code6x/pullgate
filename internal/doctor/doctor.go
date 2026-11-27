@@ -559,7 +559,7 @@ func (d *doc) github(ctx context.Context, env *gate.Env, sd state.Dir) {
 	}
 	what := "github " + env.Cfg.Name
 	// gate.New read the token file already: it passed its checks.
-	d.ok(what, "[github] is valid, and the token file "+g.TokenFile+" is owned by root with mode 0600; reports go to the environment "+g.Environment+" of "+g.Repository)
+	d.ok(what, "[github] is valid, and the token file "+g.TokenFile+" is owned by root and only root can read it; reports go to the environment "+g.Environment+" of "+g.Repository)
 	dir := ghdeploy.Dir(sd.Path)
 	err := readBack(want{path: dir, uid: int(d.o.UID), gid: -1, mode: 0o700})
 	if err == nil {

@@ -109,9 +109,9 @@ func TestAnswers(t *testing.T) {
 			w.WriteHeader(201)
 			_, _ = io.WriteString(w, `{"id": 7}`)
 		}))
-		k := f.q.Start(RoleApply, shaA, DescApplyStarted, f.now)
+		k := f.q.Start(RoleApply, shaA, "example-host", DescApplyStarted, f.now)
 		f.q.Status(k, Success, DescApplied, f.now)
-		k2 := f.q.Start(RoleApply, shaB, DescApplyStarted, f.now)
+		k2 := f.q.Start(RoleApply, shaB, "example-host", DescApplyStarted, f.now)
 		s := f.sender()
 		s.C.API, s.C.HTTP = srv.URL, NewHTTPClient(nil)
 		if c.status {
@@ -154,7 +154,7 @@ func TestStatusBeforeItsCreateWasSentFindsItAfterARestart(t *testing.T) {
 		}
 		return 0, ""
 	}
-	k := f.q.Start(RoleApply, shaA, DescApplyStarted, f.now)
+	k := f.q.Start(RoleApply, shaA, "example-host", DescApplyStarted, f.now)
 	f.q.Status(k, Success, DescApplied, f.now)
 	if err := f.q.Save(); err != nil {
 		t.Fatal(err)
@@ -179,7 +179,7 @@ func TestStatusBeforeItsCreateWasSentFindsItAfterARestart(t *testing.T) {
 func TestDroppedAfter24Hours(t *testing.T) {
 	f := newTfix(t)
 	f.srv.Answer = func(fakegh.Call) (int, string) { return 500, "" }
-	k := f.q.Start(RoleApply, shaA, DescApplyStarted, f.now)
+	k := f.q.Start(RoleApply, shaA, "example-host", DescApplyStarted, f.now)
 	f.now = f.now.Add(23 * time.Hour)
 	f.q.Status(k, Success, DescApplied, f.now)
 	f.send()
@@ -188,7 +188,7 @@ func TestDroppedAfter24Hours(t *testing.T) {
 	}
 	f.now = f.now.Add(time.Hour)
 	f.srv.Answer = nil
-	k2 := f.q.Start(RoleApply, shaB, DescApplyStarted, f.now)
+	k2 := f.q.Start(RoleApply, shaB, "example-host", DescApplyStarted, f.now)
 	f.send()
 	if len(f.q.Posts) != 0 || !f.q.find(k).Dropped || f.q.find(k2).ID == 0 {
 		t.Fatalf("after 24 hours the create and its statuses are dropped: %+v", f.q.Posts)
@@ -206,7 +206,7 @@ func TestDroppedAfter24Hours(t *testing.T) {
 func TestTokenRefusedOncePerDay(t *testing.T) {
 	f := newTfix(t)
 	f.srv.Answer = func(fakegh.Call) (int, string) { return 401, "" }
-	f.q.Start(RoleApply, shaA, DescApplyStarted, f.now)
+	f.q.Start(RoleApply, shaA, "example-host", DescApplyStarted, f.now)
 	f.send()
 	f.now = f.now.Add(time.Hour)
 	f.send()
@@ -214,7 +214,7 @@ func TestTokenRefusedOncePerDay(t *testing.T) {
 		t.Fatalf("once a day, fixed text: %q\n%s", f.ref, f.log.String())
 	}
 	f.now = f.now.Add(24 * time.Hour)
-	f.q.Start(RoleApply, shaB, DescApplyStarted, f.now)
+	f.q.Start(RoleApply, shaB, "example-host", DescApplyStarted, f.now)
 	f.send()
 	if len(f.ref) != 2 {
 		t.Fatal("the next day again")
@@ -224,7 +224,7 @@ func TestTokenRefusedOncePerDay(t *testing.T) {
 func TestSendStopsAtTheDeadline(t *testing.T) {
 	f := newTfix(t)
 	f.srv.Hang(t)
-	f.q.Start(RoleApply, shaA, DescApplyStarted, f.now)
+	f.q.Start(RoleApply, shaA, "example-host", DescApplyStarted, f.now)
 	s := f.sender()
 	s.Deadline = time.Now().Add(300 * time.Millisecond)
 	start := time.Now()
@@ -243,7 +243,7 @@ func TestAnswerSizeLimit(t *testing.T) {
 	f.srv.Answer = func(fakegh.Call) (int, string) {
 		return 201, `{"id": 5, "x": "` + strings.Repeat("a", maxAnswer) + `"}`
 	}
-	f.q.Start(RoleApply, shaA, DescApplyStarted, f.now)
+	f.q.Start(RoleApply, shaA, "example-host", DescApplyStarted, f.now)
 	f.send()
 	if len(f.q.Posts) != 0 || !f.q.Deployments[0].Dropped || f.q.Deployments[0].ID != 0 {
 		t.Fatalf("a too large answer is not read: %+v", f.q.Deployments[0])
@@ -324,7 +324,7 @@ func TestQueueModesUnderUmask022(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	q.Start(RoleApply, shaA, DescApplyStarted, time.Now())
+	q.Start(RoleApply, shaA, "example-host", DescApplyStarted, time.Now())
 	if err := q.Save(); err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +365,7 @@ func TestQueueModesUnderUmask022(t *testing.T) {
 
 func TestCreateAndStatusBodies(t *testing.T) {
 	f := newTfix(t)
-	k := f.q.Start(RoleApply, shaA, DescApplyStarted, f.now)
+	k := f.q.Start(RoleApply, shaA, "example-host", DescApplyStarted, f.now)
 	f.q.Status(k, Failure, DescHeld, f.now)
 	f.send()
 	calls := f.srv.Calls()
@@ -401,4 +401,57 @@ func equal(a, b any) bool {
 		return ok && len(x) == 0 && len(y) == 0
 	}
 	return a == b
+}
+
+func TestNewestSeesADroppedAttempt(t *testing.T) {
+	f := newTfix(t)
+	f.q.Start(RoleApply, shaA, "example-host", DescApplyStarted, f.now)
+	f.q.Status(1, Failure, DescHeld, f.now)
+	k := f.q.Start(RoleApply, shaA, "example-host", DescApplyStarted, f.now)
+	f.q.drop(f.q.find(k))
+	if d := f.q.Newest(RoleApply, shaA, false); d == nil || d.Key != k {
+		t.Fatalf("the newest attempt, also a dropped one: %+v", d)
+	}
+}
+
+func TestQueuedDeploymentKeepsItsEnvironment(t *testing.T) {
+	f := newTfix(t)
+	f.q.Start(RoleApply, shaA, "old-env", DescApplyStarted, f.now)
+	f.send() // the client has example-host
+	if c := f.srv.Calls(); len(c) == 0 || c[0].Body["environment"] != "old-env" {
+		t.Fatalf("%+v", c)
+	}
+}
+
+func TestQueueIsBounded(t *testing.T) {
+	f := newTfix(t)
+	for i := 0; i < maxPosts; i++ {
+		f.q.Start(RoleApply, shaA, "example-host", DescApplyStarted, f.now)
+	}
+	if len(f.q.Posts) > maxPosts+1 {
+		t.Fatalf("%d posts", len(f.q.Posts))
+	}
+	if d := f.q.find(1); d != nil && !d.Dropped {
+		t.Fatal("the oldest deployment must be dropped first")
+	}
+	if err := f.q.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Read(f.dir, uint32(os.Geteuid())); err != nil {
+		t.Fatalf("a full queue must still be read: %v", err)
+	}
+}
+
+// A 201 whose answer is cut off is tried again, not dropped.
+func TestCutAnswerOfACreateIsTriedAgain(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		w.WriteHeader(201)
+		_, _ = io.WriteString(w, `{"id":`)
+	}))
+	defer srv.Close()
+	c := &Client{API: srv.URL, Repository: "owner/config-repo", Token: "t", HTTP: NewHTTPClient(nil)}
+	if a := c.Post(context.Background(), &Deployment{SHA: shaA}, &Post{Create: true}); a.Kind != Retry {
+		t.Fatalf("%+v", a)
+	}
 }

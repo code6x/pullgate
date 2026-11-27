@@ -95,9 +95,13 @@ func (c *Client) Post(ctx context.Context, d *Deployment, p *Post) Answer {
 	var body any
 	url := c.repoURL() + "/deployments"
 	if p.Create {
+		env := c.Environment
+		if d.Environment != "" {
+			env = d.Environment // the environment when it was queued
+		}
 		body = createBody{
 			Ref: d.SHA, Task: "deploy", AutoMerge: false, RequiredContexts: []string{},
-			Environment: c.Environment, Description: "pullgate " + d.Role,
+			Environment: env, Description: "pullgate " + d.Role,
 		}
 	} else {
 		url += "/" + strconv.FormatInt(d.ID, 10) + "/statuses"
@@ -108,7 +112,10 @@ func (c *Client) Post(ctx context.Context, d *Deployment, p *Post) Answer {
 		return Answer{Kind: Drop, Reason: "the post could not be made"}
 	}
 	code, hdr, ans, err := c.do(ctx, http.MethodPost, url, b)
-	if err != nil {
+	if errors.Is(err, errBody) && code == http.StatusCreated && p.Create {
+		return Answer{Kind: Retry, Code: code, Reason: "HTTP 201: the answer was cut off (a network error or a timeout)"}
+	}
+	if err != nil && code == 0 {
 		return Answer{Kind: Retry, Reason: "no answer from GitHub (a network error, a TLS error or a timeout)"}
 	}
 	a := Answer{Code: code}
@@ -150,14 +157,18 @@ func (c *Client) Post(ctx context.Context, d *Deployment, p *Post) Answer {
 // It writes nothing.
 func (c *Client) Get(ctx context.Context, path string) (int, error) {
 	code, _, _, err := c.do(ctx, http.MethodGet, c.repoURL()+path, nil)
-	if err != nil {
+	if err != nil && code == 0 {
 		return 0, errors.New("no answer from GitHub (a network error, a TLS error or a timeout)")
 	}
 	return code, nil
 }
 
+// errBody is a network error while the answer was read.
+var errBody = errors.New("the answer was cut off")
+
 // do makes one call. The answer is read up to maxAnswer bytes; a larger
-// one comes back as nil. The error never holds the token or the url.
+// one comes back as nil. A read error comes back with the code and
+// errBody. The error never holds the token or the url.
 func (c *Client) do(ctx context.Context, method, url string, body []byte) (int, http.Header, []byte, error) {
 	var r io.Reader
 	if body != nil {
@@ -184,7 +195,10 @@ func (c *Client) do(ctx context.Context, method, url string, body []byte) (int, 
 	}
 	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswer+1))
-	if err != nil || len(b) > maxAnswer {
+	if err != nil {
+		return resp.StatusCode, resp.Header, nil, errBody
+	}
+	if len(b) > maxAnswer {
 		b = nil
 	}
 	return resp.StatusCode, resp.Header, b, nil
@@ -285,6 +299,10 @@ func (s *Sender) refused(now time.Time) {
 		return
 	}
 	q.RefusedNote = now
+	// Saved before the notice, so a crash never repeats it the same day.
+	if err := q.Save(); err != nil {
+		s.Log.Error("save the GitHub queue", "err", err)
+	}
 	text := RefusedText(s.Instance, s.C.Repository)
 	s.Log.Error(text)
 	if s.Refused != nil {

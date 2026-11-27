@@ -199,6 +199,9 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 	gk := e.ghStart("apply", sha)
 	st.InProgress = &state.InProgress{Phase: "apply", SHA: sha, OldSHA: old, Started: now}
 	if err := e.Dir.Save(st); err != nil {
+		// The command never runs: the save at the end of Apply must not
+		// write in_progress, or the next start would see a cut-off.
+		st.InProgress = nil
 		return "", err
 	}
 	e.ghSend() // the create and in_progress go out before the apply command
@@ -263,6 +266,7 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 		if err := e.Dir.Save(st); err != nil {
 			return "", err
 		}
+		e.ghSend() // the failure and the rollback's create go out before the rollback
 		_, rerr := e.tryApply(ctx, t, "rb", old, sha, sha, true)
 		if stopped(ctx, rerr) {
 			return "", rerr

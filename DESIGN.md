@@ -1693,8 +1693,11 @@ command, never a host name.
 `/var/lib/pullgate/NAME/github/queue.json` (folder 0700, file 0600; root
 sets the modes itself and reads them back, as the apply unit has
 `UMask=0022`). Each deployment has a local key; its statuses name the key.
-The sender keeps the GitHub id of each key in the queue. `state.json` does
-not change.
+The sender keeps the GitHub id of each key in the queue, and each
+deployment keeps the environment it was queued with. `state.json` does not
+change. At most 1000 posts wait: in a very long outage the oldest
+deployment is dropped first, so the file always stays small enough to be
+read.
 
 **Crash safety.** The queue entry of a step is written and synced before
 the state save of that step. An open deployment is one that was created
@@ -1722,7 +1725,8 @@ failed save of the broken state) gets no second one.
 
 **Sending.** Under the instance lock, in order. `apply` sends the create
 and `in_progress` right after the `in_progress` save, before the apply
-command, and the rest at the end. Every exit of `run`, `apply` and
+command; the `failure` and the rollback's create and `in_progress` before
+the rollback runs; and the rest at the end. Every exit of `run`, `apply` and
 `status --resume` sends what waits, also when the instance is paused, off,
 held, broken or cut off. One process spends at most 10 seconds in total
 on sending (each call at most 5 seconds; the time of the apply command

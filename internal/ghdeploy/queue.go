@@ -60,6 +60,10 @@ const MaxAge = 24 * time.Hour
 // maxQueue is the largest queue file that root reads.
 const maxQueue = 1 << 20
 
+// maxPosts is the most posts that wait; a post is at most a few hundred
+// bytes, so the file stays far below maxQueue.
+const maxPosts = 1000
+
 // keepClosed is how many closed deployments the queue keeps, so that a
 // cut-off finds the deployment of its step after a failed state save.
 const keepClosed = 20
@@ -71,6 +75,9 @@ type Deployment struct {
 	Role string `json:"role"`
 	SHA  string `json:"sha"`
 	ID   int64  `json:"id,omitempty"`
+	// Environment is the environment when the deployment was queued, so a
+	// change of the config does not move a queued deployment.
+	Environment string `json:"environment"`
 	// Final is the last final status (success, failure or error) that was
 	// queued; "" while the deployment is open.
 	Final   string    `json:"final,omitempty"`
@@ -185,10 +192,15 @@ func (q *Queue) find(key int64) *Deployment {
 
 // Start queues the create of a deployment for sha, and its in_progress
 // status. It returns the key of the deployment.
-func (q *Queue) Start(role, sha, desc string, now time.Time) int64 {
+func (q *Queue) Start(role, sha, env, desc string, now time.Time) int64 {
+	// A bounded queue: a long outage drops the oldest posts first, so the
+	// file always stays below the size that Read takes.
+	for len(q.Posts) >= maxPosts {
+		q.drop(q.find(q.Posts[0].Key))
+	}
 	k := q.NextKey
 	q.NextKey++
-	q.Deployments = append(q.Deployments, &Deployment{Key: k, Role: role, SHA: sha, Queued: now})
+	q.Deployments = append(q.Deployments, &Deployment{Key: k, Role: role, SHA: sha, Environment: env, Queued: now})
 	q.Posts = append(q.Posts, &Post{Key: k, Create: true, Queued: now}, &Post{Key: k, State: InProgress, Description: desc, Queued: now})
 	q.prune()
 	return k
@@ -218,12 +230,12 @@ func (q *Queue) OpenDeployments() []*Deployment {
 	return out
 }
 
-// Newest is the newest deployment of role and sha that is not dropped,
+// Newest is the newest deployment of role and sha, also a dropped one,
 // or nil. open asks for an open one only.
 func (q *Queue) Newest(role, sha string, open bool) *Deployment {
 	for i := len(q.Deployments) - 1; i >= 0; i-- {
 		d := q.Deployments[i]
-		if d.Role == role && d.SHA == sha && !d.Dropped && (!open || d.Open()) {
+		if d.Role == role && d.SHA == sha && (!open || d.Open()) {
 			return d
 		}
 	}

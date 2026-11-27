@@ -158,11 +158,21 @@ func TestGitHubRollbackPosts(t *testing.T) {
 	f := newGH(t, `on_failure = "rollback"`, "")
 	a := f.applyNew("one")
 	f.srv.Reset()
+	var rolled []bool
+	f.srv.Answer = func(fakegh.Call) (int, string) {
+		rolled = append(rolled, strings.Contains(f.read("log"), "rb=1"))
+		return 0, ""
+	}
 	b := f.commit("bad", "two", map[string]string{"fail-health": "1"})
 	f.run()
 	f.tap(f.ask().Code, "apply")
 	if r := f.apply(); r != RolledBack {
 		t.Fatal(r)
+	}
+	// The failure and the rollback's create and in_progress go out before
+	// the rollback runs.
+	if fmt.Sprint(rolled) != "[false false false false false true]" {
+		t.Fatalf("%v", rolled)
 	}
 	all := []string{create(b), started(b), post("failure", b, ghdeploy.DescRollbackStarts),
 		create(a), post("in_progress", a, ghdeploy.DescRollbackStarted), post("success", a, ghdeploy.DescRolledBack)}
@@ -283,7 +293,7 @@ func TestGitHubCrashBeforeTheStateSave(t *testing.T) {
 	a := f.applyNew("one")
 	b := f.commit("second", "two", nil)
 	q := f.queue()
-	q.Start(ghdeploy.RoleApply, b, ghdeploy.DescApplyStarted, f.now)
+	q.Start(ghdeploy.RoleApply, b, "example-host", ghdeploy.DescApplyStarted, f.now)
 	if err := q.Save(); err != nil {
 		t.Fatal(err)
 	}
@@ -302,9 +312,9 @@ func TestGitHubCrashBeforeTheRollbackSave(t *testing.T) {
 	a := f.applyNew("one")
 	b := f.commit("second", "two", nil)
 	q := f.queue()
-	k := q.Start(ghdeploy.RoleApply, b, ghdeploy.DescApplyStarted, f.now)
+	k := q.Start(ghdeploy.RoleApply, b, "example-host", ghdeploy.DescApplyStarted, f.now)
 	q.Status(k, ghdeploy.Failure, ghdeploy.DescRollbackStarts, f.now)
-	q.Start(ghdeploy.RoleRollback, a, ghdeploy.DescRollbackStarted, f.now)
+	q.Start(ghdeploy.RoleRollback, a, "example-host", ghdeploy.DescRollbackStarted, f.now)
 	if err := q.Save(); err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +436,7 @@ func TestGitHubCheckRunWaitingForTheLockIsNoCutOff(t *testing.T) {
 	}
 	// What an apply does before its command runs.
 	q := f.queue()
-	k := q.Start(ghdeploy.RoleApply, b, ghdeploy.DescApplyStarted, f.now)
+	k := q.Start(ghdeploy.RoleApply, b, "example-host", ghdeploy.DescApplyStarted, f.now)
 	if err := q.Save(); err != nil {
 		t.Fatal(err)
 	}
@@ -470,7 +480,7 @@ func TestGitHubBusyTimerRunChecksNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	q := f.queue()
-	q.Start(ghdeploy.RoleApply, b, ghdeploy.DescApplyStarted, f.now)
+	q.Start(ghdeploy.RoleApply, b, "example-host", ghdeploy.DescApplyStarted, f.now)
 	if err := q.Save(); err != nil {
 		t.Fatal(err)
 	}
@@ -511,7 +521,7 @@ func TestGitHubSendsWhenPausedOffHeldBrokenOrCutOff(t *testing.T) {
 			t.Fatal(err)
 		}
 		q := f.queue()
-		q.Start(ghdeploy.RoleApply, b, ghdeploy.DescApplyStarted, f.now)
+		q.Start(ghdeploy.RoleApply, b, "example-host", ghdeploy.DescApplyStarted, f.now)
 		if err := q.Save(); err != nil {
 			t.Fatal(err)
 		}

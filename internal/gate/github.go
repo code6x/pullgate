@@ -55,7 +55,7 @@ func (e *Env) ghStart(role, sha string) int64 {
 	if role == ghdeploy.RoleRollback {
 		desc = ghdeploy.DescRollbackStarted
 	}
-	k := e.gh.q.Start(role, sha, desc, e.now())
+	k := e.gh.q.Start(role, sha, e.Cfg.GitHub.Environment, desc, e.now())
 	e.ghSave()
 	return k
 }
@@ -115,7 +115,7 @@ func (e *Env) ghCutOff(ip *state.InProgress) {
 	}
 	role, sha := ghStateRole(ip)
 	d := e.gh.q.Newest(role, sha, false)
-	if d == nil || d.Final == ghdeploy.Error {
+	if d == nil || d.Dropped || d.Final == ghdeploy.Error {
 		return
 	}
 	e.gh.q.Status(d.Key, ghdeploy.Error, ghdeploy.DescCutOff, e.now())
