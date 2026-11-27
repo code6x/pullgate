@@ -3,19 +3,14 @@
 package gate
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
-	"os/user"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/code6x/pullgate/internal/config"
@@ -30,60 +25,19 @@ type Sandbox struct {
 	Switch   bool // set the credential (pullgate runs as root)
 }
 
-// ResolveSandbox finds check_user. As root (euid 0), the user must not be
-// root, and the commands switch to it. Not as root, pullgate cannot switch
-// user, so check_user must be the user that runs pullgate.
-func ResolveSandbox(euid int, name string) (Sandbox, error) {
-	u, err := user.Lookup(name)
-	if err != nil {
-		return Sandbox{}, fmt.Errorf("check_user %q: %w. Fix: make the user (useradd --system %s), or set [commands] check_user", name, err, name)
-	}
-	uid, err1 := strconv.Atoi(u.Uid)
-	gid, err2 := strconv.Atoi(u.Gid)
-	if err1 != nil || err2 != nil {
-		return Sandbox{}, fmt.Errorf("check_user %q has no numeric uid or gid", name)
-	}
-	if uid == 0 || gid == 0 {
-		return Sandbox{}, fmt.Errorf("check_user %q is root (uid or gid 0); check and summary must never run as root (rule 3). Fix: set [commands] check_user to an unprivileged user", name)
-	}
-	if euid == 0 {
-		return Sandbox{UID: uid, GID: gid, Switch: true}, nil
-	}
-	if uid != euid {
-		return Sandbox{}, fmt.Errorf("pullgate does not run as root, so it cannot run check as %q. Fix: run it as root, or set check_user to the user that runs it", name)
-	}
-	return Sandbox{UID: uid, GID: gid}, nil
-}
-
-// ResolveOwners finds the listener user, for the spool.
-func ResolveOwners(name string) (spool.Owners, error) {
-	u, err := user.Lookup(name)
-	if err != nil {
-		return spool.Owners{}, fmt.Errorf("listener user %q: %w. Fix: make the user (useradd --system %s), or set [listener] user", name, err, name)
-	}
-	uid, err1 := strconv.Atoi(u.Uid)
-	gid, err2 := strconv.Atoi(u.Gid)
-	if err1 != nil || err2 != nil {
-		return spool.Owners{}, fmt.Errorf("listener user %q has no numeric uid or gid", name)
-	}
-	if uid == 0 && os.Geteuid() == 0 {
-		return spool.Owners{}, fmt.Errorf("the listener user %q is root; the listener must run as its own user (rule 4). Fix: set [listener] user", name)
-	}
-	return spool.Owners{ListenerUID: uid, ListenerGID: gid}, nil
-}
-
 // Env holds what root needs for one instance.
 type Env struct {
-	Cfg     *config.Instance
-	Dir     state.Dir
-	Spool   spool.Dirs
-	UID     uint32 // the user that owns the gate files (root)
-	Owners  spool.Owners
-	Sandbox Sandbox
-	Git     *gitx.Git
-	Log     *slog.Logger
-	CmdOut  io.Writer // where the output of apply and health goes (the journal)
-	Now     func() time.Time
+	Cfg         *config.Instance
+	WindowsRoot string // protected data root on Windows
+	Dir         state.Dir
+	Spool       spool.Dirs
+	UID         uint32 // the user that owns the gate files (root)
+	Owners      spool.Owners
+	Sandbox     Sandbox
+	Git         *gitx.Git
+	Log         *slog.Logger
+	CmdOut      io.Writer // where the output of apply and health goes (the journal)
+	Now         func() time.Time
 	// ReceiptWait is how long a run waits for the receipt of a new
 	// question: 0 is DefaultReceiptWait, below 0 is no wait (tests).
 	ReceiptWait time.Duration
@@ -91,31 +45,6 @@ type Env struct {
 	// this instance, and returns the redacted text (doctor.RunPublic,
 	// code6x/pullgate#50). nil: /doctor answers that it is not available.
 	Doctor func(ctx context.Context) string
-}
-
-// New makes an Env. Paths: the state of NAME is stateBase/NAME, the spool
-// is spoolBase/NAME.
-func New(cfg *config.Instance, stateBase, spoolBase string, uid uint32, log *slog.Logger, cmdOut io.Writer) (*Env, error) {
-	sb, err := ResolveSandbox(int(uid), cfg.Commands.CheckUser)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", cfg.Path, err)
-	}
-	owners, err := ResolveOwners(cfg.Listener.User)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", cfg.Path, err)
-	}
-	if uid == 0 && (sb.UID == owners.ListenerUID || sb.GID == owners.ListenerGID) {
-		return nil, fmt.Errorf("%s: check_user and the listener user must be different users with different groups: a check that is taken over could write approvals (THREAT-MODEL.md T2). Fix: set [commands] check_user to its own user", cfg.Path)
-	}
-	if err := cfg.CheckGateFiles(uid); err != nil {
-		return nil, err
-	}
-	dir := state.Dir{Path: filepath.Join(stateBase, cfg.Name)}
-	return &Env{
-		Cfg: cfg, Dir: dir, Spool: spool.Dirs{Base: spoolBase, Name: cfg.Name},
-		UID: uid, Owners: owners, Sandbox: sb, Log: log, CmdOut: cmdOut,
-		Git: &gitx.Git{Dir: dir.Repo(), Home: dir.Path, UID: uid, Key: cfg.Repo.DeployKey, KnownHosts: cfg.Repo.KnownHosts},
-	}, nil
 }
 
 func (e *Env) now() time.Time {
@@ -127,25 +56,6 @@ func (e *Env) now() time.Time {
 
 // MaxCmdOutput is the most output kept from a command.
 const MaxCmdOutput = 64 << 10
-
-type capBuf struct {
-	b   bytes.Buffer
-	cut bool
-}
-
-func (c *capBuf) Write(p []byte) (int, error) {
-	if room := MaxCmdOutput - c.b.Len(); room > 0 {
-		if len(p) > room {
-			c.b.Write(p[:room])
-			c.cut = true
-		} else {
-			c.b.Write(p)
-		}
-	} else {
-		c.cut = true
-	}
-	return len(p), nil
-}
 
 // cmdEnv is the environment of a command (DESIGN.md section 11).
 type cmdEnv struct {
@@ -160,7 +70,6 @@ func (e *Env) environ(c cmdEnv) []string {
 		rb = "1"
 	}
 	env := []string{
-		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"PULLGATE_INSTANCE=" + e.Cfg.Name,
 		"PULLGATE_SHA=" + c.SHA,
 		"PULLGATE_OLD_SHA=" + c.OldSHA,
@@ -176,74 +85,15 @@ func (e *Env) environ(c cmdEnv) []string {
 	return env
 }
 
-// command builds the exec.Cmd of argv. With sandbox it runs as check_user
-// with no extra groups (rule 3).
-func (e *Env) command(ctx context.Context, argv []string, c cmdEnv, sandbox bool) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // argv comes from the host config (rule 1)
-	cmd.Env = e.environ(c)
-	cmd.Dir = c.Tree
-	attr := &syscall.SysProcAttr{Setpgid: true}
-	if sandbox && e.Sandbox.Switch {
-		attr.Credential = &syscall.Credential{Uid: uint32(e.Sandbox.UID), Gid: uint32(e.Sandbox.GID), Groups: []uint32{}} //nolint:gosec // checked ids
-	}
-	cmd.SysProcAttr = attr
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
-	cmd.WaitDelay = 5 * time.Second
-	return cmd
-}
-
-// runSandboxed runs check or summary as check_user and returns its output.
-func (e *Env) runSandboxed(parent context.Context, argv []string, c cmdEnv) (string, error) {
-	ctx, cancel := context.WithTimeout(parent, e.Cfg.Commands.CheckTimeout.Duration)
-	defer cancel()
-	cmd := e.command(ctx, argv, c, true)
-	out := &capBuf{}
-	cmd.Stdout = out
-	cmd.Stderr = out
-	err := cmd.Run()
-	e.killSandbox()
-	if err != nil && parent.Err() != nil {
-		return "", fmt.Errorf("stopped: %w", parent.Err())
-	}
-	if ctx.Err() != nil && err != nil {
-		err = fmt.Errorf("timed out after %s", e.Cfg.Commands.CheckTimeout.Duration)
-	}
-	return out.b.String(), err
-}
-
-// killSandbox stops every process of check_user, so that nothing of a
-// check lives on to change a later check or summary.
-func (e *Env) killSandbox() {
-	if !e.Sandbox.Switch {
-		return
-	}
-	kill, err := exec.LookPath("kill")
-	if err != nil {
-		e.Log.Warn("no kill program; processes of check_user may live on", "err", err)
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, kill, "-KILL", "-1") //nolint:gosec // fixed program
-	cmd.Env = []string{"PATH=/usr/bin:/bin"}
-	cmd.Dir = "/"
-	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(e.Sandbox.UID), Gid: uint32(e.Sandbox.GID), Groups: []uint32{}}} //nolint:gosec // checked ids
-	_ = cmd.Run()
-}
-
-// runRoot runs apply or health as root. The output goes to the journal.
 func (e *Env) runRoot(parent context.Context, what string, argv []string, c cmdEnv) error {
 	ctx, cancel := context.WithTimeout(parent, e.Cfg.Commands.ApplyTimeout.Duration)
 	defer cancel()
-	cmd := e.command(ctx, argv, c, false)
 	w := e.CmdOut
 	if w == nil {
 		w = io.Discard
 	}
-	cmd.Stdout = w
-	cmd.Stderr = w
 	e.Log.Info("start "+what, "sha", c.SHA, "rollback", c.Rollback)
-	err := cmd.Run()
+	err := e.runApplyCommand(ctx, argv, c, w)
 	if err != nil && parent.Err() != nil {
 		return fmt.Errorf("%s stopped: %w", what, ErrStopped)
 	}

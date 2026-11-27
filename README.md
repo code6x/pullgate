@@ -1,9 +1,9 @@
 # pullgate
 
-pullgate lets a Linux host change only through its own updates. The host
+pullgate lets a Linux or Windows host change only through its own updates. The host
 pulls a git repo by itself. It applies a new commit only after its owner
 taps **Apply** on a Telegram question that names that exact commit. Then
-root applies it, with a health check and a rollback or a hold.
+the host applies it, with a health check and a rollback or a hold.
 
 - **The gate lives on the host.** What runs, who may approve and which paths
   get a warning come from `/etc/pullgate`, never from the repo. A commit
@@ -13,12 +13,12 @@ root applies it, with a health check and a rollback or a hold.
   when a newer commit arrives in between.
 - **No code from the new commit runs before Apply.** Optional `check` and
   `summary` commands read the commit as data, as an unprivileged user.
-- **Only the listener holds the bot token.** It runs as its own user and
-  opens no port.
+- **The listener opens no port.** On Linux it runs as its own user and
+  holds the bot token. On Windows it runs inside the SYSTEM agent.
 - **Forward only** by default. A force push or an older commit is refused.
 - **Root never runs git in a directory another user can write.**
 
-It is a small Go program for plain Linux with systemd. It needs `git` and
+It runs on Linux with systemd and on Windows with Task Scheduler. It needs `git` and
 `ssh`. No server, no web UI.
 
 Read [DESIGN.md](DESIGN.md) for how it works and
@@ -40,10 +40,10 @@ path unit ─> pullgate apply NAME (root)
             ─> success: report; failure: rollback or hold, and report
 ```
 
-## Install
+## Install on Linux
 
-pullgate runs on Linux, on amd64 or arm64. There are three ways to get the
-binary.
+On Linux, pullgate runs on amd64 or arm64. There are three ways to get
+the binary. See [Windows](#windows) for Windows setup.
 
 **With the install script** (as root, on the host itself). Download the
 script, read it, then run it:
@@ -670,3 +670,91 @@ The rules for changes are in [AGENTS.md](AGENTS.md).
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+## Windows
+
+Windows 10 or Windows Server 2016 and newer on amd64 are supported. Install
+Git for Windows and GitHub CLI for all users in Program Files. Use an
+elevated Windows PowerShell console for the steps below. The boot task
+runs under SYSTEM, so it keeps running after you sign out.
+
+### Install
+
+Download these three files from the same release into a private folder.
+
+- `pullgate_X.Y.Z_windows_amd64.tar.gz`
+- `pullgate_X.Y.Z.sigstore.json`
+- `SHA256SUMS`
+
+Replace `X.Y.Z` with the release version in the following commands. Run
+them in the folder with the downloads. Verify the archive before running
+the installer inside it.
+
+```powershell
+$version = 'X.Y.Z'
+$archive = "pullgate_${version}_windows_amd64.tar.gz"
+$bundle = "pullgate_${version}.sigstore.json"
+$gh = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'GitHub CLI\gh.exe'
+& $gh attestation verify $archive --bundle $bundle --repo code6x/pullgate --cert-identity 'https://github.com/code6x/pullgate/.github/workflows/release.yml@refs/heads/main' --deny-self-hosted-runners
+if ($LASTEXITCODE -ne 0) { throw 'Release verification failed.' }
+tar.exe -xf $archive install.ps1
+if ($LASTEXITCODE -ne 0) { throw 'Could not extract the installer.' }
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Version $version
+```
+
+The installer checks the checksum and attestation itself. It installs the
+binary in `%ProgramData%\pullgate` and registers a disabled boot task.
+The protected directory permits access only to SYSTEM and Administrators.
+
+### Set up
+
+Start a private chat with your bot. Have your bot token and numeric
+Telegram user ID at hand. The chat ID in a private chat with the bot
+equals your user ID.
+
+For SSH, put the read-only deploy key and the pinned known hosts file in
+the protected directory. Set each file's owner to SYSTEM or Administrators
+and let its ACL inherit from the directory. For a local repository, put
+the bare repo under the same protected directory and omit the SSH flags.
+After writing to a local bare repo, check that Git-created files and
+directories still belong to SYSTEM or Administrators and inherit the
+protected ACL. A file owned by the signed-in user makes the fetch fail
+even when that user is an administrator.
+
+```powershell
+$root = Join-Path $env:ProgramData 'pullgate'
+$binary = Join-Path $root 'pullgate.exe'
+$ownerId = [long](Read-Host 'Your numeric Telegram user ID')
+& $binary setup --instance config-repo --repo 'ssh://git@git.example.com/config-repo.git' --deploy-key (Join-Path $root 'deploy-key') --known-hosts (Join-Path $root 'known-hosts') --apply 'C:\example\apply.ps1' --owner-id $ownerId --chat-id $ownerId
+if ($LASTEXITCODE -ne 0) { throw 'Setup failed.' }
+& $binary doctor config-repo
+if ($LASTEXITCODE -ne 0) { throw 'Doctor found a problem.' }
+Enable-ScheduledTask -TaskName pullgate
+Start-ScheduledTask -TaskName pullgate
+& $binary status config-repo
+```
+
+Setup copies the PowerShell script into the protected directory. It takes
+the bot token without echo and stores it with machine-scope DPAPI. Keep
+the bot token out of command arguments and config files.
+
+The script runs only after a tap for the exact commit. It gets the same
+`PULLGATE_*` variables as Linux, including `PULLGATE_TREE` and
+`PULLGATE_SHA`. It receives any arguments from the `[commands] apply`
+list after the absolute script path. Use `exit 0` for success and a
+nonzero code for failure. See the [example script](contrib/windows/apply.ps1).
+Windows supports ask and off modes and has no pre-approval check or
+summary command. Its listener runs as part of the SYSTEM agent.
+
+### Update or remove
+
+To update, verify and extract `install.ps1` from the new release and run
+the install commands again with the new version. Wait for any apply to
+finish first. The installer replaces the executable and restarts a task
+that was running. The config and state stay in ProgramData.
+
+To remove the boot task and stop the agent, run
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Remove`.
+The protected data, including the token and executable, stays in
+`%ProgramData%\pullgate`. An administrator can delete that directory
+after saving any data they want to keep.

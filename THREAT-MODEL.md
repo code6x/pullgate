@@ -816,3 +816,50 @@ install script.
 - An attacker who controls the owner's Telegram account.
 - A bad change that the owner approves on purpose.
 - Signed commits (planned later).
+
+## Windows
+
+The Windows file check rejects untrusted owners, missing or null DACLs,
+access grants to other SIDs, unknown ACE types, final reparse points and
+files with multiple hard links. A caller must first establish that an
+untrusted local user cannot replace or redirect parent directories.
+
+Machine-scope DPAPI protects a token blob taken off the machine. Any
+account on the machine that obtains the blob may decrypt it. The ACL
+therefore protects the blob from other users. SYSTEM and Administrators
+are trusted.
+
+Windows state reads reject a file with a wider ACL or multiple hard
+links. The Windows state layer assumes the caller has validated the
+ancestors of the state directory. A failed lock or failed write must
+stop the operation before it applies a commit.
+
+Windows export refuses backslashes, device names, alternate data
+streams, and characters used in shortened aliases. The Windows Git
+helper handles local repositories under the protected root and SSH
+with pinned host keys. The caller must supply Git from an administrator-controlled install.
+pullgate checks the ACLs of `cmd\git.exe`, `usr\bin\ssh.exe` and the
+folders above them. It trusts the ACLs of the rest of the Git install
+(`mingw64\bin`, `usr\bin` and their DLLs), which SYSTEM also runs. The
+default Program Files ACL lets only administrators write there; an
+administrator who widens it gives SYSTEM code to whoever can write.
+
+The Windows config rejects pre-approval commands and automatic apply.
+The token reader accepts only a DPAPI blob from a protected file.
+Plaintext tokens are refused.
+
+The Windows agent and its listener run as SYSTEM, in one Task Scheduler
+task. Unlike the Linux listener, the Windows listener is part of the
+trusted gate. Code execution in that process gives SYSTEM access. A
+stolen bot token alone still cannot send a tap as the configured owner
+or select a SHA outside the gate's open question.
+
+The Windows agent verifies the system paths that contain ProgramData
+and Git. Ordinary users may have read access to system paths and may
+create their own children in ProgramData. The ACL check rejects grants
+that allow them to replace existing protected entries. The system path
+check accepts hard-linked system files because NTFS enforces their ACL
+under every name. Managed gate files still require one link. An apply or
+health script must be under the protected root. The Windows config
+rejects pre-approval commands. The approval still names one full SHA
+from the gate's own state.

@@ -41,7 +41,10 @@ installed. Use `security:` only for the fix of a security problem.
 4. The `build` job (read-only) checks that the tag is the commit of the run,
    builds static binaries for Linux amd64 and arm64 (`CGO_ENABLED=0`,
    `-trimpath`), packs each with `LICENSE`, `README.md` and `CHANGELOG.md` into
-   `pullgate_<version>_linux_<arch>.tar.gz`, and writes `SHA256SUMS`.
+   `pullgate_<version>_linux_<arch>.tar.gz`. It also builds Windows amd64
+   and packs `pullgate.exe`, `install.ps1`, `LICENSE` and `README.md` into
+   `pullgate_<version>_windows_amd64.tar.gz`. It writes `SHA256SUMS` for
+   all three archives.
 5. The `publish` job checks the files and the tag again, makes a signed
    build provenance attestation (`pullgate_<version>.sigstore.json`),
    checks the tarballs with it, uploads everything to the draft release and

@@ -18,10 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
-
-	"github.com/code6x/pullgate/internal/safedir"
 )
 
 // Message kinds of the outbox.
@@ -92,41 +89,9 @@ const MaxReceipt = 16
 // MaxReceipts is the most receipts root reads in one call.
 const MaxReceipts = 1000
 
-// FixMode sets the owner (uid, gid; -1 keeps one) and the mode of an open
-// file or directory. Tests replace it to play a kernel that does not keep
-// a mode (issue #19): every caller reads the result back.
-var FixMode = func(f *os.File, uid, gid int, mode os.FileMode) error {
-	if uid >= 0 || gid >= 0 {
-		if err := f.Chown(uid, gid); err != nil {
-			return err
-		}
-	}
-	return f.Chmod(mode)
-}
-
 // ErrNotKept is the error of a read-back that found another owner or mode
 // than the one pullgate set.
 var ErrNotKept = errors.New("the kernel did not keep the owner or the mode that pullgate set")
-
-// readBack checks that the open file f has the owner uid, the group gid
-// (-1: any) and exactly the mode bits mode (also setuid, setgid, sticky).
-func readBack(f *os.File, what string, uid, gid int, mode os.FileMode) error {
-	fi, err := f.Stat()
-	if err != nil {
-		return fmt.Errorf("read back %s: %w", what, err)
-	}
-	st, ok := fi.Sys().(*syscall.Stat_t)
-	if !ok {
-		return fmt.Errorf("read back %s: no owner. This is a bug in pullgate", what)
-	}
-	got := fi.Mode() & (fs.ModePerm | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky)
-	if (uid >= 0 && int(st.Uid) != uid) || (gid >= 0 && int(st.Gid) != gid) || got != mode {
-		return fmt.Errorf("%w on %s: want owner %d, group %d, mode %s; got owner %d, group %d, mode %s. "+
-			"Fix: run \"pullgate doctor\" as root; check that the unit keeps CAP_CHOWN and CAP_FOWNER, and the mount options of the file system",
-			ErrNotKept, what, uid, gid, mode, st.Uid, st.Gid, got)
-	}
-	return nil
-}
 
 // SelfName is the spool name of the updates of pullgate itself (DESIGN.md
 // section 15): Base/_update/{outbox,inbox,check}. An instance name matches
@@ -142,69 +107,6 @@ const CheckContent = "check\n"
 
 // MaxCheck is the largest check request file root reads.
 const MaxCheck = 64
-
-// Ensure makes the spool of the instance with the owners and modes of
-// DESIGN.md section 4. Base and Base/NAME belong to root (uid) and must
-// pass the check of rule 6; outbox and inbox are fixed through an open
-// directory, never through a path. No directory gets the setgid bit:
-// pullgate-run@.service has RestrictSUIDSGID=yes, which refuses a chmod
-// that sets it. Send gives each outbox file its group itself.
-func (d Dirs) Ensure(uid uint32, o Owners) error {
-	for _, p := range []string{d.Base, d.inst()} {
-		if err := os.Mkdir(p, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
-			return fmt.Errorf("make %s: %w", p, err)
-		}
-	}
-	for _, p := range []string{d.Base, d.inst()} {
-		f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0) //nolint:gosec // the spool base and instance directory of root
-		if err != nil {
-			return fmt.Errorf("open %s: %w", p, err)
-		}
-		err = FixMode(f, -1, -1, 0o755)
-		if err == nil {
-			err = readBack(f, p, int(uid), -1, 0o755)
-		}
-		_ = f.Close()
-		if err != nil {
-			return fmt.Errorf("fix %s: %w", p, err)
-		}
-	}
-	if err := safedir.CheckParents(d.inst(), uid); err != nil {
-		return fmt.Errorf("the spool is not safe: %w", err)
-	}
-	root, err := os.OpenRoot(d.inst())
-	if err != nil {
-		return err
-	}
-	defer func() { _ = root.Close() }()
-	for _, s := range []struct {
-		name     string
-		uid, gid int
-		mode     os.FileMode
-	}{
-		{"outbox", int(uid), o.ListenerGID, 0o770},
-		{"inbox", o.ListenerUID, o.ListenerGID, 0o700},
-		{"check", o.ListenerUID, o.ListenerGID, 0o700},
-		{"receipts", o.ListenerUID, o.ListenerGID, 0o700},
-	} {
-		if err := root.Mkdir(s.name, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
-			return fmt.Errorf("make %s: %w", s.name, err)
-		}
-		f, err := root.OpenFile(s.name, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
-		if err != nil {
-			return fmt.Errorf("open %s/%s: %w", d.inst(), s.name, err)
-		}
-		err = FixMode(f, s.uid, s.gid, s.mode)
-		if err == nil {
-			err = readBack(f, d.inst()+"/"+s.name, s.uid, s.gid, s.mode)
-		}
-		_ = f.Close()
-		if err != nil {
-			return fmt.Errorf("fix %s/%s: %w", d.inst(), s.name, err)
-		}
-	}
-	return nil
-}
 
 func randName() string {
 	b := make([]byte, 8)
@@ -224,13 +126,13 @@ func seqName() string {
 // The owner and the mode are read back before the rename. It returns the
 // final name.
 func writeIn(dir string, data []byte, mode os.FileMode, gid int, final string) (string, error) {
-	root, err := os.OpenRoot(dir)
+	root, err := openSpoolRoot(dir)
 	if err != nil {
 		return "", fmt.Errorf("open %s: %w", dir, err)
 	}
 	defer func() { _ = root.Close() }()
 	tmp := randName()
-	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+	f, err := root.OpenFile(tmp, os.O_CREATE|os.O_EXCL|safeWriteFlags, 0o600)
 	if err != nil {
 		return "", fmt.Errorf("write in %s: %w", dir, err)
 	}
@@ -239,7 +141,7 @@ func writeIn(dir string, data []byte, mode os.FileMode, gid int, final string) (
 		err = FixMode(f, -1, gid, mode)
 	}
 	if err == nil {
-		err = readBack(f, "a new file in "+dir, os.Geteuid(), gid, mode)
+		err = readBack(f, "a new file in "+dir, ownerUID(), gid, mode)
 	}
 	if err == nil {
 		err = f.Sync()
@@ -312,7 +214,7 @@ func (d Dirs) RemoveDoctorTest(path string) error {
 	if filepath.Dir(path) != d.Outbox() || !strings.HasPrefix(n, DoctorPrefix) {
 		return errors.New("not a doctor test file. This is a bug in pullgate")
 	}
-	root, err := os.OpenRoot(d.Outbox())
+	root, err := openSpoolRoot(d.Outbox())
 	if err != nil {
 		return err
 	}
@@ -340,7 +242,7 @@ func (d Dirs) WriteReceipt(name string, sent bool) error {
 // two contents; a bad file is removed and comes back as an error. A
 // missing directory (made by an older version) is no receipt.
 func (d Dirs) TakeReceipts(listenerUID int) (map[string]bool, []error, error) {
-	root, err := os.OpenRoot(d.Receipts())
+	root, err := openSpoolRoot(d.Receipts())
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil, nil
@@ -400,7 +302,7 @@ func (d Dirs) PeekReceipt(listenerUID int, name string) (sent, found bool) {
 	if name == "" || strings.HasPrefix(name, ".") || strings.ContainsRune(name, '/') {
 		return false, false
 	}
-	root, err := os.OpenRoot(d.Receipts())
+	root, err := openSpoolRoot(d.Receipts())
 	if err != nil {
 		return false, false
 	}
@@ -420,7 +322,7 @@ func (d Dirs) PeekReceipt(listenerUID int, name string) (sent, found bool) {
 // OutboxHas reports whether the outbox still holds the file name: the
 // listener has not handled it yet.
 func (d Dirs) OutboxHas(name string) bool {
-	root, err := os.OpenRoot(d.Outbox())
+	root, err := openSpoolRoot(d.Outbox())
 	if err != nil {
 		return false
 	}
@@ -451,7 +353,7 @@ func (d Dirs) WriteCheck() error {
 // instance directory first and "check" inside it, so it never follows a
 // symlink in place of "check".
 func (d Dirs) HasCheck() bool {
-	inst, err := os.OpenRoot(d.inst())
+	inst, err := openSpoolRoot(d.inst())
 	if err != nil {
 		return false
 	}
@@ -517,7 +419,7 @@ func (d Dirs) TakeChecks(listenerUID int) (int, []error, error) {
 // exactly its name and a newline.
 func (d Dirs) TakeRequests(listenerUID int) (Requests, []error, error) {
 	var r Requests
-	root, err := os.OpenRoot(d.CheckDir())
+	root, err := openSpoolRoot(d.CheckDir())
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return r, nil, nil
@@ -599,7 +501,7 @@ func list(root *os.Root) ([]string, error) {
 // readOne reads a regular file of at most max bytes through root, with
 // O_NOFOLLOW. With uid >= 0 the file must be owned by uid.
 func readOne(root *os.Root, name string, max int64, uid int) ([]byte, error) {
-	f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	f, err := root.OpenFile(name, os.O_RDONLY|safeReadFlags, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -611,8 +513,8 @@ func readOne(root *os.Root, name string, max int64, uid int) ([]byte, error) {
 	if !fi.Mode().IsRegular() {
 		return nil, errors.New("not a regular file")
 	}
-	if st, ok := fi.Sys().(*syscall.Stat_t); uid >= 0 && (!ok || int(st.Uid) != uid) {
-		return nil, errors.New("not owned by the listener user")
+	if err := checkReadFile(f, fi, uid); err != nil {
+		return nil, err
 	}
 	if fi.Size() > max {
 		return nil, fmt.Errorf("larger than %d bytes", max)
@@ -631,7 +533,7 @@ type Entry struct {
 // of them (0: all). Each file is removed before it is returned, so it is
 // used once. A bad file is removed and comes back with Err set.
 func (d Dirs) TakeApprovals(listenerUID int, max int) ([]Entry, error) {
-	root, err := os.OpenRoot(d.Inbox())
+	root, err := openSpoolRoot(d.Inbox())
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
@@ -694,7 +596,7 @@ type OutboxFile struct {
 // ReadOutbox reads the outbox in name order (the listener). It does not
 // remove the files; call Done when a message is handled.
 func (d Dirs) ReadOutbox() ([]OutboxFile, error) {
-	root, err := os.OpenRoot(d.Outbox())
+	root, err := openSpoolRoot(d.Outbox())
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
@@ -728,7 +630,7 @@ func (d Dirs) ReadOutbox() ([]OutboxFile, error) {
 
 // Done removes a handled outbox file.
 func (d Dirs) Done(name string) error {
-	root, err := os.OpenRoot(d.Outbox())
+	root, err := openSpoolRoot(d.Outbox())
 	if err != nil {
 		return err
 	}

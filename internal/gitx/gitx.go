@@ -11,17 +11,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
-
-	"github.com/code6x/pullgate/internal/safedir"
 )
 
 // MaxOutput is the most output that pullgate keeps from one git command
@@ -46,12 +42,14 @@ func ValidBranch(b string) bool {
 
 // Git runs git on one bare repo.
 type Git struct {
-	Dir        string        // the bare git directory, owned by UID
-	Home       string        // HOME for git and ssh
-	UID        uint32        // the user that must own Dir (root in production)
-	Key        string        // the deploy key, for ssh URLs
-	KnownHosts string        // the pinned host keys, for ssh URLs
-	Timeout    time.Duration // per command; 0 means 10 minutes
+	Dir         string        // the bare git directory, owned by UID
+	Home        string        // HOME for git and ssh
+	UID         uint32        // the user that must own Dir (root in production)
+	Key         string        // the deploy key, for ssh URLs
+	KnownHosts  string        // the pinned host keys, for ssh URLs
+	Timeout     time.Duration // per command; 0 means 10 minutes
+	WindowsRoot string        // protected Windows root; its ancestors must already be trusted
+	WindowsGit  string        // absolute Git for Windows executable in an administrator-controlled install
 }
 
 func (g *Git) timeout() time.Duration {
@@ -61,63 +59,22 @@ func (g *Git) timeout() time.Duration {
 	return g.Timeout
 }
 
-func (g *Git) env() []string {
-	env := []string{
-		"PATH=/usr/local/bin:/usr/bin:/bin",
-		"HOME=" + g.Home,
-		"GIT_CONFIG_NOSYSTEM=1",
-		"GIT_CONFIG_GLOBAL=/dev/null",
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_ASKPASS=",
-		"SSH_ASKPASS=",
-		"LC_ALL=C",
-	}
-	if g.Key != "" {
-		env = append(env, "GIT_SSH_COMMAND="+sshCommand(g.Key, g.KnownHosts))
-	}
-	return env
-}
-
-// sshCommand is the ssh command line for git. The paths come from the host
-// config; they are quoted for the shell that git uses for GIT_SSH_COMMAND.
-func sshCommand(key, knownHosts string) string {
-	return "ssh -F /dev/null -i " + shellQuote(key) +
-		" -o IdentitiesOnly=yes -o IdentityAgent=none" +
-		" -o UserKnownHostsFile=" + shellQuote(knownHosts) +
-		" -o GlobalKnownHostsFile=/dev/null" +
-		" -o StrictHostKeyChecking=yes -o BatchMode=yes"
-}
-
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
 // baseArgs come before every git subcommand.
 func (g *Git) baseArgs() []string {
 	return []string{
 		"--git-dir=" + g.Dir,
-		"-c", "core.hooksPath=/dev/null",
+		"-c", "core.hooksPath=" + gitNull,
 		"-c", "core.fsmonitor=false",
 		"-c", "protocol.allow=never",
 		"-c", "protocol.ssh.allow=always",
 		"-c", "protocol.file.allow=always",
 		"-c", "submodule.recurse=false",
 		"-c", "fetch.recurseSubmodules=false",
-		"-c", "core.attributesFile=/dev/null",
+		"-c", "core.attributesFile=" + gitNull,
 		"-c", "transfer.fsckObjects=true",
 		"-c", "gc.auto=0",
 		"-c", "maintenance.auto=false",
 	}
-}
-
-func (g *Git) command(ctx context.Context, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "git", append(g.baseArgs(), args...)...) //nolint:gosec // fixed program, args built here
-	cmd.Env = g.env()
-	cmd.Dir = g.Home
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
-	cmd.WaitDelay = 5 * time.Second
-	return cmd
 }
 
 // capWriter keeps at most n bytes and drops the rest.
@@ -143,7 +100,7 @@ func (w *capWriter) Write(p []byte) (int, error) {
 
 // Run checks the git directory and runs one git command.
 func (g *Git) Run(ctx context.Context, args ...string) ([]byte, error) {
-	if err := safedir.CheckTree(g.Dir, g.UID); err != nil {
+	if err := g.checkTree(g.Dir); err != nil {
 		return nil, fmt.Errorf("git refused: %w", err)
 	}
 	return g.runUnchecked(ctx, args...)
@@ -152,6 +109,9 @@ func (g *Git) Run(ctx context.Context, args ...string) ([]byte, error) {
 // runUnchecked runs git without the directory check. Only Init uses it,
 // on a new, empty directory under checked parents.
 func (g *Git) runUnchecked(ctx context.Context, args ...string) ([]byte, error) {
+	if err := g.checkCommand(); err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, g.timeout())
 	defer cancel()
 	cmd := g.command(ctx, args...)
@@ -172,31 +132,18 @@ func (g *Git) runUnchecked(ctx context.Context, args ...string) ([]byte, error) 
 // it must be safe (rule 6).
 func (g *Git) Init(ctx context.Context) error {
 	if _, err := os.Lstat(g.Dir); err == nil {
-		return safedir.CheckTree(g.Dir, g.UID)
+		return g.checkTree(g.Dir)
 	}
-	if err := safedir.CheckParents(filepath.Dir(g.Dir), g.UID); err != nil {
+	if err := g.checkDir(filepath.Dir(g.Dir)); err != nil {
 		return fmt.Errorf("git init refused: %w", err)
 	}
-	if err := os.Mkdir(g.Dir, 0o700); err != nil {
+	if err := g.makeRepoDir(); err != nil {
 		return fmt.Errorf("make %s: %w", g.Dir, err)
 	}
 	if _, err := g.runUnchecked(ctx, "init", "--quiet", "--bare", "--template=", g.Dir); err != nil {
 		return err
 	}
-	// git follows the umask; nobody else may write here.
-	if err := filepath.WalkDir(g.Dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		fi, err := d.Info()
-		if err != nil {
-			return err
-		}
-		return os.Chmod(p, fi.Mode().Perm()&^0o077) //nolint:gosec // a new directory that git just made, under checked parents
-	}); err != nil {
-		return fmt.Errorf("git init: %w", err)
-	}
-	return safedir.CheckTree(g.Dir, g.UID)
+	return g.checkNewRepo()
 }
 
 // SetApplied moves refs/pullgate/applied to sha, so git keeps that commit.
@@ -211,37 +158,6 @@ func (g *Git) SetApplied(ctx context.Context, sha string) error {
 // TipRef is the ref that holds the fetched branch tip.
 const TipRef = "refs/pullgate/tip"
 
-var pathRE = regexp.MustCompile(`^/[A-Za-z0-9._/-]*$`)
-
-// SafePath reports whether p is an absolute path with only A-Za-z0-9._/-,
-// so it can be given to the shell that runs GIT_SSH_COMMAND.
-func SafePath(p string) bool { return pathRE.MatchString(p) && !strings.Contains(p, "..") }
-
-// LocalPath returns the directory of a local repo URL ("/path" or
-// "file:///path"), or "" for an SSH URL. Other URLs are an error.
-func LocalPath(url string) (string, error) {
-	switch {
-	case url == "" || strings.HasPrefix(url, "-"):
-		return "", errors.New("the repo url is empty or starts with '-'. Fix: set [repo] url in the config")
-	case strings.HasPrefix(url, "file://"):
-		p := strings.TrimPrefix(url, "file://")
-		if !strings.HasPrefix(p, "/") {
-			return "", fmt.Errorf("the repo url %q is not an absolute file:// url. Fix: use file:///path", url)
-		}
-		return filepath.Clean(p), nil
-	case strings.HasPrefix(url, "/"):
-		return filepath.Clean(url), nil
-	case strings.HasPrefix(url, "ssh://"):
-		return "", nil
-	case strings.Contains(url, "://"):
-		return "", fmt.Errorf("the repo url %q uses a protocol that pullgate does not allow. Fix: use an ssh:// url or user@host:path", url)
-	case strings.Contains(url, ":") && !strings.Contains(strings.SplitN(url, ":", 2)[0], "/"):
-		return "", nil // user@host:path
-	default:
-		return "", fmt.Errorf("the repo url %q is not an ssh url or an absolute path. Fix: use an ssh:// url, user@host:path, or /path", url)
-	}
-}
-
 // Fetch fetches branch from url and returns the full SHA of its tip. A
 // local repo must pass the same check as the clone (rule 6), because git
 // runs git-upload-pack in it.
@@ -251,17 +167,17 @@ func (g *Git) Fetch(ctx context.Context, url, branch string) (string, error) {
 		return "", err
 	}
 	if local != "" {
-		if err := safedir.CheckTree(local, g.UID); err != nil {
+		if err := g.checkTree(local); err != nil {
 			return "", fmt.Errorf("the local repo %s is not safe for root: %w", local, err)
 		}
-	} else if g.Key == "" || !SafePath(g.Key) || !SafePath(g.KnownHosts) {
-		return "", errors.New("an ssh url needs deploy_key and known_hosts, as absolute paths of A-Za-z0-9._/- only. Fix: set them in [repo] of the config")
+	} else if !g.sshAllowed() {
+		return "", errors.New("an ssh url needs safe absolute paths for deploy_key and known_hosts. Fix: set both in [repo] of the config")
 	}
 	if !ValidBranch(branch) {
 		return "", fmt.Errorf("the branch name %q is not allowed. Fix: set [repo] branch to a plain branch name", branch)
 	}
 	if _, err := g.Run(ctx, "fetch", "--quiet", "--no-tags", "--no-recurse-submodules",
-		"--no-write-fetch-head", "--no-auto-gc", "--", url, "+refs/heads/"+branch+":"+TipRef); err != nil {
+		"--no-write-fetch-head", "--no-auto-gc", "--", g.fetchURL(url, local), "+refs/heads/"+branch+":"+TipRef); err != nil {
 		return "", err
 	}
 	return g.RevParse(ctx, TipRef)
