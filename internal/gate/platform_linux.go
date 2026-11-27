@@ -91,9 +91,17 @@ func New(cfg *config.Instance, stateBase, spoolBase string, uid uint32, log *slo
 	if err := cfg.CheckGateFiles(uid); err != nil {
 		return nil, err
 	}
+	tok := ""
+	if cfg.GitHub != nil {
+		// A bad token file stops the instance, like a bad deploy key.
+		if tok, err = cfg.ReadGitHubToken(uid); err != nil {
+			return nil, err
+		}
+	}
 	dir := state.Dir{Path: filepath.Join(stateBase, cfg.Name)}
 	return &Env{
-		Cfg: cfg, Dir: dir, Spool: spool.Dirs{Base: spoolBase, Name: cfg.Name},
+		ghToken: tok,
+		Cfg:     cfg, Dir: dir, Spool: spool.Dirs{Base: spoolBase, Name: cfg.Name},
 		UID: uid, Owners: owners, Sandbox: sb, Log: log, CmdOut: cmdOut,
 		Git: &gitx.Git{Dir: dir.Repo(), Home: dir.Path, UID: uid, Key: cfg.Repo.DeployKey, KnownHosts: cfg.Repo.KnownHosts},
 	}, nil

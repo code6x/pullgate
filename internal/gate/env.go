@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,6 +46,15 @@ type Env struct {
 	// this instance, and returns the redacted text (doctor.RunPublic,
 	// code6x/pullgate#50). nil: /doctor answers that it is not available.
 	Doctor func(ctx context.Context) string
+	// GitHubHTTP is the HTTP client of the GitHub posts; nil is
+	// ghdeploy.NewHTTPClient (tests give one for their fake server).
+	GitHubHTTP *http.Client
+	// GitHubSendLimit is the most time one process sends to GitHub; 0 is
+	// ghdeploy.SendLimit.
+	GitHubSendLimit time.Duration
+
+	ghToken string // the token of [github]; read by New, never printed
+	gh      *ghRun
 }
 
 func (e *Env) now() time.Time {

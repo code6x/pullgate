@@ -32,6 +32,23 @@ func TestWindowsPolicy(t *testing.T) {
 	}
 }
 
+func TestWindowsRefusesGitHub(t *testing.T) {
+	text := strings.Join([]string{
+		"[repo]",
+		"url = 'C:\\ProgramData\\pullgate\\example.git'",
+		"[commands]",
+		"apply = ['C:\\ProgramData\\pullgate\\apply.ps1']",
+		"[github]",
+		"repository = 'owner/config-repo'",
+		"environment = 'example-host'",
+		"token_file = 'C:\\ProgramData\\pullgate\\example.github-token'",
+	}, "\n")
+	_, err := Parse("example.toml", "example", []byte(text))
+	if err == nil || !strings.Contains(err.Error(), "only on Linux") {
+		t.Fatalf("[github] must be refused on Windows: %v", err)
+	}
+}
+
 func TestWindowsToken(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "protected")
 	if err := winsecure.Mkdir(dir); err != nil {

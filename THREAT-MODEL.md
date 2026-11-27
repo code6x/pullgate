@@ -23,6 +23,7 @@ on the host, out of reach of the repo.
 | the state: applied SHA, open questions, failed marks | `/var/lib/pullgate/NAME/state.json` |
 | the deploy key (read-only) | `/etc/pullgate` |
 | the bot token | the listener's token file or systemd credential |
+| the GitHub token (only with `[github]`, T24) | the root-only token file of `[github] token_file` |
 | the approval decision | Telegram, the listener, the state |
 
 ## 3. Who we trust, and how much
@@ -40,6 +41,7 @@ on the host, out of reach of the repo.
 | other local users | Not trusted. |
 | the `apply` and `health` commands | Trusted: the owner wrote them. They run as root on the approved tree. |
 | GitHub, the release workflow on `main`, and the gh that `install.sh` pins | Trusted to build and serve the release that `install.sh` installs (T16, T17). |
+| the GitHub API of the `[github]` reports | Not trusted with any decision. It gets reports; its answers never change a deploy (T24). |
 
 ## 4. What pullgate promises
 
@@ -792,8 +794,8 @@ An update (`recipe update`, `recipe use`) goes forward only, so an
 attacker cannot bring back an older signed version with a known bug;
 `update` has every check of the first install, and `use` takes only a
 root folder that matches its own record of the unpack, with the same
-template checks. Both keep the repo, key, host keys, check user and mode
-of `NAME.toml`, and only for a recipe of the same `OWNER/REPO` as the
+template checks. Both keep the repo, key, host keys, check user, mode
+and `[github]` block of `NAME.toml`, and only for a recipe of the same `OWNER/REPO` as the
 record. A rollback does not undo a `recipe use` (forward only).
 
 *Left.* The recipe's `apply`, `check`, `health` and `setup` are its own
@@ -801,6 +803,51 @@ code, and `setup` runs as root once, at the setup. A template may still
 pick the programs, the limits (for example `allow_older`) and the watch
 list. Read the template, or the config it writes, as you would read an
 install script.
+
+### T24. The GitHub token and the deployment reports (`[github]`)
+
+With the optional `[github]` block (DESIGN.md section 22), root holds a
+GitHub token and calls the GitHub API.
+
+*What the token can do.* It should be a fine-grained token for one repo
+with only Deployments: read and write (GitHub adds Metadata: read). It
+cannot push code, change settings or read secrets. But each new deployment
+and each status sends a `deployment` or `deployment_status` event. These
+events start GitHub Actions workflows with `on: deployment` or
+`on: deployment_status`, which run the workflow file **of the deployed
+commit**, with the repo's secrets; they also reach webhooks and apps.
+Someone with the token can create deployments for any commit of the repo,
+and so start those workflows for any commit; every apply starts them too.
+**Advice:** no deployment workflows and no deployment webhooks on the
+config repo. On a public repo, everyone can also see when each apply
+happened, failed, became broken or was cut off, and the environment name
+(so it must not name a host there).
+
+*What stops misuse.* Only root reads the token: the token file is checked
+like the deploy key (root, 0600, not a link, size limit, safe folders),
+and the token never goes to the listener, the spool, Telegram, a log line,
+an error, `pullgate status`, `state.json`, the queue or the environment of
+`check`, `summary`, `apply` and `health` (tests use a known fake token and
+look for it everywhere). A recipe template cannot set `[github]`. Every
+description is fixed text. The client takes no proxy, no redirect and no
+TLS older than 1.2, reads at most 64 KiB of an answer and only the
+deployment id from it, and never logs or shows GitHub's answer text. The
+queue holds no secret: the posts, the GitHub ids, and the repo, API url
+and environment that each deployment was queued with. When `[github]`
+changes, the posts that wait for the old values are dropped, so an id is
+never sent to another server. At most 1000 posts wait.
+
+*GitHub cannot change a deploy.* A post is a report in a root-only queue.
+GitHub down, slow, or answering with any error never changes the apply,
+the health check, the rollback, the state or the messages; it adds at most
+10 seconds to a process. The one exception is a bad token file on the
+host: it is a config error and the instance does not start (fail closed,
+like a bad deploy key). A refused token gives one notice a day.
+
+*Left.* Someone who steals the token can start deployment workflows and
+write false deployment statuses, so the Deployments page can lie; it is a
+report, never a source of truth for pullgate. Give the token an expiry
+date, and make a new one when it is refused.
 
 ## 6. Out of scope
 

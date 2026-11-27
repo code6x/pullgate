@@ -56,10 +56,11 @@ commands:
                  the checks of the first install, as root (forward only)
   recipe use NAME X.Y.Z   switch an instance to a version that recipe
                  fetch unpacked; it counts from the next run
-  doctor [NAME] [--telegram] [--config FILE] [--unit-dir DIR]
+  doctor [NAME] [--telegram] [--github] [--config FILE] [--unit-dir DIR]
                  check the setup of the host, as root: one line per check,
                  and exit 1 on any problem. --telegram also checks the bot
-                 token and the chat with Telegram
+                 token and the chat with Telegram; --github checks the
+                 [github] token with GitHub (GET only)
   bootstrap [--token-stdin] [--add] [--recipe URL [--gh PATH] [--bundle NAME]
                  [--signer-workflow PATH] [--replace-config]]
                  --instance NAME --repo URL [--branch B] [--apply PROGRAM]
@@ -278,6 +279,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		df := flag.NewFlagSet("doctor", flag.ContinueOnError)
 		df.SetOutput(io.Discard)
 		tg := df.Bool("telegram", false, "")
+		gh := df.Bool("github", false, "")
 		path := df.String("config", filepath.Join(*configDir, "listener.toml"), "")
 		unitDir := df.String("unit-dir", "/etc/systemd/system", "")
 		if err := df.Parse(args); err != nil || df.NArg() > 0 {
@@ -292,7 +294,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		n := doctor.Run(ctx, &doctor.Options{
 			Version: version, ConfigDir: *configDir, StateDir: *stateDir, SpoolDir: *spoolDir,
-			UnitDir: *unitDir, Listener: *path, Name: name, Telegram: *tg, UID: 0,
+			UnitDir: *unitDir, Listener: *path, Name: name, Telegram: *tg, GitHub: *gh, UID: 0,
 			Units: pullgate.Units(), Enable: pullgate.Enable,
 			Systemctl: doctor.Systemctl, ReadAs: doctor.ReadAs, Out: stdout,
 		})

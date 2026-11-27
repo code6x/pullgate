@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"maps"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/user"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/code6x/pullgate/internal/config"
 	"github.com/code6x/pullgate/internal/gate"
+	"github.com/code6x/pullgate/internal/ghdeploy"
 	"github.com/code6x/pullgate/internal/gitx"
 	"github.com/code6x/pullgate/internal/safedir"
 	"github.com/code6x/pullgate/internal/spool"
@@ -41,7 +43,11 @@ type Options struct {
 	Listener  string // the listener config, ConfigDir/listener.toml
 	Name      string // one instance; "" is every instance of the listener config
 	Telegram  bool   // also check the bot token and the chat (it calls Telegram)
-	UID       uint32 // the owner of the gate files: root (the test user in tests)
+	GitHub    bool   // also check the [github] token with GitHub (GET only)
+	// GitHubHTTP is the HTTP client of --github; nil is the real one
+	// (tests give one for their fake server).
+	GitHubHTTP *http.Client
+	UID        uint32 // the owner of the gate files: root (the test user in tests)
 
 	Units  map[string]string // the units this binary carries
 	Enable []string          // the units the README enables; NAME is the instance
@@ -377,6 +383,7 @@ func (d *doc) instance(ctx context.Context, name string, ow *spool.Owners) {
 		d.ok(what, "the owners and the modes of the state and the spool, as read back, are right")
 	}
 	d.outbox(ctx, name, sp, l)
+	d.github(ctx, env, sd)
 	if o.Public {
 		d.note(what, "git and the deploy key not checked from Telegram. Run pullgate doctor as root to check them")
 		return
@@ -541,4 +548,44 @@ func ReadOne(path string) error {
 	defer func() { _ = f.Close() }()
 	_, err = f.Read(make([]byte, 1))
 	return err
+}
+
+// github checks the [github] block, the token file and the queue folder.
+// With --github it also calls GitHub, with GET only.
+func (d *doc) github(ctx context.Context, env *gate.Env, sd state.Dir) {
+	g := env.Cfg.GitHub
+	if g == nil {
+		return
+	}
+	what := "github " + env.Cfg.Name
+	// gate.New read the token file already: it passed its checks.
+	d.ok(what, "[github] is valid, and the token file "+g.TokenFile+" is owned by root and only root can read it; reports go to the environment "+g.Environment+" of "+g.Repository)
+	dir := ghdeploy.Dir(sd.Path)
+	err := readBack(want{path: dir, uid: int(d.o.UID), gid: -1, mode: 0o700})
+	if err == nil {
+		err = readBack(want{path: ghdeploy.File(dir), uid: int(d.o.UID), gid: -1, mode: 0o600, file: true})
+		if errors.Is(err, fs.ErrNotExist) {
+			err = nil
+		}
+	}
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		d.note(what, "the queue folder "+dir+" is not made yet. The first run makes it")
+	case err != nil:
+		d.problem(what, err.Error())
+	default:
+		d.ok(what, "the queue folder "+dir+" is owned by root with mode 0700, as read back")
+	}
+	if d.o.Public {
+		return
+	}
+	if !d.o.GitHub {
+		d.note(what, "the token is not checked with GitHub; run pullgate doctor --github to check it (GET only)")
+		return
+	}
+	if err := env.GitHubProbe(ctx, d.o.GitHubHTTP); err != nil {
+		d.problem(what, err.Error())
+		return
+	}
+	d.ok(what, "the token can read the repo and its deployments. Write access is checked only by the first post")
 }
