@@ -1723,7 +1723,9 @@ In mode `off` and while paused, `run` ends before the cut-off of section
 A cut-off posts its `error` after anything that is queued for the
 deployment already (a `success` queued before a failed state save), so it
 is the last status. A deployment whose last status is `error` already (a
-failed save of the broken state) gets no second one.
+failed save of the broken state) gets no second one, and a deployment that
+was queued more than 10 minutes before or after the start of the apply in
+progress is not its deployment (a step that was never queued).
 
 **Sending.** Under the instance lock, in order. `apply` sends the create
 and `in_progress` right after the `in_progress` save, before the apply

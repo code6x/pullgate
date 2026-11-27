@@ -74,6 +74,10 @@ func (e *Env) ghStatus(key int64, st, desc string) {
 	e.ghSave()
 }
 
+// ghStepWindow is the most time between the queue write and the state
+// save of one step.
+const ghStepWindow = 10 * time.Minute
+
 // ghStateRole is the role and the SHA of the deployment of an apply in
 // progress: phase apply is the deployment of SHA, phase rollback the one
 // of OldSHA.
@@ -120,7 +124,9 @@ func (e *Env) ghCutOff(ip *state.InProgress) {
 	}
 	role, sha := ghStateRole(ip)
 	d := e.gh.q.Newest(role, sha, false)
-	if d == nil || d.Dropped || d.Final == ghdeploy.Error {
+	// Only the deployment of this step: queued just before or after the
+	// state save of in_progress, never an older one of the same commit.
+	if d == nil || d.Dropped || d.Final == ghdeploy.Error || d.Queued.Sub(ip.Started).Abs() > ghStepWindow {
 		return
 	}
 	e.gh.q.Status(d.Key, ghdeploy.Error, ghdeploy.DescCutOff, e.now())

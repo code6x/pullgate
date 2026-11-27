@@ -781,3 +781,28 @@ func TestGitHubStatusLine(t *testing.T) {
 		t.Fatal(out.String())
 	}
 }
+
+// A cut-off never goes to an older deployment of the same commit (a step
+// that was not queued, for example while the queue could not be used).
+func TestGitHubCutOffSkipsAnOlderDeployment(t *testing.T) {
+	f := newGH(t, "", "")
+	a := f.applyNew("one")
+	b := f.commit("second", "two", nil)
+	q := f.queue()
+	k := q.Start(ghdeploy.RoleApply, b, ghdeploy.Target{API: f.srv.URL, Repository: "owner/config-repo", Environment: "example-host"}, ghdeploy.DescApplyStarted, f.now)
+	q.Status(k, ghdeploy.Failure, ghdeploy.DescHeld, f.now)
+	if err := q.Save(); err != nil {
+		t.Fatal(err)
+	}
+	f.now = f.now.Add(time.Hour)
+	st := f.state()
+	st.InProgress = &state.InProgress{Phase: "apply", SHA: b, OldSHA: a, Started: f.now}
+	if err := f.env.Dir.Save(st); err != nil {
+		t.Fatal(err)
+	}
+	f.srv.Reset()
+	if r := f.run(); r != CutOff {
+		t.Fatal(r)
+	}
+	f.want(create(b), started(b), post("failure", b, ghdeploy.DescHeld))
+}
