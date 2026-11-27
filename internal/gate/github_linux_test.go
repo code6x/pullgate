@@ -599,6 +599,24 @@ func TestGitHubThatNeverAnswersAddsAtMostTheSendLimit(t *testing.T) {
 	}
 }
 
+// The send limit counts the time spent sending: an apply command that
+// runs longer than it still gets its final status sent by the same
+// process.
+func TestGitHubLongApplyStillSendsItsResult(t *testing.T) {
+	f := newGH(t, "", "")
+	setup := f.setup
+	f.setup = func(e *Env) { setup(e); e.GitHubSendLimit = 300 * time.Millisecond }
+	f.load()
+	a := f.commit("first", "one", nil)
+	f.run()
+	f.tap(f.ask().Code, "apply")
+	f.prepend("apply.sh", "sleep 1")
+	if r := f.apply(); r != Applied {
+		t.Fatal(r)
+	}
+	f.want(create(a), started(a), post("success", a, ghdeploy.DescApplied))
+}
+
 var shaRE = regexp.MustCompile(`[0-9a-f]{7,40}`)
 
 // scenario applies one, fails two with a rollback, then applies three.

@@ -62,6 +62,8 @@ func TestGitHubBlockRefused(t *testing.T) {
 		"no repository":     rep(`repository = "owner/config-repo"`, ""),
 		"bad repository":    rep("owner/config-repo", "owner/config-repo/x"),
 		"repository .git":   rep("owner/config-repo", "owner/config-repo.git"),
+		"repository ..":     rep("owner/config-repo", "owner/.."),
+		"repository .":      rep("owner/config-repo", "owner/."),
 		"no environment":    rep(`environment = "example-host"`, ""),
 		"bad environment":   rep("example-host", "Example Host"),
 		"no token_file":     rep(`token_file = "/etc/pullgate/x.github-token"`, ""),

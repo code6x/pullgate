@@ -14,8 +14,8 @@ import (
 // ghRun is the GitHub queue of this process (DESIGN.md section 22). It is
 // open only while the instance lock is held.
 type ghRun struct {
-	q        *ghdeploy.Queue
-	deadline time.Time // set by the first send
+	q     *ghdeploy.Queue
+	spent time.Duration // the time this process spent sending so far
 }
 
 // ghOn reports whether this process reports to GitHub.
@@ -128,20 +128,26 @@ func (e *Env) ghSend() {
 	if !e.ghOn() || len(e.gh.q.Posts) == 0 {
 		return
 	}
-	if e.gh.deadline.IsZero() {
-		limit := e.GitHubSendLimit
-		if limit <= 0 {
-			limit = ghdeploy.SendLimit
-		}
-		e.gh.deadline = time.Now().Add(limit)
+	limit := e.GitHubSendLimit
+	if limit <= 0 {
+		limit = ghdeploy.SendLimit
 	}
+	// The limit counts the time spent sending, not the time of the apply
+	// command between two sends.
+	left := limit - e.gh.spent
+	if left <= 0 {
+		e.Log.Info("github: the send time of this process is used up; the rest waits for the next run", "waiting", len(e.gh.q.Posts))
+		return
+	}
+	start := time.Now()
+	defer func() { e.gh.spent += time.Since(start) }()
 	h := e.GitHubHTTP
 	if h == nil {
 		h = ghdeploy.NewHTTPClient(nil)
 	}
 	g := e.Cfg.GitHub
 	s := &ghdeploy.Sender{
-		Q: e.gh.q, Log: e.Log, Now: e.now, Deadline: e.gh.deadline, Instance: e.Cfg.Name,
+		Q: e.gh.q, Log: e.Log, Now: e.now, Deadline: start.Add(left), Instance: e.Cfg.Name,
 		C:       &ghdeploy.Client{API: g.API(), Repository: g.Repository, Environment: g.Environment, Token: e.ghToken, HTTP: h},
 		Refused: func(text string) { e.notice("⚠ " + text + ".") },
 	}

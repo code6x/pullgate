@@ -176,7 +176,7 @@ func (c *Instance) validateGitHub() error {
 	switch {
 	case g.Repository == "":
 		return c.errf("[github] repository", "it is missing. Fix: set the config repo, like \"owner/config-repo\"")
-	case !ghRepoRE.MatchString(g.Repository) || strings.HasSuffix(g.Repository, ".git"):
+	case !ghRepoRE.MatchString(g.Repository) || strings.HasSuffix(g.Repository, ".git") || strings.Trim(g.Repository[strings.Index(g.Repository, "/")+1:], ".") == "":
 		return c.errf("[github] repository", "%q is not OWNER/REPO. Fix: write it like \"owner/config-repo\", without .git", g.Repository)
 	case g.Environment == "":
 		return c.errf("[github] environment", "it is missing. Fix: set one environment name for each host, like \"example-host\"")

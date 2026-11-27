@@ -1710,6 +1710,11 @@ nothing):
   happened, so its command never ran: it gets `error`, "stopped before the
   step started", and nothing pauses.
 
+In mode `off` and while paused, `run` ends before the cut-off of section
+10, so the deployment of an apply in progress stays open until the next
+`apply` (which cuts it off in every mode) or `pullgate status NAME
+--resume`.
+
 A cut-off posts its `error` after anything that is queued for the
 deployment already (a `success` queued before a failed state save), so it
 is the last status. A deployment whose last status is `error` already (a
@@ -1719,8 +1724,9 @@ failed save of the broken state) gets no second one.
 and `in_progress` right after the `in_progress` save, before the apply
 command, and the rest at the end. Every exit of `run`, `apply` and
 `status --resume` sends what waits, also when the instance is paused, off,
-held, broken or cut off. One process sends for at most 10 seconds in total
-(each call at most 5 seconds); it stops at the first post that must be
+held, broken or cut off. One process spends at most 10 seconds in total
+on sending (each call at most 5 seconds; the time of the apply command
+between two sends does not count); it stops at the first post that must be
 tried again, and goes on after a post that is dropped.
 
 | answer | what happens |
