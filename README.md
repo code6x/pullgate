@@ -592,9 +592,10 @@ access tokens, **Fine-grained tokens**, Generate new token. Pick:
 **2. Put it on the host**, as root, with only the token in the file:
 
 ```sh
-install -m 600 -o root -g root /dev/null /etc/pullgate/NAME.github-token
-cat > /etc/pullgate/NAME.github-token   # paste the token, then Enter and Ctrl-D
+(umask 077 && cat > /etc/pullgate/NAME.github-token)   # paste the token, then Enter and Ctrl-D
 ```
+
+The file must be owned by root with mode 0600: `umask 077` makes it so.
 
 **3. Add the block** to `/etc/pullgate/NAME.toml`:
 
