@@ -76,6 +76,7 @@ func (e *Env) cutOff(st *state.State) error {
 	}
 	m := st.SetMark(ip.SHA, state.MarkFailed, e.now())
 	m.Tries++
+	e.ghCutOff(ip) // queued before the state save
 	st.InProgress = nil
 	if err := e.Dir.Save(st); err != nil {
 		return err
@@ -143,6 +144,13 @@ func (e *Env) Run(ctx context.Context) (Result, error) {
 		return "", err
 	}
 	defer func() { _ = lock.Close() }()
+	// GitHub reports (DESIGN.md section 22): only with the lock, so no
+	// step of another process is half way; sent on every exit below.
+	e.ghOpen()
+	defer e.ghDone()
+	if st, err := e.Dir.Load(); err == nil {
+		e.ghCheck(st)
+	}
 	paused, off := e.Dir.Paused(), e.Cfg.Mode == config.ModeOff
 	if (paused || off) && !e.Spool.HasCheck() {
 		if paused {

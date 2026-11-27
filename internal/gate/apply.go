@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/code6x/pullgate/internal/config"
+	"github.com/code6x/pullgate/internal/ghdeploy"
 	"github.com/code6x/pullgate/internal/message"
 	"github.com/code6x/pullgate/internal/spool"
 	"github.com/code6x/pullgate/internal/state"
@@ -25,10 +26,13 @@ func (e *Env) Apply(ctx context.Context) (Result, error) {
 		return "", err
 	}
 	defer func() { _ = lock.Close() }()
+	e.ghOpen()
+	defer e.ghDone()
 	st, err := e.Dir.Load()
 	if err != nil {
 		return "", err
 	}
+	e.ghCheck(st)
 	if st.InProgress != nil {
 		return CutOff, e.cutOff(st)
 	}
@@ -190,10 +194,14 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 		}
 	}
 	old := st.Applied
+	// Each GitHub post is queued before the state save of its step
+	// (DESIGN.md section 22).
+	gk := e.ghStart("apply", sha)
 	st.InProgress = &state.InProgress{Phase: "apply", SHA: sha, OldSHA: old, Started: now}
 	if err := e.Dir.Save(st); err != nil {
 		return "", err
 	}
+	e.ghSend() // the create and in_progress go out before the apply command
 	t, err := e.newTrees()
 	if err != nil {
 		return "", err
@@ -213,6 +221,11 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 			e.Log.Warn("keep the applied ref", "err", gerr)
 		}
 		e.afterApply(st)
+		if wasBroken != nil {
+			e.ghStatus(gk, ghdeploy.Success, ghdeploy.DescFixedForward)
+		} else {
+			e.ghStatus(gk, ghdeploy.Success, ghdeploy.DescApplied)
+		}
 		if err := e.Dir.Save(st); err != nil {
 			return "", err
 		}
@@ -235,6 +248,7 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 		// A failed fix forward: no rollback against a half state.
 		b.SHA, b.Reason = sha, "the fix forward "+message.Short(sha)+" failed: "+message.CutLine(err.Error())
 		st.InProgress = nil
+		e.ghStatus(gk, ghdeploy.Error, ghdeploy.DescFixForwardFailed)
 		if err := e.Dir.Save(st); err != nil {
 			return "", err
 		}
@@ -243,6 +257,8 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 		return StillBroken, nil
 	}
 	if e.Cfg.OnFailure == config.OnFailureRollback && old != "" {
+		e.ghStatus(gk, ghdeploy.Failure, ghdeploy.DescRollbackStarts)
+		rk := e.ghStart("rollback", old)
 		st.InProgress = &state.InProgress{Phase: "rollback", SHA: sha, OldSHA: old, Started: e.now()}
 		if err := e.Dir.Save(st); err != nil {
 			return "", err
@@ -253,6 +269,7 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 		}
 		if rerr == nil {
 			st.InProgress = nil
+			e.ghStatus(rk, ghdeploy.Success, ghdeploy.DescRolledBack)
 			if err := e.Dir.Save(st); err != nil {
 				return "", err
 			}
@@ -270,6 +287,7 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 		// Questions asked before have no warning (or are auto ones): drop
 		// them all, so no old tap applies. The next run asks again.
 		e.dropQuestions(st, "the instance is broken. A fix forward is asked again, with a warning.")
+		e.ghStatus(rk, ghdeploy.Error, ghdeploy.DescBroken)
 		if err := e.Dir.Save(st); err != nil {
 			// Keep in_progress, so the next start pauses (a crash).
 			st.Broken = nil
@@ -283,6 +301,7 @@ func (e *Env) applySHA(ctx context.Context, st *state.State, q state.Question) (
 	// on_failure = "pause", or nothing to roll back to: hold the SHA.
 	st.Held = sha
 	st.InProgress = nil
+	e.ghStatus(gk, ghdeploy.Failure, ghdeploy.DescHeld)
 	if err := e.Dir.Save(st); err != nil {
 		return "", err
 	}

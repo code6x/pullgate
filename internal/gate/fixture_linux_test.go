@@ -32,6 +32,8 @@ type fixture struct {
 	cfg  string // the config dir
 	env  *Env
 	now  time.Time
+	// setup changes each new Env (the GitHub tests give their fake server).
+	setup func(*Env)
 }
 
 const name = "config-repo"
@@ -117,6 +119,9 @@ func (f *fixture) load() {
 	}
 	env.Now = func() time.Time { return f.now }
 	env.ReceiptWait = -1 // no listener here: a question stays "sent"
+	if f.setup != nil {
+		f.setup(env)
+	}
 	f.env = env
 }
 

@@ -107,6 +107,93 @@ type Instance struct {
 	Watch     Watch        `toml:"watch"`
 	Limits    Limits       `toml:"limits"`
 	Listener  ListenerUser `toml:"listener"`
+	// GitHub is the optional [github] block: the deployment reports
+	// (DESIGN.md section 22). nil: no GitHub code runs.
+	GitHub *GitHub `toml:"github"`
+}
+
+// GitHub is the [github] block of an instance.
+type GitHub struct {
+	Repository  string `toml:"repository"`
+	Environment string `toml:"environment"`
+	TokenFile   string `toml:"token_file"`
+	// APIURL is "" when the key is not set: API() gives the default. So
+	// a recipe rewrite keeps the block as the owner wrote it.
+	APIURL string `toml:"api_url,omitempty"`
+}
+
+// DefaultGitHubAPI is the GitHub API that [github] api_url defaults to.
+const DefaultGitHubAPI = "https://api.github.com"
+
+// API is the URL of the GitHub API, without a slash at the end.
+func (g *GitHub) API() string {
+	if g.APIURL == "" {
+		return DefaultGitHubAPI
+	}
+	return strings.TrimSuffix(g.APIURL, "/")
+}
+
+// MaxGitHubToken is the largest GitHub token file that root reads.
+const MaxGitHubToken = 1024
+
+var ghRepoRE = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}$`)
+
+// GitHubRepoOf returns "owner/repo" of a git url on github.com, or "" for
+// a url that is not on GitHub. It knows git@github.com:owner/repo,
+// ssh://git@github.com/owner/repo, ssh://git@ssh.github.com:443/owner/repo
+// and https://github.com/owner/repo, each with or without ".git".
+func GitHubRepoOf(raw string) string {
+	var path string
+	if rest, ok := strings.CutPrefix(raw, "git@"); ok && !strings.Contains(raw, "://") {
+		host, p, ok := strings.Cut(rest, ":")
+		if !ok || !strings.EqualFold(host, "github.com") {
+			return ""
+		}
+		path = p
+	} else {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return ""
+		}
+		h := strings.ToLower(u.Hostname())
+		switch {
+		case (u.Scheme == "ssh" || u.Scheme == "https") && h == "github.com":
+		case u.Scheme == "ssh" && h == "ssh.github.com":
+		default:
+			return ""
+		}
+		path = u.Path
+	}
+	path = strings.TrimSuffix(strings.Trim(path, "/"), ".git")
+	return path
+}
+
+func (c *Instance) validateGitHub() error {
+	g := c.GitHub
+	if g == nil {
+		return nil
+	}
+	switch {
+	case g.Repository == "":
+		return c.errf("[github] repository", "it is missing. Fix: set the config repo, like \"owner/config-repo\"")
+	case !ghRepoRE.MatchString(g.Repository) || strings.HasSuffix(g.Repository, ".git"):
+		return c.errf("[github] repository", "%q is not OWNER/REPO. Fix: write it like \"owner/config-repo\", without .git", g.Repository)
+	case g.Environment == "":
+		return c.errf("[github] environment", "it is missing. Fix: set one environment name for each host, like \"example-host\"")
+	case !ValidName(g.Environment):
+		return c.errf("[github] environment", "%q is not a valid name. Fix: use [a-z0-9][a-z0-9-]{0,31}, one name for each host", g.Environment)
+	case g.TokenFile == "":
+		return c.errf("[github] token_file", "it is missing. Fix: set the path of the token file, like \"/etc/pullgate/%s.github-token\"", c.Name)
+	case !filepath.IsAbs(g.TokenFile) || filepath.Clean(g.TokenFile) != g.TokenFile:
+		return c.errf("[github] token_file", "%q is not a clean absolute path. Fix: use a path like \"/etc/pullgate/%s.github-token\"", g.TokenFile, c.Name)
+	}
+	if err := CheckAPIURL(g.API(), DefaultGitHubAPI); err != nil {
+		return c.errf("[github] api_url", "%v", err)
+	}
+	if r := GitHubRepoOf(c.Repo.URL); r != "" && !strings.EqualFold(r, g.Repository) {
+		return c.errf("[github] repository", "%q is not the repo of [repo] url (%s). Fix: set repository to the repo that pullgate fetches", g.Repository, r)
+	}
+	return nil
 }
 
 // MaxTTL is the longest approval_ttl.
@@ -213,6 +300,9 @@ func (c *Instance) validate() error {
 		if p == "" || strings.HasPrefix(p, "/") {
 			return c.errf("[watch] paths", "%q is empty or absolute. Fix: use a path inside the repo, like \"policy/**\"", p)
 		}
+	}
+	if err := c.validateGitHub(); err != nil {
+		return err
 	}
 	return validatePlatform(c)
 }
@@ -386,7 +476,7 @@ func loadListener(path string, configUID uint32, needToken bool) (*Listener, err
 	case len(c.Instances) == 0:
 		return nil, fmt.Errorf("%s: instances: the list is empty. Fix: list the instance names", path)
 	}
-	if err := CheckAPIURL(c.APIURL); err != nil {
+	if err := CheckAPIURL(c.APIURL, "https://api.telegram.org"); err != nil {
 		return nil, fmt.Errorf("%s: api_url: %w", path, err)
 	}
 	for _, n := range c.Instances {
@@ -403,20 +493,21 @@ func loadListener(path string, configUID uint32, needToken bool) (*Listener, err
 	return c, nil
 }
 
-// CheckAPIURL checks the URL of the Bot API: https:// with a host, or
+// CheckAPIURL checks the URL of an API: https:// with a host, or
 // http://127.0.0.1:PORT for tests. No user info, which could hide another
-// host (http://127.0.0.1:80@host.example).
-func CheckAPIURL(s string) error {
+// host (http://127.0.0.1:80@host.example). def is the URL that the
+// errors name as the fix.
+func CheckAPIURL(s, def string) error {
 	u, err := url.Parse(s)
 	switch {
 	case err != nil:
-		return fmt.Errorf("%q is not a url. Fix: use https://api.telegram.org", s)
+		return fmt.Errorf("%q is not a url. Fix: use %s", s, def)
 	case u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.Fragment != "":
-		return fmt.Errorf("%q has user info, a query or a fragment. Fix: use https://api.telegram.org", s)
+		return fmt.Errorf("%q has user info, a query or a fragment. Fix: use %s", s, def)
 	case u.Scheme == "https" && u.Hostname() != "":
 		return nil
 	case u.Scheme == "http" && u.Hostname() == "127.0.0.1" && u.Port() != "":
 		return nil
 	}
-	return fmt.Errorf("%q: it must be an https:// url. Fix: use https://api.telegram.org", s)
+	return fmt.Errorf("%q: it must be an https:// url. Fix: use %s", s, def)
 }

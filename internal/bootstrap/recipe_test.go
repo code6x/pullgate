@@ -175,6 +175,8 @@ func TestRecipeDeny(t *testing.T) {
 		{"known hosts", tpl(strings.Replace(recipeTemplate, "[repo]\n", "[repo]\nknown_hosts = \"/tmp/k\"\n", 1)), nil, "", "deploy_key or known_hosts"},
 		{"check user", tpl(recipeTemplate + "check_user = \"root\"\n"), nil, "", "check_user"},
 		{"listener", tpl(recipeTemplate + "[listener]\nuser = \"root\"\n"), nil, "", "[listener]"},
+		{"github", tpl(recipeTemplate + "[github]\nrepository = \"owner/config-repo\"\nenvironment = \"example-host\"\ntoken_file = \"/etc/pullgate/x\"\n"), nil, "", "it sets [github]"},
+		{"GitHub", tpl(recipeTemplate + "[GitHub]\nrepository = \"owner/config-repo\"\n"), nil, "", "lower case"},
 		{"Mode", tpl("Mode = \"auto\"\n" + recipeTemplate), nil, "", "lower case"},
 		{"Repo URL", tpl(recipeTemplate + "[Repo]\nURL = \"/srv/other.git\"\n"), nil, "", "lower case"},
 		{"Deploy_Key", tpl(strings.Replace(recipeTemplate, "[repo]\n", "[repo]\nDeploy_Key = \"/tmp/k\"\n", 1)), nil, "", "lower case"},
@@ -502,4 +504,78 @@ func TestDiff(t *testing.T) {
 	if got != want {
 		t.Fatalf("diff:\n%s\nwant:\n%s", got, want)
 	}
+}
+
+const ghKept = "\n[github]\nrepository = \"owner/config-repo\"\nenvironment = \"example-host\"\ntoken_file = \"/etc/pullgate/config-repo.github-token\"\napi_url = \"https://github.example.com/api/v3\"\n"
+
+func ghOf(t *testing.T, path string) map[string]any {
+	t.Helper()
+	var m map[string]any
+	if _, err := toml.DecodeFile(path, &m); err != nil {
+		t.Fatal(err)
+	}
+	g, _ := m["github"].(map[string]any)
+	return g
+}
+
+func wantKeptGitHub(t *testing.T, g map[string]any) {
+	t.Helper()
+	if len(g) != 4 || g["repository"] != "owner/config-repo" || g["environment"] != "example-host" || g["token_file"] != "/etc/pullgate/config-repo.github-token" || g["api_url"] != "https://github.example.com/api/v3" {
+		t.Fatalf("the [github] block must be kept as it is: %v", g)
+	}
+}
+
+// --replace-config keeps the [github] block of the old NAME.toml.
+func TestRecipeReplaceConfigKeepsGitHub(t *testing.T) {
+	f := newRecipeFx(t, recipeFiles(), "--replace-config")
+	old := f.keptConfig(f.r.Bare)
+	if err := os.WriteFile(f.o.instanceConfig("config-repo"), []byte(old+ghKept), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.pair(); err != nil {
+		t.Fatalf("bootstrap: %v\n%s", err, f.out.String())
+	}
+	wantKeptGitHub(t, ghOf(t, f.o.instanceConfig("config-repo")))
+}
+
+// A kept NAME.toml: the diff counts the kept block on the recipe's side.
+func TestRecipeKeptConfigDiffCountsGitHub(t *testing.T) {
+	f := newRecipeFx(t, recipeFiles())
+	old := f.keptConfig(f.r.Bare) + ghKept
+	if err := os.WriteFile(f.o.instanceConfig("config-repo"), []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.pair(); err != nil {
+		t.Fatalf("bootstrap: %v\n%s", err, f.out.String())
+	}
+	out := f.out.String()
+	// The recipe's side has the kept block too: the diff never shows it
+	// as removed only.
+	for _, w := range []string{"  + mode = \"ask\"", "+   repository = \"owner/config-repo\"", "+   environment = \"example-host\"", "+   api_url = \"https://github.example.com/api/v3\""} {
+		if !strings.Contains(out, w) {
+			t.Fatalf("the diff must count the kept block (%q):\n%s", w, out)
+		}
+	}
+}
+
+// recipe update and recipe use keep the [github] block.
+func TestUpdateAndUseKeepGitHub(t *testing.T) {
+	f := newUpdateFx(t)
+	if err := os.WriteFile(f.o.instanceConfig("config-repo"), []byte(f.text()+ghKept), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.update("1.2.4", false, false); err != nil {
+		t.Fatalf("update: %v\n%s", err, f.out.String())
+	}
+	wantKeptGitHub(t, ghOf(t, f.o.instanceConfig("config-repo")))
+	if _, err := f.o.Fetcher.Fetch(context.Background(), strings.Replace(f.url, "1.2.3", "1.2.5", 2)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.update("1.2.5", true, false); err != nil {
+		t.Fatalf("use: %v\n%s", err, f.out.String())
+	}
+	if !strings.Contains(f.text(), "v1.2.5") {
+		t.Fatal(f.text())
+	}
+	wantKeptGitHub(t, ghOf(t, f.o.instanceConfig("config-repo")))
 }

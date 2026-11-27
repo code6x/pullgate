@@ -177,7 +177,7 @@ func (o *Options) check() error {
 	}
 	// Another server would see the token and every message, and could
 	// plant the IDs. Only the real one, or a local fake for tests.
-	if err := config.CheckAPIURL(o.APIURL); err != nil {
+	if err := config.CheckAPIURL(o.APIURL, DefaultAPI); err != nil {
 		return fmt.Errorf("--api-url: %w", err)
 	}
 	if o.APIURL != DefaultAPI && !strings.HasPrefix(o.APIURL, "http://127.0.0.1:") {

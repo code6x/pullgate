@@ -240,12 +240,12 @@ func TestListenerUpdates(t *testing.T) {
 
 func TestCheckAPIURL(t *testing.T) {
 	for _, u := range []string{"https://api.telegram.org", "http://127.0.0.1:8081"} {
-		if err := CheckAPIURL(u); err != nil {
+		if err := CheckAPIURL(u, "https://api.telegram.org"); err != nil {
 			t.Fatalf("%s: %v", u, err)
 		}
 	}
 	for _, u := range []string{"http://127.0.0.1:80@evil.example", "http://127.0.0.1", "http://api.telegram.org", "https://u:p@api.telegram.org", "https://", "ftp://x"} {
-		if err := CheckAPIURL(u); err == nil {
+		if err := CheckAPIURL(u, "https://api.telegram.org"); err == nil {
 			t.Fatalf("%s must be refused", u)
 		}
 	}
