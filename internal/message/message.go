@@ -57,6 +57,10 @@ func isInvisible(r rune) bool {
 	return unicode.Is(unicode.Variation_Selector, r)
 }
 
+// Clean is clean for other packages: control and invisible characters
+// become "?", cut to MaxLine characters. It does not escape HTML.
+func Clean(s string) string { return clean(s) }
+
 // esc cleans and HTML-escapes text from the commit. It is not exported:
 // text from the repo leaves this package only through Code and Output, so
 // it is always inside <code> or <pre> (code6x/pullgate#29).

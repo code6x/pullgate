@@ -659,7 +659,13 @@ cannot name a version or a file.
 *Attack: a published release that is bad* (T16 failed). Forward only:
 root never installs the same or an older version from Telegram (its own
 check, and `install.sh --forward-only`). The owner taps Apply after reading
-the release notes. A release is never installed without a tap: the daily
+the release notes. The notes in the question and the notice come only
+from `CHANGELOG.md` in the tarball, read after the SHA-256 and the
+attestation passed, and HTML-escaped; the release body on GitHub is never
+shown. So whoever can only edit the release page cannot put text into the
+question. With notes, the "Security release" flag comes from that signed
+text too, not from the release body: an edited body can neither make a
+release look urgent nor hide that it is. A release is never installed without a tap: the daily
 notice only says "send /update". The owner can install a pinned version by
 hand with `install.sh --version X.Y.Z`.
 

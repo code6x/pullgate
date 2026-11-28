@@ -279,8 +279,15 @@ once a minute per instance. The checks run inside the sandbox of
 
 Once a day `pullgate-update.timer` looks for a new release of pullgate. For
 each new release that passes the checks of `install.sh` (the SHA-256 and
-the build attestation), the bot sends one notice: the version, the link to
-the release notes, and "send /update to install it". A release that fixes
+the build attestation), the bot sends one notice: the version, what
+changed, the link to the release notes, and "send /update to install it".
+"What changed" comes from `CHANGELOG.md` in the checked tarball, never
+from the text of the release on GitHub (which is not signed): the
+features, fixes and security fixes of each version newer than yours, one
+short line each, at most 12 lines. Then a release is a security release
+only when that text has a `Security` section. pullgate 0.4.0 and older
+make the question without notes, so you see notes from the update after
+the first release that has this. A release that fixes
 a security problem says so first, and its notice comes again each day
 until it is installed. A notice never installs anything.
 
@@ -292,7 +299,7 @@ To install it, send the bot `/update`:
 
 1. The listener answers "Looking for a new release of pullgate…".
 2. Root checks the newest release again and sends a question with the
-   version, the link to the release notes, the tarball for this CPU, and
+   version, what changed, the link to the release notes, the tarball for this CPU, and
    its SHA-256, with **Apply** and **Skip**.
 3. On **Apply**, root installs only that tarball, with every check of
    `install.sh` done again. Then it installs the units of

@@ -82,6 +82,27 @@ jobs:
           set -eu
           sudo env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin sh ./install.sh --version "$VERSION"
           /usr/local/bin/pullgate --version
+      # Since 0.5.0, each tarball holds CHANGELOG.md for the notes of the
+      # update question (issue #70). install.sh takes only pullgate out.
+      - name: The tarball holds CHANGELOG.md, and install ignores it
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -eu
+          if [ "$(printf '%s\n' "$VERSION" 0.4.0 | sort -V | tail -n 1)" = 0.4.0 ]; then
+            echo "$VERSION is 0.4.0 or older: its tarballs have no CHANGELOG.md"
+            exit 0
+          fi
+          dir="$(mktemp -d)"
+          curl -fsSL --proto '=https' -o "$dir/p.tar.gz" \
+            "https://github.com/code6x/pullgate/releases/download/v${VERSION}/pullgate_${VERSION}_linux_amd64.tar.gz"
+          tar -tzf "$dir/p.tar.gz" | grep -qx CHANGELOG.md || { echo "::error::the tarball has no CHANGELOG.md"; exit 1; }
+          tar -xzf "$dir/p.tar.gz" -C "$dir" CHANGELOG.md
+          grep -q "^## \[${VERSION}\]" "$dir/CHANGELOG.md" || { echo "::error::CHANGELOG.md in the tarball has no section for ${VERSION}"; exit 1; }
+          if [ -e /usr/local/bin/CHANGELOG.md ]; then
+            echo "::error::install.sh installed CHANGELOG.md"
+            exit 1
+          fi
       - name: The README install and a full loop under the units
         env:
           VERSION: ${{ steps.version.outputs.version }}

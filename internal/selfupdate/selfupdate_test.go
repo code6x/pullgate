@@ -196,6 +196,8 @@ type release struct {
 	security bool
 	badSum   bool // SHA256SUMS has another SHA-256
 	license  string
+	// changelog is CHANGELOG.md in the tarball; "" is none.
+	changelog string
 }
 
 // publish puts a release on the fake GitHub, as the newest one, and
@@ -212,7 +214,10 @@ func (r *rig) publish(rel release) string {
 		name string
 		body []byte
 		mode int64
-	}{{"pullgate", fakeBin(rel.binLine, r.unitsV), 0o755}, {"LICENSE", []byte("license\n" + rel.license), 0o644}} {
+	}{{"pullgate", fakeBin(rel.binLine, r.unitsV), 0o755}, {"LICENSE", []byte("license\n" + rel.license), 0o644}, {"CHANGELOG.md", []byte(rel.changelog), 0o644}} {
+		if f.name == "CHANGELOG.md" && rel.changelog == "" {
+			continue
+		}
 		if err := tw.WriteHeader(&tar.Header{Name: f.name, Mode: f.mode, Size: int64(len(f.body)), Typeflag: tar.TypeReg}); err != nil {
 			r.t.Fatal(err)
 		}
@@ -768,5 +773,102 @@ func TestCapBuf(t *testing.T) {
 	_, _ = c.Write([]byte("ab"))
 	if !c.cut || len(c.b) != 10 {
 		t.Fatalf("11 bytes do not fit: %v %d", c.cut, len(c.b))
+	}
+}
+
+// TestNotesInTheQuestionAndTheNotice: the notes of the versions between
+// the installed one and the new one, from CHANGELOG.md in the checked
+// tarball, escaped, after the "Installed" line (code6x/pullgate#70).
+func TestNotesInTheQuestionAndTheNotice(t *testing.T) {
+	r := newRig(t)
+	text := strings.NewReplacer("0.6.0", "0.4.0", "0.5.0", "0.3.0", "0.4.0", "0.2.0").Replace(changelog)
+	// The daily notice.
+	r.publish(release{version: "0.4.0", changelog: text})
+	if res := r.run(); res != ResNoticed {
+		t.Fatalf("got %q", res)
+	}
+	m := one(t, r.outbox(), spool.KindNotice, "What changed", "<b>0.4.0</b>", "<b>0.3.0</b>", "• listener: /doctor from Telegram (#73)",
+		"&lt;b&gt;bold&lt;/b&gt;", "• an entry with no pull request link")
+	checkNotesPlace(t, m.Text, "Installed: ")
+	// The question.
+	r.now = r.now.Add(time.Hour)
+	res, ms := r.update()
+	if res != ResAsked {
+		t.Fatalf("/update: %q", res)
+	}
+	q := one(t, ms, spool.KindAsk, "What changed", "<b>0.4.0</b>", "(#73)")
+	checkNotesPlace(t, q.Text, "Installed now: ")
+	if strings.Contains(strings.SplitN(q.Text, "\n", 2)[0], "What changed") {
+		t.Fatal("the notes are never in the first line")
+	}
+	// The question sent again for /update while it is open.
+	r.now = r.now.Add(time.Hour)
+	_, ms = r.update()
+	if len(ms) != 2 || ms[1].Kind != spool.KindReply {
+		t.Fatalf("want the question again and a reply: %+v", ms)
+	}
+	again := one(t, ms[:1], spool.KindAsk, "What changed", "(#73)")
+	checkNotesPlace(t, again.Text, "Installed now: ")
+}
+
+// checkNotesPlace: the notes come right after the line with after, hold
+// no link, commit id or version that is installed, and the release body
+// never shows.
+func checkNotesPlace(t *testing.T, text, after string) {
+	t.Helper()
+	lines := strings.Split(text, "\n")
+	for i, l := range lines {
+		if strings.HasPrefix(l, after) || strings.Contains(l, ". "+after) {
+			if i+1 >= len(lines) || !strings.HasPrefix(lines[i+1], "<b>What changed</b>") {
+				t.Fatalf("the notes must follow %q:\n%s", after, text)
+			}
+			for _, bad := range []string{"9a0179d", "abc1234", "def5678", "old feature", "a doc change", "a fix\n", "https://example.com", "(https://github.com/code6x/pullgate/compare"} {
+				if strings.Contains(text, bad) {
+					t.Fatalf("the text holds %q:\n%s", bad, text)
+				}
+			}
+			return
+		}
+	}
+	t.Fatalf("no line with %q:\n%s", after, text)
+}
+
+// TestSecurityFlagFromTheNotes: with notes, the flag comes from them, never
+// from the release body, which is not signed.
+func TestSecurityFlagFromTheNotes(t *testing.T) {
+	r := newRig(t)
+	plain := "## [0.3.0](x) (2026-12-01)\n\n### Bug Fixes\n\n* a fix that is not a security fix\n"
+	r.publish(release{version: "0.3.0", security: true, changelog: plain})
+	r.run()
+	if m := one(t, r.outbox(), spool.KindNotice, "is out", "a fix that is not a security fix"); strings.Contains(m.Text, "Security release") {
+		t.Fatalf("a release body that says security while the notes do not must not set the flag:\n%s", m.Text)
+	}
+	r.publish(release{version: "0.3.1", changelog: "## [0.3.1](x) (2026-12-02)\n\n### Security\n\n* a security fix\n\n" + plain})
+	r.run()
+	m := one(t, r.outbox(), spool.KindNotice, "Security release", "Security:", "• a security fix")
+	if strings.Index(m.Text, "Security release") > strings.Index(m.Text, "is out") {
+		t.Fatal("a security release says so first")
+	}
+	// Without CHANGELOG.md the release body still counts, as before.
+	r.publish(release{version: "0.3.2", security: true})
+	r.run()
+	if m := one(t, r.outbox(), spool.KindNotice, "is out"); !strings.Contains(m.Text, "Security release") || strings.Contains(m.Text, "What changed") {
+		t.Fatalf("without notes, the flag comes from the release as before:\n%s", m.Text)
+	}
+}
+
+// TestNoNotesFileLeft: the notes file is removed after each look, and a
+// file there before does not count.
+func TestNoNotesFileLeft(t *testing.T) {
+	r := newRig(t)
+	stale := filepath.Join(r.u.tmpDir(), "notes.md")
+	write(t, stale, "## [0.3.0](x)\n\n### Security\n\n* planted\n", 0o600)
+	r.publish(release{version: "0.3.0"})
+	r.run()
+	if m := one(t, r.outbox(), spool.KindNotice, "is out"); strings.Contains(m.Text, "planted") || strings.Contains(m.Text, "What changed") {
+		t.Fatalf("an old notes file must not count:\n%s", m.Text)
+	}
+	if _, err := os.Lstat(stale); err == nil {
+		t.Fatal("the notes file must be removed")
 	}
 }
