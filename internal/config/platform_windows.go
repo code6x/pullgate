@@ -13,6 +13,9 @@ import (
 )
 
 func validatePlatform(c *Instance) error {
+	if c.GitHub != nil {
+		return c.errf("[github]", "GitHub deployment reports work only on Linux. Fix: remove the [github] block")
+	}
 	if c.Mode == ModeAuto {
 		return c.errf("mode", "Windows needs approval before apply. Fix: set mode to ask or off")
 	}
@@ -77,4 +80,9 @@ func (c *Listener) ReadToken(uid uint32) (string, error) {
 		return "", errors.New("invalid bot token. Fix: run token setup and enter the token on one line")
 	}
 	return token, nil
+}
+
+// ReadGitHubToken is not used on Windows: validatePlatform refuses [github].
+func (c *Instance) ReadGitHubToken(_ uint32) (string, error) {
+	return "", errors.New("GitHub deployment reports work only on Linux")
 }

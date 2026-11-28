@@ -142,3 +142,33 @@ func (c *Listener) ReadToken(uid uint32) (string, error) {
 	}
 	return tok, nil
 }
+
+// ReadGitHubToken reads the token file of [github] (DESIGN.md section 22):
+// owned by uid (root), mode 0600, in safe folders, not a link, at most
+// MaxGitHubToken bytes. One newline at the end is removed; any other
+// space or control character is an error. The token is never printed.
+func (c *Instance) ReadGitHubToken(uid uint32) (string, error) {
+	g := c.GitHub
+	if g == nil {
+		return "", errors.New("no [github] block")
+	}
+	if err := checkFile(g.TokenFile, uid, true); err != nil {
+		return "", c.errf("[github] token_file", "%v", err)
+	}
+	b, err := readSmall(g.TokenFile, MaxGitHubToken, int(uid))
+	if err != nil {
+		return "", c.errf("[github] token_file", "read %s: %v. Fix: make it a regular file, owned by root, mode 0600, with only the token in it", g.TokenFile, err)
+	}
+	tok := strings.TrimSuffix(string(b), "\n")
+	bad := tok == "" || len(b) > MaxGitHubToken // it grew after the check
+	for _, r := range tok {
+		if r <= ' ' || r >= 0x7f {
+			bad = true
+			break
+		}
+	}
+	if bad {
+		return "", c.errf("[github] token_file", "%s does not hold one token: it is empty, or has a space, a control character or more than one line. Fix: write only the token in it, with at most one newline at the end", g.TokenFile)
+	}
+	return tok, nil
+}

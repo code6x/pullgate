@@ -33,3 +33,10 @@ max_failed_tries = 1
 
 [listener]
 user = "pullgate"
+
+# Optional: post each apply to the repo on GitHub as a deployment (README,
+# "GitHub deployments"). One environment for each host.
+# [github]
+# repository = "owner/config-repo"
+# environment = "example-host"
+# token_file = "/etc/pullgate/config-repo.github-token"

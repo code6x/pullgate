@@ -31,6 +31,10 @@ func (e *Env) Status(w io.Writer, f StatusFlags) error {
 			return err
 		}
 		defer func() { _ = lock.Close() }()
+		if f.Resume {
+			e.ghOpen()
+			defer e.ghDone()
+		}
 	}
 	st, err := e.Dir.Load()
 	if err != nil {
@@ -43,6 +47,7 @@ func (e *Env) Status(w io.Writer, f StatusFlags) error {
 			return err
 		}
 		if st.InProgress != nil {
+			e.ghCutOff(st.InProgress) // queued before the state save
 			st.InProgress = nil
 			changed = true
 		}
@@ -65,6 +70,9 @@ func (e *Env) Status(w io.Writer, f StatusFlags) error {
 		if err := e.Dir.Save(st); err != nil {
 			return err
 		}
+	}
+	if f.Resume {
+		e.ghSend() // so the status below shows the cut-off as sent
 	}
 	if closed != nil && !closed.Auto {
 		// After the save: the listener forgets the code only when root
@@ -117,6 +125,9 @@ func (e *Env) statusText(w io.Writer, st *state.State) {
 		show("paused", "yes: "+e.Dir.PauseReason()+" ("+e.Dir.PauseFile()+")")
 	} else {
 		show("paused", "no")
+	}
+	if l := e.ghStatusLine(); l != "" {
+		show("github", l)
 	}
 	if st.InProgress != nil {
 		show("in progress", fmt.Sprintf("%s of %s since %s", st.InProgress.Phase, st.InProgress.SHA, st.InProgress.Started.Format("2006-01-02 15:04 MST")))

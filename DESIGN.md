@@ -107,6 +107,9 @@ can be less strict; each example sets what its `apply` needs.
 | `/var/lib/pullgate/NAME/paused` | root | the pause file |
 | `/var/lib/pullgate/NAME/auto-approval` | root, 0600 | the approval that `auto` mode writes (section 13) |
 | `/var/lib/pullgate/NAME/trees/` | root, 0711 | the trees of one process (section 6) |
+| `/var/lib/pullgate/NAME/github/` | root, 0700 | the queue of the GitHub reports, only with `[github]` (section 22) |
+| `/var/lib/pullgate/NAME/github/queue.json` | root, 0600 | the posts that wait, the deployments, the last post (section 22) |
+| the GitHub token file (`[github] token_file`) | root, 0600 | the token of the GitHub reports (section 22) |
 | `/var/spool/pullgate/` and `/var/spool/pullgate/NAME/` | root, 0755 | the spool |
 | `/var/spool/pullgate/NAME/outbox` | root, group listener, 0770 (no setgid) | messages from root to the listener |
 | `/var/spool/pullgate/NAME/outbox/*.json` | root, group listener, 0640 | one message |
@@ -934,13 +937,17 @@ the summary" line, so that the message still fits.
   `/check` only makes it sooner. It cannot apply a commit that the timer
   would not apply. The reply says "it is applied now, without a tap". Who
   does not want this keeps the instance in `ask` mode.
-- `off`: `pullgate run` and `pullgate apply` do nothing.
+- `off`: `pullgate run` and `pullgate apply` do nothing. With `[github]`
+  they still send the GitHub reports that wait in the queue (section 22),
+  also when the instance is paused.
 
 `pullgate status NAME` prints the mode, the applied SHA, the open question,
 the held SHA, the mark of the last tip (`nothing` reads "nothing (the check
 found nothing to apply on this host)"), "settling until …" while the tip
 waits for `settle`, the broken state ("broken since …, last error …"), the
-pause file and an apply in progress. Flags:
+pause file and an apply in progress. With `[github]` it also shows the
+last GitHub post (when, which status, `OK` or the HTTP code and a fixed
+reason) and how many posts wait (section 22). Flags:
 
 - `--ask-again`: clear the marks of the last fetched tip (expired, skipped,
   check failed, nothing, refused, failed, held), so the next run asks again. If a
@@ -952,6 +959,8 @@ pause file and an apply in progress. Flags:
 - `--pause`: write the pause file;
 - `--resume`: remove the pause file, clear an apply in progress, and end
   the broken state (section 10). Run it only after you checked the host.
+  An apply in progress that it clears gets the GitHub status "cut off"
+  (section 22).
 
 The listener (`pullgate listen --config /etc/pullgate/listener.toml`):
 
@@ -1406,7 +1415,7 @@ config tool, for example Ansible run by an instance, must not write them.
 
 ## 18. Doctor (`pullgate doctor`)
 
-`pullgate doctor [NAME] [--telegram] [--config FILE] [--unit-dir DIR]`
+`pullgate doctor [NAME] [--telegram] [--github] [--config FILE] [--unit-dir DIR]`
 checks the setup of a host, as root. It prints one line per check: `ok`,
 `note` (worth a look, not a problem), or `PROBLEM` with the fix in the same
 line. It exits 1 when there is a problem, else 0. With NAME it checks that
@@ -1449,6 +1458,15 @@ The checks:
 - **Telegram**, only with `--telegram`: `getMe` (the token works) and
   `getChat` with `chat_id` (the bot can reach the chat). No message is
   sent. The token is never printed.
+- **GitHub**, for an instance with `[github]` (section 22): the block is
+  valid and the token file passes its checks (as every start reads it);
+  the queue folder and the queue file have the owner and the mode of
+  section 4, as read back (a missing folder is a note). Only with
+  `--github`, and never from `/doctor`: `GET /repos/OWNER/REPO` and
+  `GET /repos/OWNER/REPO/deployments?per_page=1` with the token. The second
+  one needs Deployments: read, so on a private repo it shows that the token
+  has the permission. Doctor writes nothing to GitHub, and says: "Write
+  access is checked only by the first post". The token is never printed.
 
 The README "Install" ends with `pullgate doctor`, and the CI install test
 (`test/units/full-loop.sh`) runs that README block and needs exit 0.
@@ -1542,12 +1560,13 @@ template. The order:
    case (`a-z`, `0-9`, `_`: the TOML decoder matches keys without case,
    so `Mode` would set `mode`; every config of pullgate refuses such a
    key). It must not set `mode`, `[repo] deploy_key`, `[repo]
-   known_hosts`, `[commands] check_user` or `[listener]`; it may set
+   known_hosts`, `[commands] check_user`, `[listener]` or `[github]`; it may set
    `[repo] url` and `branch` only to `@REPO_URL@` and `@BRANCH@`. pullgate
    then sets `mode = "ask"`, the repo URL and branch, the deploy key and
    the known hosts (`NAME.key` and `NAME.known_hosts` for an ssh URL, or
    those of a kept config), and `check_user` (`pullgate-check-NAME`, or
-   that of a kept config). The result must pass the checks of section 5,
+   that of a kept config). A kept config keeps its `[github]` block as it
+   is (section 22). The result must pass the checks of section 5,
    without the file checks. It is written with a header that names the
    recipe; comments of the template are not kept.
 4. **Users, directories, units**, then the token and the pairing, as
@@ -1639,6 +1658,149 @@ Both run as root, on an instance that has a record `NAME.recipe`
   A rollback does not undo a `recipe use`: the config stays on the new
   version, and forward only keeps it there. A recipe's `apply` must be
   able to roll back with the new version's scripts.
+
+## 22. GitHub deployments (`[github]`)
+
+An optional block of the instance config. With it, root posts each apply,
+rollback, hold, broken state and cut-off to the config repo on GitHub as a
+**deployment** with **deployment statuses**. The repo's Deployments page
+then shows which commit is live on which host, and since when. Without the
+block nothing of this runs: no token is read, no folder is made, and the
+state file is the same.
+
+```toml
+[github]
+repository = "owner/config-repo"                # required
+environment = "example-host"                    # required: one per host
+token_file = "/etc/pullgate/NAME.github-token"  # required
+api_url = "https://api.github.com"              # optional; tests, GitHub Enterprise
+```
+
+**The checks of the config.** `repository` is `OWNER/REPO`. When `[repo]
+url` is on GitHub (`git@github.com:owner/repo`,
+`ssh://git@github.com/owner/repo` or
+`ssh://git@ssh.github.com:443/owner/repo`, with or without `.git`), it must
+name the same repo, without case. `environment` has the rules of an
+instance name. It is required because hosts that follow one repo often use
+the same instance name: with one environment, a `success` on host B would
+make the live deployment of host A `inactive`. `api_url` has the rules of
+the Bot API url: `https` only, or `http://127.0.0.1:PORT` for tests (a loud
+warning in the log). `token_file` is an absolute path.
+
+**The token.** A fine-grained token for the one repo, with only
+Deployments: read and write. The file holds only the token; one newline at
+the end is removed, any other space or control character is an error. The
+file is checked like the deploy key (section 4): not a symlink, owned by
+root, mode 0600, at most 1024 bytes, in safe folders. It is read with
+`O_NOFOLLOW` and checked again on the open file. A bad token file is a
+config error: the instance does not start, like with a bad deploy key.
+This is the one GitHub problem that stops a deploy. Only root reads the
+token. It never goes to the listener, the spool, Telegram, a log line, an
+error, `pullgate status`, `state.json`, the queue, or the environment of
+the commands.
+
+**What is posted.** A post is one API call: a create, or one status.
+
+| step | posts |
+|---|---|
+| the apply starts (phase `apply`) | create a deployment for the SHA, then `in_progress` |
+| applied: apply and health passed | `success` |
+| failed, the rollback starts (phase `rollback`) | `failure` on the new deployment; create one for the old SHA, then `in_progress` |
+| the rollback passed | `success` on the old-SHA deployment: the old SHA is live again |
+| the rollback failed: broken | `error` on the old-SHA deployment, "broken: the rollback failed; the host may be in a half state" |
+| failed, held | `failure`, "held: the host may be in a half state" |
+| a fix forward passed | `success` |
+| a fix forward failed | `error`, "broken: the fix forward failed" |
+| cut off (section 10) | `error` on the deployment of the phase, "cut off: check the host" |
+| `pullgate status NAME --resume` clears an apply in progress | the same `error` as a cut-off |
+
+`auto` mode posts the same. A skip, an expired or refused tap, "applied
+already", a failed check, a check that found nothing, and a settling tip
+post nothing. A create has `ref` = the full SHA, the environment,
+`task: "deploy"`, `auto_merge: false` (GitHub never merges anything),
+`required_contexts: []` (this records what the host did; it does not wait
+for CI), `production_environment: false`, `transient_environment: false`,
+and no payload. Statuses keep `auto_inactive` (true): a new `success` makes
+the older `success` deployments of the environment `inactive`. Each
+description is fixed text of at most 140 characters: never output of a
+command, never a host name.
+
+**The queue.** A post is only a report. Root writes each post to
+`/var/lib/pullgate/NAME/github/queue.json` (folder 0700, file 0600; root
+sets the modes itself and reads them back, as the apply unit has
+`UMask=0022`). Each deployment has a local key; its statuses name the key.
+The sender keeps the GitHub id of each key in the queue, and each
+deployment keeps the repo, the API url and the environment it was queued
+with: when `[github]` changes, its posts that wait are dropped, so an id is
+never sent to another repo or server. `state.json` does not
+change. At most 1000 posts wait: in a very long outage the oldest
+deployment is dropped first, so the file always stays small enough to be
+read.
+
+**Crash safety.** The queue entry of a step is written and synced before
+the state save of that step. An open deployment is one that was created
+and has no final status (`success`, `failure`, `error`) queued or sent.
+`run` and `apply` check the queue right after they take the instance lock,
+before the paused or off exit (a run that finds the lock busy checks
+nothing):
+
+- the open deployment of the state's apply in progress (phase `apply`: of
+  `in_progress.sha`; phase `rollback`: of `in_progress.old_sha`) is left
+  open; the cut-off of section 10 posts its `error`;
+- every other open deployment belongs to a step whose state save never
+  happened, so its command never ran: it gets `error`, "stopped before the
+  step started", and nothing pauses.
+
+In mode `off` and while paused, `run` ends before the cut-off of section
+10, so the deployment of an apply in progress stays open until the next
+`apply` (which cuts it off in every mode) or `pullgate status NAME
+--resume`.
+
+A cut-off posts its `error` after anything that is queued for the
+deployment already (a `success` queued before a failed state save), so it
+is the last status. A deployment whose last status is `error` already (a
+failed save of the broken state) gets no second one, and a deployment that
+was queued more than 10 minutes before or after the start of the apply in
+progress is not its deployment (a step that was never queued).
+
+**Sending.** Under the instance lock, in order. `apply` sends the create
+and `in_progress` right after the `in_progress` save, before the apply
+command; the `failure` and the rollback's create and `in_progress` before
+the rollback runs; and the rest at the end. Every exit of `run`, `apply` and
+`status --resume` sends what waits, also when the instance is paused, off,
+held, broken or cut off. One process spends at most 10 seconds in total
+on sending (each call at most 5 seconds; the time of the apply command
+between two sends does not count); it stops at the first post that must be
+tried again, and goes on after a post that is dropped.
+
+| answer | what happens |
+|---|---|
+| `201` | sent |
+| `201` on a create whose answer is cut off | tried again (GitHub may then show one more deployment, with no status) |
+| no answer, a timeout, `5xx`, `429`, `401`, `403`, `404` on a create | tried again by the next process, for up to 24 hours after the post was queued |
+| `404` on a status, `409`, `422`, `3xx`, `202`, any other code | dropped at once with a log line, with the statuses that depend on it |
+
+After 24 hours a post is dropped with a log line, with the statuses that
+depend on it. A `401`, a `403` that is not a rate limit, or a `404` on a
+create means the token is refused: once per day the log says, and the owner
+gets a Telegram notice, "the GitHub token of instance NAME is refused: make
+a new one for REPO with Deployments: read and write". The answer is read up
+to 64 KiB, and only the deployment id is taken from it. A redirect is never
+followed: a renamed repo answers with one, and the log says "the repo
+moved". TLS 1.2 or newer, no proxy (as in section 19), and no idle connections
+(Go's client logs bytes that come on an idle one). GitHub's answer
+text is never logged or shown: `pullgate status` shows the HTTP code and a
+fixed reason, because `/status` sends it to Telegram. Apart from the
+token-refused notice, a GitHub problem never changes the apply, the health
+check, the rollback, the state or the messages.
+
+**Recipes.** The `[github]` block is host config. Every command that writes
+`NAME.toml` from a recipe template (`bootstrap --recipe`, with or without
+`--replace-config`, `recipe update`, `recipe use`) keeps the block of the
+old `NAME.toml` as it is, so the diff of a kept config counts it. A
+template with a `[github]` block is refused, like one that sets `mode`.
+
+**Windows.** Not supported yet: a `[github]` block is a config error there.
 
 ## Windows
 

@@ -229,6 +229,8 @@ func (o *Options) render(name string, l *local, tpl []byte, rr *recipeRun, ri *r
 		return nil, bad("it sets [repo] deploy_key or known_hosts; pullgate writes them")
 	case cmds["check_user"] != nil:
 		return nil, bad("it sets [commands] check_user; pullgate writes it")
+	case t["github"] != nil:
+		return nil, bad("it sets [github]; the GitHub reports are host config, written by the owner")
 	case t["listener"] != nil:
 		return nil, bad("it sets [listener]; the listener user is pullgate's")
 	case repo["url"] != nil && repo["url"] != l.url, repo["branch"] != nil && repo["branch"] != l.branch:
@@ -246,6 +248,10 @@ func (o *Options) render(name string, l *local, tpl []byte, rr *recipeRun, ri *r
 		repo["known_hosts"] = l.knownHosts
 	}
 	cmds["check_user"] = l.checkUser
+	if l.kept != nil && l.kept.GitHub != nil {
+		// Host config, not recipe config: a rewrite keeps it as it is.
+		t["github"] = l.kept.GitHub
+	}
 	var b bytes.Buffer
 	// No date: the same recipe makes the same file, so a run again shows
 	// no diff.
