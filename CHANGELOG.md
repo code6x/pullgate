@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.0](https://github.com/code6x/pullgate/compare/v0.4.0...v0.5.0) (2026-11-28)
+
+
+### Features
+
+* /doctor from Telegram ([#73](https://github.com/code6x/pullgate/issues/73)) ([9a0179d](https://github.com/code6x/pullgate/commit/9a0179d5b69a4df2049a0e8c055abe0e38d15ed5)), closes [#50](https://github.com/code6x/pullgate/issues/50)
+* add Windows support ([#75](https://github.com/code6x/pullgate/issues/75)) ([aea1b54](https://github.com/code6x/pullgate/commit/aea1b54e34fd152d075f80dd5d6bd804aca47ca0))
+* optional GitHub deployments for each apply, rollback and failure ([#76](https://github.com/code6x/pullgate/issues/76)) ([c19080f](https://github.com/code6x/pullgate/commit/c19080f101aab5e89948a102babf4c883d811566)), closes [#66](https://github.com/code6x/pullgate/issues/66)
+* release notes from the signed tarball in the update question and notice ([#74](https://github.com/code6x/pullgate/issues/74)) ([791a529](https://github.com/code6x/pullgate/commit/791a5298e0532b0e66a1c7ba11152a55d2eb9ca1))
+* Telegram command menu from one command table, and /ask_again ([#71](https://github.com/code6x/pullgate/issues/71)) ([1598169](https://github.com/code6x/pullgate/commit/159816925dbb5c6bdbb22586bec556e64b3647a4)), closes [#69](https://github.com/code6x/pullgate/issues/69)
+
 ## [0.4.0](https://github.com/code6x/pullgate/compare/v0.3.0...v0.4.0) (2026-11-26)
 
 
